@@ -1,0 +1,80 @@
+<!-- Section 2: Enhanced Music Player with iPod/CD/Volume Layout -->
+<div class="section music-player">
+    <div class="music-player-container" id="musicPlayerContainer">
+        <div class="music-player-flex-row">
+            <!-- iPod + CD + Volume Row (center/right) -->
+            <div class="ipod-volume-row">
+                <div class="ipod-container">
+                    <div class="cd-wrapper">
+                        <img src="./assets/cd/cd1.webp" alt="CD" class="cd-insert" id="mainPlayerCdInsert" />
+                    </div>
+                    <img src="./assets/ipod/silverpodv3.webp" alt="iPod" class="ipod-image" />
+                    <div class="ipod-greenscreen" id="ipodGreenScreen">
+                        <canvas id="ipod-visualizer"></canvas>
+                    </div>
+                </div>
+                <div class="volume-control-container">
+                    <!-- Minimize button as icon -->
+                    <button class="player-minimize-btn" id="playerMinimizeBtn" title="Minimize">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </button>
+                    <div id="volumePercentage" class="volume-percentage">100%</div>
+                    <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="1" />
+                    <div class="volume-label">Volume</div>
+                </div>
+            </div>
+        </div>
+        <!-- Waveform Progress Area -->
+        <div class="player-controls player-controls-top">
+            <button id="prevBtn" class="control-btn control-btn-small control-btn-prev">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18 6h-2v12h2zm-3.5 6l-8.5 6V6z"/>
+                </svg>
+            </button>
+            
+            <button id="playPauseBtn" class="control-btn play-pause-btn control-btn-small">
+                <svg id="playIcon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <svg id="pauseIcon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                </svg>
+            </button>
+            
+            <button id="nextBtn" class="control-btn control-btn-small">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                </svg>
+            </button>
+            <button id="loopBtn" class="control-btn loop-btn control-btn-small" title="Loop">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+                </svg>
+            </button>
+            <button id="downloadBtn" class="control-btn download-btn control-btn-small" title="Download">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                </svg>
+            </button>
+        </div>
+        <div class="enhanced-progress-container enhanced-progress-top">
+            <div class="waveform-container" id="waveformContainer">
+                <canvas id="waveform-canvas" width="500" height="60"></canvas>
+                <div class="waveform-overlay"></div>
+                <input type="range" id="progressBar" min="0" max="100" value="0" />
+                <div class="progress-overlay">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <!-- Added for hover effect -->
+                <div class="waveform-preview-line" id="waveformPreviewLine"></div>
+                <div class="waveform-tooltip" id="waveformTooltip">0:00</div>
+            </div>
+        </div>
+        <!-- Audio Elements (Hidden) -->
+        <audio id="audioPlayer1" preload="metadata"></audio>
+        <audio id="audioPlayer2" preload="metadata"></audio>
+        
+        <!-- Visualizer Canvas (Hidden for now) -->
+        <canvas id="visualizer" width="300" height="150" style="display: none;"></canvas>
+     </div>
+  </div>

@@ -1,0 +1,310 @@
+/* ASCII Playground Styles */
+
+/* Reset body positioning for playground page */
+body.playground-page {
+    display: block;
+    padding-top: calc(var(--header-total-clearance-height, 72px) + 5px);
+    overflow-x: hidden;
+    min-height: 100vh;
+    position: relative;
+}
+
+/* ASCII Background Container */
+.ascii-background-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+    background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 50%, #0f0f0f 100%);
+    overflow: hidden;
+}
+
+.ascii-animation {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 14px;
+    color: #00ff41;
+    white-space: pre;
+    overflow: hidden;
+    opacity: 0.8;
+    text-shadow: 0 0 5px #00ff41;
+}
+
+/* Content Overlay */
+.playground-content {
+    position: relative;
+    z-index: 10;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    backdrop-filter: blur(1px);
+}
+
+.playground-main {
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.playground-card {
+    background: rgba(30, 30, 30, 0.9);
+    border: 2px solid rgba(0, 255, 65, 0.3);
+    border-radius: 20px;
+    padding: 40px;
+    backdrop-filter: blur(20px);
+    box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.6),
+        0 0 40px rgba(0, 255, 65, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
+    text-align: center;
+}
+
+.playground-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(0, 255, 65, 0.05) 0%, transparent 50%, rgba(0, 255, 65, 0.05) 100%);
+    pointer-events: none;
+    border-radius: 18px;
+}
+
+/* Header Styles */
+.playground-header {
+    margin-bottom: 30px;
+}
+
+.playground-title {
+    font-size: 3rem;
+    font-weight: 900;
+    margin-bottom: 10px;
+    font-family: 'Orbitron', sans-serif;
+    background: linear-gradient(135deg, #00ff41 0%, #00cc33 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    text-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+}
+
+.playground-subtitle {
+    font-size: 1.2rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 300;
+    margin: 0;
+    letter-spacing: 1px;
+}
+
+/* Control Buttons */
+.playground-controls {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+}
+
+.control-btn {
+    background: linear-gradient(145deg, #2a2a2a 0%, #1e1e1e 100%);
+    border: 2px solid rgba(0, 255, 65, 0.3);
+    color: #00ff41;
+    padding: 12px 24px;
+    border-radius: 25px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    backdrop-filter: blur(10px);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    position: relative;
+    overflow: hidden;
+}
+
+.control-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0, 255, 65, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.control-btn:hover::before {
+    left: 100%;
+}
+
+.control-btn:hover {
+    background: linear-gradient(145deg, #1e1e1e 0%, #2a2a2a 100%);
+    border-color: #00ff41;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 255, 65, 0.3);
+    text-shadow: 0 0 10px #00ff41;
+}
+
+.control-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 4px 15px rgba(0, 255, 65, 0.2);
+}
+
+/* Stats Display */
+.playground-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 15px;
+    border: 1px solid rgba(0, 255, 65, 0.2);
+}
+
+.stat-item {
+    text-align: center;
+    padding: 10px;
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.6);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.8rem;
+    font-weight: 900;
+    color: #00ff41;
+    font-family: 'Orbitron', sans-serif;
+    text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+}
+
+/* Description */
+.playground-description {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 15px;
+    padding: 20px;
+    border: 1px solid rgba(0, 255, 65, 0.1);
+}
+
+.playground-description p {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.8);
+    margin: 0;
+    text-align: left;
+}
+
+/* Dark Mode Support */
+body.dark .playground-card {
+    background: rgba(15, 15, 15, 0.95);
+    border-color: rgba(0, 255, 65, 0.4);
+}
+
+body.dark .playground-title {
+    background: linear-gradient(135deg, #00ff41 0%, #00aa2a 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .playground-content {
+        padding: 15px;
+    }
+    
+    .playground-card {
+        padding: 25px;
+        margin-top: 20px;
+    }
+    
+    .playground-title {
+        font-size: 2.2rem;
+        letter-spacing: 2px;
+    }
+    
+    .playground-subtitle {
+        font-size: 1rem;
+    }
+    
+    .playground-controls {
+        gap: 10px;
+    }
+    
+    .control-btn {
+        padding: 10px 18px;
+        font-size: 12px;
+    }
+    
+    .playground-stats {
+        grid-template-columns: 1fr;
+        gap: 15px;
+        padding: 15px;
+    }
+    
+    .stat-value {
+        font-size: 1.5rem;
+    }
+    
+    .ascii-animation {
+        font-size: 8px;
+        line-height: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .playground-card {
+        padding: 20px;
+        border-radius: 15px;
+    }
+    
+    .playground-title {
+        font-size: 1.8rem;
+        letter-spacing: 1px;
+    }
+    
+    .control-btn {
+        padding: 8px 15px;
+        font-size: 11px;
+        flex: 1;
+        min-width: 80px;
+    }
+    
+    .ascii-animation {
+        font-size: 6px;
+        line-height: 8px;
+    }
+}
+
+/* Animation States */
+.ascii-animation.paused {
+    animation-play-state: paused;
+}
+
+.ascii-animation.speed-2x {
+    animation-duration: 0.5s;
+}
+
+.ascii-animation.speed-3x {
+    animation-duration: 0.33s;
+}

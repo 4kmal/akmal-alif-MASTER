@@ -1,0 +1,129 @@
+#site-header {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: 100%;
+  max-width: 1100px;
+  padding: 0 16px;
+}
+.site-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 18px;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+  padding: 0 24px;
+  height: 56px;
+}
+.site-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.site-header-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+}
+.site-header-title {
+  font-size: 1.2rem;
+  font-weight: bold;
+  font-family: 'Orbitron', monospace;
+  letter-spacing: 0.1em;
+  background-image: linear-gradient(to right, violet, indigo, blue, green, yellow, orange, red);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% auto;
+  animation: rainbow-flow 8s linear infinite;
+}
+.site-header-nav {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+.site-header-nav a {
+  text-decoration: none;
+  color: #333;
+  font-weight: 500;
+  font-size: 1rem;
+  transition: color 0.2s;
+  background-image: linear-gradient(to right, violet, indigo, blue, green, yellow, orange, red);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% auto;
+}
+.site-header-nav a:hover {
+  color: #000;
+  animation: rainbow-flow 2s linear infinite;
+}
+.site-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.site-header-link {
+  background: none;
+  border: none;
+  color: #333;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+.site-header-link:hover {
+  background: #f0f0f0;
+}
+.site-header-btn {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.site-header-btn:hover {
+  background: #dc2626;
+}
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg);}
+  25% { transform: rotate(-5deg);}
+  75% { transform: rotate(5deg);}
+}
+.wiggle {
+  animation: wiggle 1s ease-in-out;
+}
+@keyframes rainbow-flow {
+  to {
+    background-position: 200% center;
+  }
+}
+.rainbow-text-slow {
+  background-image: linear-gradient(to right, violet, indigo, blue, green, yellow, orange, red);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% auto;
+  animation: rainbow-flow 8s linear infinite;
+}
+.rainbow-glow {
+  background-image: linear-gradient(to right, violet, indigo, blue, green, yellow, orange, red);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% auto;
+}
+.rainbow-glow:hover {
+  animation: rainbow-flow 2s linear infinite;
+}
+.tekno-font {
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+} 

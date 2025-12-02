@@ -1,0 +1,99 @@
+<header class="site-header">
+  <div class="header-container">
+    <div class="header-left">
+      <div class="mobile-menu-button">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="mobile-tracklist-button">
+        <img src="./icon/track.gif" alt="Tracklist">
+      </div>
+      <a href="./index.html" class="logo-section-link">
+        <div class="logo-section">
+          <img src="./icon/ig.ico" alt="Logo" class="header-logo">
+        </div>
+      </a>
+    </div>
+
+    <nav class="header-nav">
+      <a href="./blog.html" class="nav-link"><img src="./icon/tv.gif" alt="Special Link" style="height: 20px; width: auto;"></a>
+      <div class="dropdown">
+        <a href="#" class="nav-link dropdown-trigger">
+          About
+          <svg class="dropdown-arrow" width="16" height="16" viewBox="0 0 24 24">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </a>
+        <div class="dropdown-content">
+          <a href="#">𓁏</a>
+          <a href="#"><img src="./icon/cam.gif" alt="Special Link" style="height: 20px; width: auto;"></a>
+          
+        </div>
+      </div>
+      <a href="./playground/index.html"><img src="./icon/black.gif" alt="Playground" style="height: 20px; width: auto;"></a>
+
+      <a href="./contact/index.html" class="nav-link"><img src="./icon/urth.gif" alt="Contact Me" style="height: 20px; width: auto;"></a>
+    </nav>
+
+    <div class="header-right">
+      
+      <div class="dark-mode-toggle" id="headerDarkToggle">
+        <div class="toggle-switch">
+          <span class="sun">☀️</span>
+          <span class="moon">🌙</span>
+          <div class="slider"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Menu Dropdown (positioned relative to header) -->
+  <div class="mobile-menu-dropdown">
+    <div class="mobile-menu-content" id="mobileMenuContent">
+      <nav class="mobile-nav-grid">
+        
+        <!-- Blog Item -->
+        <div class="mobile-menu-item">
+          <a href="./blog.html" class="mobile-menu-link">
+            <img src="./icon/tv.gif" alt="Blog" style="height: 20px; width: auto;">
+            <span>Blog</span>
+          </a>
+        </div>
+
+        <!-- About Nested Dropdown -->
+        <div class="mobile-menu-item mobile-nested-dropdown">
+          <button class="mobile-menu-trigger">
+            <span>About</span>
+            <svg class="dropdown-arrow" width="16" height="16" viewBox="0 0 24 24">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+          <div class="mobile-nested-content">
+            <a href="#" class="mobile-submenu-link">𓁏</a>
+            <a href="#" class="mobile-submenu-link">
+              <img src="./icon/cam.gif" alt="Special Link" style="height: 20px; width: auto;">
+            </a>
+          </div>
+        </div>
+
+        <!-- Playground Item -->
+        <div class="mobile-menu-item">
+          <a href="./playground/index.html" class="mobile-menu-link">
+            <img src="./icon/black.gif" alt="Playground" style="height: 20px; width: auto;">
+            <span>Playground</span>
+          </a>
+        </div>
+
+        <!-- Contact Me Item -->
+        <div class="mobile-menu-item">
+          <a href="./contact/index.html" class="mobile-menu-link">
+            <img src="./icon/urth.gif" alt="Contact Me" style="height: 20px; width: auto;">
+            <span>Contact Me</span>
+          </a>
+        </div>
+
+      </nav>
+    </div>
+  </div>
+</header>

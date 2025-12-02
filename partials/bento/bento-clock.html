@@ -1,0 +1,150 @@
+<div id="clock-widget-panel" class="clock-widget-panel">
+  <!-- Profile Card (Replaces Clock Widget) -->
+  <div class="profile-card-container">
+      <div class="profile-header">
+          <div class="profile-avatar-wrapper">
+              <!-- Using pfp.webp as per existing assets -->
+              <img src="./assets/picture/pfp.webp" alt="Akmal Alif" class="profile-avatar">
+              <span class="verified-badge">✓</span>
+          </div>
+          <h2 class="profile-name">Akmal Alif</h2>
+          <p class="profile-handle">exe0x0</p>
+      </div>
+      
+      <div class="profile-bio">
+          Student | UKM | IT | Software Engineering | Exploring LLMs
+      </div>
+      
+      <div class="profile-location">
+          Bandar Baru Bangi, Selangor
+      </div>
+      
+      <div class="profile-stats">
+          <div class="stat-row">
+              <span class="stat-label">Profile views</span>
+              <span class="stat-value">256</span>
+          </div>
+          <div class="stat-row">
+              <span class="stat-label">Post impressions</span>
+              <span class="stat-value">104</span>
+          </div>
+      </div>
+  </div>
+</div>
+
+<style>
+/* Profile Card Specific Styles - Scoped to this partial */
+.profile-card-container {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    height: 100%;
+    color: rgb(248, 250, 252);
+    font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    /* Ensure text aligns nicely */
+    text-align: left;
+}
+
+.profile-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.profile-avatar-wrapper {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    margin-bottom: 12px;
+}
+
+.profile-avatar {
+    width: 100%;
+    height: 100%;
+    border-radius: 12px; /* Rounded square styling closer to typical dev profiles, or 50% for circle */
+    object-fit: cover;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.verified-badge {
+    position: absolute;
+    bottom: -4px;
+    right: -4px;
+    background-color: #2563eb; /* Blue badge */
+    color: white;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    border: 2px solid #1a1a1a; /* Match card bg */
+    font-weight: bold;
+}
+
+.profile-name {
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0;
+    color: rgb(248, 250, 252);
+}
+
+.profile-handle {
+    font-size: 14px;
+    color: rgba(248, 250, 252, 0.5);
+    margin: 0;
+}
+
+.profile-bio {
+    font-size: 14px;
+    line-height: 1.5;
+    color: rgba(248, 250, 252, 0.8);
+}
+
+.profile-location {
+    font-size: 13px;
+    color: rgba(248, 250, 252, 0.5);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.profile-location::before {
+    /* Simple map pin if no icon library is loaded */
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(248, 250, 252, 0.5)' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z' /%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M15 11a3 3 0 11-6 0 3 3 0 016 0z' /%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+.profile-stats {
+    margin-top: auto;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+}
+
+.stat-label {
+    color: rgba(248, 250, 252, 0.5);
+}
+
+.stat-value {
+    font-weight: 600;
+    color: rgb(248, 250, 252);
+    font-feature-settings: "tnum";
+}
+</style>

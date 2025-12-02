@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASCII Wallpaper 2 - CRT Swirl</title>
+    <link rel="icon" href="../../icon/ig.ico" type="image/x-icon">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../../css/styles.css">
+    <link rel="stylesheet" href="./crt-swirl.css">
+</head>
+<body class="crt-page">
+    <!-- Animated Grid Background Placeholder -->
+    <div id="animated-background-placeholder"></div>
+    
+    <!-- Site Header Placeholder -->
+    <div id="site-header-placeholder"></div>
+
+    <!-- CRT Swirl Background -->
+    <div class="crt-effect-container">
+        <div class="crt-overlay"></div>
+        <h1 class="crt-title" id="crtTitle"></h1>
+        <div class="text-grid" id="textGrid"></div>
+        
+        <!-- CRT Effects -->
+        <div class="scanlines"></div>
+        <div class="phosphor-glow"></div>
+    </div>
+
+    <!-- Control Panel -->
+    <div class="crt-controls">
+        <div class="control-panel">
+            <button class="crt-btn" id="playPauseBtn">⏸️ Pause</button>
+            <button class="crt-btn" id="speedBtn">🚀 Speed</button>
+            <button class="crt-btn" id="resetBtn">🔄 Reset</button>
+            <button class="crt-btn" id="backBtn" onclick="window.location.href='../index.html'">← Back</button>
+        </div>
+        
+        <div class="info-panel">
+            <div class="info-item">
+                <span>CRT Swirl Animation</span>
+            </div>
+            <div class="info-item">
+                <span>Retro Terminal Effect</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <!-- Custom Cursor -->
+    <script src="../../js/custom-cursor.js"></script>
+    
+    <script type="module" src="../../js/modules/musicPlayer.js"></script>
+    <script type="module" src="../../js/modules/playerIntegration.js"></script>
+    <script src="../../js/script.js"></script>
+    <script src="../../js/mobile-menu.js"></script>
+    <script src="./crt-swirl.js"></script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playground 3 - Particle Flow System</title>
+    <meta name="description" content="3D Particle Flow System with TorusKnot Geometry and Custom Shaders">
+    
+    <!-- Icons -->
+    <link rel="icon" href="../../icon/ig.ico" type="image/x-icon">
+    
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r162/three.min.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            color: #00ff41;
+        }
+
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #back-button {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid rgba(0, 255, 65, 0.7);
+            color: #00ff41;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        #back-button:hover {
+            background: rgba(0, 255, 65, 0.1);
+            border-color: #00ff41;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+        }
+
+        #info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 1000;
+            color: rgba(255, 255, 255, 0.6);
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            max-width: 300px;
+        }
+
+        #controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            color: rgba(255, 255, 255, 0.6);
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        .control-item {
+            margin-bottom: 5px;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ff41;
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            z-index: 1001;
+        }
+
+        .loading-dots::after {
+            content: '';
+            animation: dots 1.5s infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        canvas {
+            display: block;
+            outline: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <a href="../index.html" id="back-button">← Back to Playground</a>
+        
+        <div id="loading" class="loading-dots">Initializing Particle System</div>
+        
+        <div id="controls">
+            <div class="control-item">Mouse: Orbit Camera</div>
+            <div class="control-item">Scroll: Zoom</div>
+            <div class="control-item">Particles: 262,144</div>
+        </div>
+        
+        <div id="info">
+            <div>TorusKnot Particle Flow System</div>
+            <div>Custom Shaders & GPU Computing</div>
+            <div>Real-time Fluid Simulation</div>
+            <div>Post-processing Effects</div>
+        </div>
+    </div>
+
+    <script src="./particle-system.js"></script>
+</body>
+</html>

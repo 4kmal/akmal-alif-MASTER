@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASCII Wallpaper 1 - Matrix Animation</title>
+    <link rel="icon" href="../../icon/ig.ico" type="image/x-icon">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../../css/styles.css">
+    <link rel="stylesheet" href="./ascii-playground.css">
+</head>
+<body class="playground-page">
+    <!-- Animated Grid Background Placeholder -->
+    <div id="animated-background-placeholder"></div>
+    
+    <!-- ASCII Background Animation -->
+    <div class="ascii-background-container">
+        <div class="ascii-animation" id="asciiAnimation"></div>
+    </div>
+
+    <!-- Site Header Placeholder -->
+    <div id="site-header-placeholder"></div>
+
+    <!-- Content -->
+    <div class="playground-content">
+        <div class="playground-main">
+            <div class="playground-card">
+                <div class="playground-header">
+                    <h1 class="playground-title">ASCII Matrix</h1>
+                    <p class="playground-subtitle">Interactive Matrix-Style Animation</p>
+                </div>
+                
+                <div class="playground-controls">
+                    <button class="control-btn" id="playPauseBtn">Pause</button>
+                    <button class="control-btn" id="speedBtn">Speed</button>
+                    <button class="control-btn" id="resetBtn">Reset</button>
+                    <button class="control-btn" id="backBtn" onclick="window.location.href='../index.html'">← Back</button>
+                </div>
+
+                <div class="playground-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Animation FPS:</span>
+                        <span class="stat-value" id="fpsCounter">60</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Characters:</span>
+                        <span class="stat-value" id="charCounter">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Patterns:</span>
+                        <span class="stat-value" id="patternCounter">1</span>
+                    </div>
+                </div>
+
+                <div class="playground-description">
+                    <p>Experience the classic Matrix-style digital rain effect with falling ASCII characters. This animation features dynamic character streams that cascade down the screen with realistic fade effects and customizable speed controls.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <!-- Custom Cursor -->
+    <script src="../../js/custom-cursor.js"></script>
+    
+    <script type="module" src="../../js/modules/musicPlayer.js"></script>
+    <script type="module" src="../../js/modules/playerIntegration.js"></script>
+    <script src="../../js/script.js"></script>
+    <script src="../../js/mobile-menu.js"></script>
+    <script src="./ascii-animation.js"></script>
+</body>
+</html>

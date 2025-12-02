@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Akmal Alif</title>
+  <link rel="icon" href="./icon/ig.ico" type="image/x-icon">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/styles.css">
+  
+  <!-- Vercel Analytics & Speed Insights -->
+  <script src="./js/analytics.js"></script>
+  <script src="./js/speed-insights.js"></script>
+  <script src="./js/navigation-analytics.js"></script>
+  <script src="./js/vercel-monitoring.js"></script>
+</head>
+<body>
+  <!-- Animated Grid Background Placeholder -->
+  <div id="animated-background-placeholder"></div>
+
+  <!-- Site Header Placeholder -->
+  <div id="site-header-placeholder"></div>
+
+  <div id="swipe-overlay"></div>
+
+  <!-- Adjust main container to account for fixed header -->
+  <div class="main-container">
+    <div class="home-content-wrapper"> <!-- New wrapper for three columns -->
+      <div id="tracklist-panel-placeholder"></div> <!-- Placeholder for the tracklist panel -->
+      
+      <div class="main-content-column"> <!-- Center column for existing card -->
+        <div class="card">
+
+      
+
+      <!-- Section 1: Profile Header -->
+      <div class="section profile-header">
+        <div class="profile-container">
+            <!-- Profile Picture -->
+            <div class="profile-pic">
+                <img src="./assets/picture/pfp.webp" alt="Profile Picture" class="pfp-fallback" />
+                <div class="frame-overlay"></div>
+                <!-- Retro Progress Bar has been moved to header -->
+            </div>
+            
+            <!-- Add "I am" typing effect -->
+            <div class="typing-effect">
+                <span class="static-text">I am a</span>
+                <div class="dynamic-text-wrapper">
+                <ul class="dynamic-text">
+                        <li><span>producer</span></li>
+                        <li><span>ui/ux designer</span></li>
+                        <li><span>full stack developer</span></li>
+                        <li><span>data hoarder</span></li>
+                        <li><span>𓅓</span></li>
+                        <li><span>?</span></li>
+                            <li><span><img src="./icon/profile.gif" alt="Special Link" style="height: 20px; width: auto;"></span></li>
+                </ul>
+                </div>
+            </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Blurbs & My Links -->
+      <div class="section blurbs">
+         <p class="description">
+              
+         </p>
+         <!-- Links Container -->
+         <div class="links-container" id="linksContainer">
+             <div class="links-inner" id="linksInner">
+                 <a href="#" target="_blank"><img src="./icon/linkedin.webp" alt="LinkedIn"/><span>LinkedIn</span></a>
+                 <a href="#" target="_blank"><img src="./icon/instagram.webp" alt="Instagram"/><span>Instagram</span></a>
+                 <a href="#" class="link-github"><img src="./icon/github.webp" alt="GitHub"/><span>GitHub</span></a>
+                 <a href="#" class="link-spotify" target="_blank"><img src="./icon/spotify.webp" alt="Spotify"/><span>Spotify</span></a>
+                 <a href="#" class="link-apple-music" target="_blank"><img src="./icon/applemusic.webp" alt="Apple Music"/><span>Apple Music</span></a>
+                 <a href="#" class="link-soundcloud" target="_blank"><img src="./icon/soundcloud.webp" alt="Soundcloud"/><span>Soundcloud</span></a>
+                 
+                 <a href="#" class="link-vsco" target="_blank"><img src="./icon/white vsco.webp" alt="VSCO"/><span>VSCO</span></a>
+                 <a href="#"><img src="./icon/youtube.webp" alt="YouTube"/><span>YouTube</span></a>
+                 <a href="#"><img src="./icon/tiktok.webp" alt="TikTok"/><span>TikTok</span></a>
+             </div>
+         </div>
+      </div>
+
+      <!-- Music Player Section Placeholder -->
+      <div id="music-player-section-placeholder"></div>
+
+      <!-- Vinyl Section Placeholder -->
+      <div id="vinyl-section-placeholder"></div>
+
+    </div> <!-- End .card -->
+      </div> <!-- End .main-content-column -->
+      
+      <!-- Clock Widget Panel (Right Column) -->
+      <div id="clock-widget-placeholder"></div>
+      
+    </div> <!-- End .home-content-wrapper -->
+
+    <!-- Onboarding Tooltip (Place outside card, but positioned relative to viewport by JS) -->
+    <div id="onboarding-tooltip" class="onboarding-tooltip">
+        <div class="tooltip-arrow"></div>
+        Click the switch to toggle between dark or light mode
+        <button id="onboarding-okay-btn">Okay</button>
+    </div>
+
+  </div> <!-- End .main-container -->
+
+  <!-- Custom Cursor -->
+  <script src="./js/custom-cursor.js"></script>
+  
+  <!-- Music Player Modules -->
+  <script type="module" src="./js/modules/musicPlayer.js"></script>
+  <script type="module" src="./js/modules/playerIntegration.js"></script>
+  <!-- Fallback standalone music player for debugging -->
+  <script src="./js/musicPlayer-standalone.js"></script>
+  <script src="./js/script.js"></script>
+  <script src="./js/mobile-menu.js"></script>
+  <script src="./js/mobile-tracklist.js"></script>
+</body>
+</html>

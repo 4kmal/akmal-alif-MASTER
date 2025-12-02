@@ -1,0 +1,983 @@
+/* ========== CREATIVE PLAYGROUND STYLES ========== */
+/* AWGE-inspired design with modern aesthetics */
+
+/* Font Declarations */
+@font-face {
+    font-family: 'press-start';
+    src: url('../assets/fonts/press-start.ttf') format('truetype');
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'varsity';
+    src: url('../assets/fonts/varsity.ttf') format('truetype'),
+         url('https://dwvo2npct47gg.cloudfront.net/fonts/varsity.ttf') format('truetype');
+    font-display: swap;
+}
+
+/* Color Variables */
+:root {
+    --playground-green: #39620A;
+    --playground-yellow: #F4EB75;
+    --playground-red: #F45555;
+    --playground-blue: #395CC9;
+    --playground-bg: #000000;
+    --playground-text: #ffffff;
+    --playground-accent: #00ff41;
+}
+
+/* Body and Layout - Override existing styles for playground only */
+body.playground-page {
+    background: var(--playground-bg) !important;
+    color: var(--playground-text) !important;
+    font-family: 'varsity', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    overflow-x: hidden !important;
+    position: relative !important;
+    /* Override existing body flex layout for playground */
+    display: block !important;
+    align-items: initial !important;
+    justify-content: initial !important;
+    min-height: 100vh !important;
+}
+
+.playground-wrapper {
+    min-height: 100vh;
+    position: relative;
+    z-index: 2;
+    /* Account for header height */
+    padding-top: calc(var(--header-total-clearance-height, 80px) + 20px);
+}
+
+/* ========== AWGE-STYLE HOME SECTION ========== */
+.playground-home {
+    position: relative;
+    height: 15vh;
+    min-height: 120px;
+    background: linear-gradient(45deg, #000000, #1a1a1a);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.playground-hero-visual {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: 
+        radial-gradient(circle at 20% 50%, rgba(57, 98, 10, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(244, 235, 117, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 40% 80%, rgba(244, 85, 85, 0.1) 0%, transparent 50%);
+    animation: heroVisualPulse 8s ease-in-out infinite;
+}
+
+.glitch-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 2px,
+            rgba(255, 255, 255, 0.03) 2px,
+            rgba(255, 255, 255, 0.03) 4px
+        );
+    animation: glitchScan 0.1s infinite linear;
+}
+
+/* ========== NAVBAR SECTION ========== */
+.playground-navbar {
+    padding: 10px 0;
+    text-align: center;
+    position: relative;
+    z-index: 10;
+}
+
+/* .playground-navbar-text {
+    font-family: 'press-start', monospace;
+    font-size: 1.2rem;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    text-shadow: 0 0 15px rgba(255, 255, 255, 0.4);
+}*/
+
+.creative-letter {
+    display: inline-block;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.creative-letter[data-color="green"] {
+    color: var(--playground-green);
+    text-shadow: 0 0 10px var(--playground-green);
+}
+
+.creative-letter[data-color="yellow"] {
+    color: var(--playground-yellow);
+    text-shadow: 0 0 10px var(--playground-yellow);
+}
+
+.creative-letter[data-color="red"] {
+    color: var(--playground-red);
+    text-shadow: 0 0 10px var(--playground-red);
+}
+
+.creative-letter[data-color="blue"] {
+    color: var(--playground-blue);
+    text-shadow: 0 0 10px var(--playground-blue);
+}
+
+.creative-letter:hover {
+    transform: scale(1.2) rotate(5deg);
+    filter: brightness(1.5);
+}
+
+/* ========== MAIN CONTENT ========== */
+.playground-content {
+    position: relative;
+    padding: 40px 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* Stars Background 
+.playground-stars {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: -1;
+    background: 
+        radial-gradient(2px 2px at 20px 30px, rgba(255, 255, 255, 0.3), transparent),
+        radial-gradient(2px 2px at 40px 70px, rgba(244, 235, 117, 0.4), transparent),
+        radial-gradient(1px 1px at 90px 40px, rgba(244, 85, 85, 0.3), transparent),
+        radial-gradient(1px 1px at 130px 80px, rgba(57, 156, 201, 0.3), transparent),
+        radial-gradient(2px 2px at 160px 30px, rgba(255, 255, 255, 0.2), transparent);
+    background-repeat: repeat;
+    background-size: 200px 100px;
+    animation: starField 20s linear infinite;
+}*/
+
+/* ========== TITLE SECTION ========== */
+.playground-title-container {
+    text-align: center;
+    margin: 30px 0;
+    position: relative;
+}
+
+.playground-main-title {
+    font-family: 'press-start', monospace;
+    font-size: clamp(2rem, 5vw, 4rem);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin: 0;
+    position: relative;
+}
+
+/* Shimmer Effect (AWGE Style) */
+.shimmer-text-effect {
+    position: relative;
+    display: inline-block;
+}
+
+.shimmer-neon {
+    color: transparent;
+    background: linear-gradient(
+        90deg,
+        var(--playground-accent) 0%,
+        var(--playground-yellow) 25%,
+        var(--playground-red) 50%,
+        var(--playground-blue) 75%,
+        var(--playground-accent) 100%
+    );
+    background-size: 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: shimmerFlow 3s ease-in-out infinite;
+    text-shadow: 
+        0 0 10px var(--playground-accent),
+        0 0 20px var(--playground-accent),
+        0 0 30px var(--playground-accent);
+}
+
+.shimmer-gradient {
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.4),
+        transparent
+    );
+    animation: shimmerSweep 2s infinite;
+}
+
+.shimmer-spotlight {
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(
+        circle,
+        rgba(0, 255, 65, 0.1) 0%,
+        transparent 70%
+    );
+    animation: spotlightRotate 10s linear infinite;
+}
+
+/* ========== 3D CAROUSEL SECTION (AWGE-Style) ========== */
+.playground-carousel {
+    margin: 40px 0;
+    display: flex;
+    justify-content: center;
+}
+
+/* Tablet spacing adjustments */
+@media (min-width: 481px) and (max-width: 1024px) {
+    .playground-carousel {
+        margin: 30px 0; /* Reduced spacing for tablets */
+    }
+    
+    .playground-carousel-container {
+        width: 25vw; /* Smaller on tablets */
+        height: 20vh;
+        min-height: 140px;
+        perspective: 5000px;
+    }
+    
+    .playground-tool-card {
+        width: calc(25vw - 4px);
+    }
+    
+    .playground-info-row {
+        margin: 25px 0;
+        gap: 18px;
+    }
+}
+
+.playground-carousel-container {
+    position: relative;
+    perspective: 6000px; /* Reduced to accommodate smaller translateZ */
+    width: 20vw;
+    height: 25vh;
+    min-height: 160px;
+    margin: auto;
+}
+
+.playground-carousel-carousel {
+    height: 100%;
+    width: 100%;
+    position: absolute;
+    transform-style: preserve-3d;
+    transition: transform 1s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* 3D Tool Cards */
+.playground-tool-card {
+    display: block;
+    position: absolute;
+    width: calc(20vw - 4px);
+    height: calc(100% - 4px);
+    opacity: 0.95;
+    border: 3px solid rgba(0, 255, 65, 0.7);
+    overflow: hidden;
+    cursor: pointer;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+    border-radius: 1px;
+}
+
+.playground-tool-card:hover {
+    opacity: 1;
+    border-color: var(--playground-yellow);
+    box-shadow: 
+        0 0 20px rgba(0, 255, 65, 0.3),
+        inset 0 0 20px rgba(0, 255, 65, 0.1);
+}
+
+.playground-tool-card.current-tool {
+    cursor: pointer;
+    border-color: var(--playground-accent);
+    opacity: 1;
+    box-shadow: 
+        0 0 30px rgba(0, 255, 65, 0.5),
+        inset 0 0 20px rgba(0, 255, 65, 0.2);
+}
+
+.playground-tool-card.coming-soon {
+    opacity: 0.6;
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.playground-tool-card.coming-soon:hover {
+    opacity: 0.8;
+}
+
+.tool-preview {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+}
+
+/* Tool GIF/Image in 3D carousel */
+.tool-gif {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    user-drag: none;
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-drag: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    pointer-events: none;
+}
+
+.tool-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
+    padding: 10px;
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.playground-tool-card:hover .tool-overlay,
+.playground-tool-card.current-tool .tool-overlay {
+    opacity: 1;
+}
+
+.tool-overlay h3 {
+    font-family: 'press-start', monospace;
+    font-size: 0.6rem;
+    margin: 0 0 4px 0;
+    color: var(--playground-accent);
+    text-shadow: 0 0 5px var(--playground-accent);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.tool-overlay p {
+    font-size: 0.5rem;
+    margin: 0;
+    color: rgba(255, 255, 255, 0.8);
+    letter-spacing: 0.5px;
+    line-height: 1.2;
+}
+
+/* ========== TOOL PREVIEW STYLES ========== */
+
+/* ASCII Preview */
+.ascii-preview {
+    background: radial-gradient(circle at center, #001100 0%, #000000 100%);
+}
+
+.matrix-rain {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
+    font-size: 1.5rem;
+    animation: matrixFlow 2s infinite ease-in-out;
+}
+
+.matrix-rain span {
+    color: var(--playground-accent);
+    font-family: 'Courier New', monospace;
+    text-shadow: 0 0 10px var(--playground-accent);
+    animation: matrixChar 1s infinite ease-in-out;
+}
+
+.matrix-rain span:nth-child(odd) {
+    animation-delay: 0.5s;
+}
+
+/* Glitch Preview */
+.glitch-preview {
+    background: linear-gradient(45deg, #1a0000, #000000);
+    position: relative;
+}
+
+.glitch-text {
+    font-family: 'press-start', monospace;
+    font-size: 2rem;
+    color: var(--playground-red);
+    text-shadow: 0 0 15px var(--playground-red);
+    position: relative;
+}
+
+.glitch-text::before,
+.glitch-text::after {
+    content: attr(data-text);
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.glitch-text::before {
+    animation: glitchBefore 0.3s infinite;
+    color: #ff0000;
+    z-index: -1;
+}
+
+.glitch-text::after {
+    animation: glitchAfter 0.3s infinite;
+    color: #0000ff;
+    z-index: -2;
+}
+
+.glitch-lines {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: repeating-linear-gradient(
+        90deg,
+        transparent,
+        transparent 2px,
+        rgba(255, 0, 0, 0.1) 2px,
+        rgba(255, 0, 0, 0.1) 4px
+    );
+    animation: glitchLines 0.1s infinite linear;
+}
+
+/* CRT Preview */
+.crt-preview {
+    background: radial-gradient(circle at center, #001a00 0%, #000000 100%);
+    position: relative;
+}
+
+.swirl-effect {
+    animation: swirlRotate 4s infinite linear;
+}
+
+.crt-text {
+    font-family: 'press-start', monospace;
+    font-size: 1.8rem;
+    color: var(--playground-accent);
+    text-shadow: 0 0 15px var(--playground-accent);
+    letter-spacing: 3px;
+}
+
+.crt-scanlines {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(transparent 50%, rgba(0, 255, 65, 0.1) 50%);
+    background-size: 100% 4px;
+    animation: scanlineMove 0.1s linear infinite;
+}
+
+/* Coming Soon Preview */
+.coming-soon-preview {
+    background: linear-gradient(135deg, var(--playground-blue), var(--playground-red));
+}
+
+.rocket-icon {
+    font-size: 3rem;
+    margin-bottom: 15px;
+    animation: rocketFloat 2s ease-in-out infinite;
+}
+
+.coming-soon-text {
+    font-family: 'press-start', monospace;
+    font-size: 1rem;
+    color: white;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+}
+
+/* ========== INFO SECTION ========== */
+.playground-info {
+    margin: 30px 0;
+}
+
+.playground-info-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 30px 0;
+    gap: 20px;
+}
+
+.playground-info-control {
+    font-family: 'press-start', monospace;
+    font-size: 2rem;
+    color: var(--playground-accent);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-shadow: 0 0 10px var(--playground-accent);
+    user-select: none;
+    padding: 10px 20px;
+}
+
+.playground-info-control:hover {
+    transform: scale(1.2);
+    color: var(--playground-yellow);
+    text-shadow: 0 0 20px var(--playground-yellow);
+}
+
+.playground-info-title,
+.playground-info-description {
+    font-family: 'press-start', monospace;
+    text-align: center;
+    color: var(--playground-text);
+    position: relative;
+}
+
+.playground-info-title {
+    font-size: clamp(1.2rem, 3vw, 2rem);
+    margin: 0;
+    letter-spacing: 2px;
+}
+
+.playground-info-description {
+    font-size: clamp(0.8rem, 2vw, 1.2rem);
+    margin: 0 auto;
+    letter-spacing: 1px;
+    color: rgba(255, 255, 255, 0.8);
+    max-width: 80%;
+}
+
+/* Launch Button */
+.playground-launch-button {
+    font-family: 'press-start', monospace;
+    background: linear-gradient(45deg, var(--playground-accent), var(--playground-yellow));
+    border: none;
+    padding: 15px 30px;
+    font-size: 1rem;
+    color: black;
+    letter-spacing: 2px;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    border-radius: 5px;
+}
+
+.playground-launch-button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 30px var(--playground-accent);
+}
+
+.button-glitch {
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    transition: left 0.5s;
+}
+
+.playground-launch-button:hover .button-glitch {
+    left: 100%;
+}
+
+/* ========== COPYRIGHT ========== */
+.playground-copyright {
+    text-align: center;
+    margin: 40px 0 20px 0;
+    padding: 20px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.playground-copyright-text {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.6);
+    line-height: 1.6;
+    margin: 0;
+}
+
+.playground-tc {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+/* ========== GLITCH TEXT EFFECT (AWGE Style) ========== */
+.playground-text-glitch {
+    position: relative;
+    animation: textGlitch 3s infinite;
+}
+
+.playground-text-glitch::before,
+.playground-text-glitch::after {
+    content: attr(data-text);
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.8;
+}
+
+.playground-text-glitch::before {
+    animation: glitchBefore 0.3s infinite;
+    color: var(--playground-red);
+    z-index: -1;
+}
+
+.playground-text-glitch::after {
+    animation: glitchAfter 0.3s infinite;
+    color: var(--playground-blue);
+    z-index: -2;
+}
+
+/* Turn On Effect (AWGE Style) */
+.playground-tool-card.turn-on {
+    animation: turnOnEffect 1s ease-out;
+}
+
+@keyframes turnOnEffect {
+    0% {
+        transform: scale(1, 0.8) translate3d(0, 0, 0);
+        filter: brightness(30);
+        opacity: 1;
+    }
+    19.1% {
+        transform: scale(1, 0.8) translate3d(0, 100%, 0);
+    }
+    19.7% {
+        transform: scale(1, 0.8) translate3d(0, -100%, 0);
+        opacity: 1;
+    }
+    49.35% {
+        transform: scale(1.3, 0.6) translate3d(0, 100%, 0);
+        filter: brightness(30);
+        opacity: 0;
+    }
+    60% {
+        transform: scale(1, 1) translate3d(0, 0, 0);
+        filter: contrast(0) brightness(0) saturate(1);
+        opacity: 0;
+    }
+    100% {
+        transform: scale(1, 1) translate3d(0, 0, 0);
+        filter: contrast(1.075) brightness(1.14) saturate(1.3);
+        opacity: 1;
+    }
+}
+
+/* Noise Animation */
+@keyframes noiseAnim {
+    0% { clip: rect(42px, 9999px, 44px, 0); }
+    5% { clip: rect(12px, 9999px, 59px, 0); }
+    10% { clip: rect(48px, 9999px, 29px, 0); }
+    15.0% { clip: rect(42px, 9999px, 73px, 0); }
+    20% { clip: rect(63px, 9999px, 27px, 0); }
+    25% { clip: rect(34px, 9999px, 55px, 0); }
+    30.0% { clip: rect(86px, 9999px, 73px, 0); }
+    35% { clip: rect(20px, 9999px, 20px, 0); }
+    40% { clip: rect(26px, 9999px, 60px, 0); }
+    45% { clip: rect(25px, 9999px, 86px, 0); }
+    50% { clip: rect(67px, 9999px, 11px, 0); }
+    55.0% { clip: rect(79px, 9999px, 65px, 0); }
+    60.0% { clip: rect(37px, 9999px, 72px, 0); }
+    65% { clip: rect(71px, 9999px, 75px, 0); }
+    70% { clip: rect(83px, 9999px, 13px, 0); }
+    75% { clip: rect(53px, 9999px, 82px, 0); }
+    80.0% { clip: rect(93px, 9999px, 31px, 0); }
+    85% { clip: rect(78px, 9999px, 65px, 0); }
+    90% { clip: rect(29px, 9999px, 88px, 0); }
+    95% { clip: rect(28px, 9999px, 35px, 0); }
+    100% { clip: rect(87px, 9999px, 84px, 0); }
+}
+
+/* ========== CRT MONITOR EFFECT (AWGE Style) ========== */
+.playground-wrapper.awge-tube-shape {
+    /* Don't override existing playground-wrapper styles, just add CRT effect */
+    position: relative;
+}
+
+.playground-wrapper.awge-tube-shape::after {
+    content: " ";
+    display: block;
+    position: fixed; /* Fixed to cover the entire viewport */
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(18, 16, 16, 0.1);
+    opacity: 0;
+    z-index: 999; /* High z-index to be above content but below modals */
+    pointer-events: none;
+    animation: flicker 0.15s infinite;
+}
+
+.playground-wrapper.awge-tube-shape::before {
+    content: " ";
+    display: block;
+    position: fixed; /* Fixed to cover the entire viewport */
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+    z-index: 998; /* Slightly lower than flicker effect */
+    background-size: 100% 2px, 3px 100%;
+    pointer-events: none;
+}
+
+/* ========== ANIMATIONS ========== */
+
+@keyframes flicker {
+    0% { opacity: 0.18382489; }
+    5% { opacity: 0.34270544; }
+    10% { opacity: 0.96586561; }
+    15% { opacity: 0.72077474; }
+    20% { opacity: 0.2364895; }
+    25% { opacity: 0.70936118; }
+    30% { opacity: 0.00409007; }
+    35% { opacity: 0.65961344; }
+    40% { opacity: 0.50734813; }
+    45% { opacity: 0.88146788; }
+    50% { opacity: 0.0465525; }
+    55% { opacity: 0.33315262; }
+    60% { opacity: 0.36203894; }
+    65% { opacity: 0.68575812; }
+    70% { opacity: 0.77522172; }
+    75% { opacity: 0.75757868; }
+    80% { opacity: 0.60799146; }
+    85% { opacity: 0.77076662; }
+    90% { opacity: 0.90846953; }
+    95% { opacity: 0.02312783; }
+    100% { opacity: 0.15431698; }
+}
+
+@keyframes heroVisualPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+}
+
+@keyframes glitchScan {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+@keyframes starField {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-100px); }
+}
+
+@keyframes shimmerFlow {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+@keyframes shimmerSweep {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+@keyframes spotlightRotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes matrixFlow {
+    0% { opacity: 0.7; }
+    50% { opacity: 1; }
+    100% { opacity: 0.7; }
+}
+
+@keyframes matrixChar {
+    0%, 100% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.1); opacity: 1; }
+}
+
+@keyframes glitchBefore {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(-2px); }
+    40% { transform: translateX(-2px); }
+    60% { transform: translateX(2px); }
+    80% { transform: translateX(2px); }
+    100% { transform: translateX(0); }
+}
+
+@keyframes glitchAfter {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(2px); }
+    40% { transform: translateX(2px); }
+    60% { transform: translateX(-2px); }
+    80% { transform: translateX(-2px); }
+    100% { transform: translateX(0); }
+}
+
+@keyframes glitchLines {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(2px); }
+}
+
+@keyframes swirlRotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes scanlineMove {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(4px); }
+}
+
+@keyframes rocketFloat {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    50% { transform: translateY(-10px) rotate(5deg); }
+}
+
+@keyframes textGlitch {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(-2px) skew(2deg); }
+    40% { transform: translateX(-2px) skew(2deg); }
+    60% { transform: translateX(2px) skew(-2deg); }
+    80% { transform: translateX(2px) skew(-2deg); }
+    100% { transform: translateX(0); }
+}
+
+/* ========== RESPONSIVE DESIGN ========== */
+@media (max-width: 768px) {
+    .playground-home {
+        height: 10vh;
+        min-height: 80px;
+    }
+    
+    /*.playground-navbar-text {
+        font-size: 0.9rem;
+        letter-spacing: 1px;
+    }*/
+    
+    .playground-main-title {
+        font-size: 1.8rem;
+    }
+    
+    .playground-title-container {
+        margin: 20px 0;
+    }
+    
+    .playground-carousel {
+        margin: 15px 0; /* Reduced from 20px to prevent overlapping */
+    }
+    
+    /* Mobile 3D carousel adjustments - Fixed overlapping */
+    .playground-carousel-container {
+        width: 30vw; /* Further reduced to prevent overlapping */
+        height: 14vh; /* Reduced for better proportions */
+        min-height: 100px; /* Smaller minimum height */
+        perspective: 3000px; /* Further reduced for 12vw translateZ */
+        margin: 0 auto; /* Center the container */
+    }
+    
+    .playground-tool-card {
+        width: calc(30vw - 4px); /* Match container width */
+        height: calc(100% - 4px);
+        border-width: 2px; /* Thinner borders on mobile */
+    }
+    
+    .tool-overlay h3 {
+        font-size: 0.5rem;
+    }
+    
+    .tool-overlay p {
+        font-size: 0.4rem;
+    }
+    
+    .playground-info-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 15px 0; /* Further reduced to prevent overlap */
+        gap: 10px; /* Reduced gap */
+        padding: 0 10px; /* Add horizontal padding for mobile */
+    }
+    
+    .playground-info-control {
+        font-size: 1.5rem !important; /* Smaller controls on mobile */
+        padding: 5px 10px !important;
+    }
+    
+    .playground-info-description {
+        max-width: 95%;
+    }
+}
+
+@media (max-width: 480px) {
+    .playground-carousel {
+        margin: 10px 0; /* Even less margin for very small screens */
+    }
+    
+    .playground-carousel-container {
+        width: 28vw; /* Even smaller for phones */
+        height: 12vh;
+        min-height: 90px;
+        perspective: 4000px;
+    }
+    
+    .playground-tool-card {
+        width: calc(28vw - 4px);
+    }
+    .playground-navbar-text {
+        font-size: 0.8rem;
+        letter-spacing: 1px;
+    }
+    
+    .playground-main-title {
+        font-size: 1.5rem;
+    }
+    
+    .playground-content {
+        padding: 20px 10px;
+    }
+    
+    .matrix-rain {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        font-size: 1.2rem;
+    }
+    
+    .glitch-text,
+    .crt-text {
+        font-size: 1.2rem;
+    }
+    
+    .rocket-icon {
+        font-size: 2rem;
+    }
+    
+    .playground-launch-button {
+        padding: 12px 20px;
+        font-size: 0.8rem;
+    }
+}
+
+/* Dark Mode Support */
+body.dark .playground-tool-card {
+    background: rgba(40, 40, 40, 0.9);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+body.dark .playground-tool-card:hover {
+    border-color: var(--playground-accent);
+}

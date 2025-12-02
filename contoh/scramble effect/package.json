@@ -1,0 +1,87 @@
+{
+  "name": "use-scramble",
+  "author": "Tolis Christodoulou <me@tol.is>",
+  "homepage": "https://use-scramble.dev",
+  "repository": "https://github.com/tol-is/use-scramble",
+  "description": "React hook for random text animations",
+  "keywords": [
+    "typescript",
+    "react",
+    "hook",
+    "animation",
+    "scramble",
+    "typewriter",
+    "random text",
+    "text animation",
+    "randomizer",
+    "yugop"
+  ],
+  "version": "2.2.15",
+  "license": "MIT",
+  "module": "dist/use-scramble.esm.js",
+  "main": "dist/index.js",
+  "typings": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=10"
+  },
+  "scripts": {
+    "dev": "concurrently \"yarn start\" \"yarn playground\"",
+    "playground": "parcel playground/index.html",
+    "start": "tsdx watch",
+    "build": "tsdx build",
+    "test": "tsdx test --passWithNoTests",
+    "lint": "tsdx lint",
+    "prepare": "tsdx build",
+    "size": "size-limit",
+    "analyze": "size-limit --why"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "tsdx lint"
+    }
+  },
+  "prettier": {
+    "printWidth": 80,
+    "semi": true,
+    "singleQuote": true,
+    "trailingComma": "es5"
+  },
+  "size-limit": [
+    {
+      "path": "./dist/use-scramble.cjs.production.min.js",
+      "import": "{ useScramble }",
+      "limit": "1KB"
+    },
+    {
+      "path": "./dist/use-scramble.esm.js",
+      "import": "{ useScramble }",
+      "limit": "1KB"
+    }
+  ],
+  "devDependencies": {
+    "@size-limit/preset-small-lib": "^4.8.0",
+    "@types/react": "^18.0.26",
+    "@types/react-dom": "^18.0.9",
+    "concurrently": "^7.6.0",
+    "husky": "^8.0.2",
+    "iphigenia-in-aulis": "^1.0.0",
+    "leva": "^0.9.34",
+    "parcel": "^2.8.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "size-limit": "^4.8.0",
+    "tsdx": "^0.14.1",
+    "tslib": "^2.4.1",
+    "typescript": "^4.9.3"
+  },
+  "peerDependencies": {
+    "react": ">=16",
+    "react-dom": ">=16"
+  }
+}

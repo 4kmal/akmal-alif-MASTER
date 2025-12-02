@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello Polis</title>
+    <meta name="description" content="Get in touch with Akmal Alif through our interactive chat interface">
+    
+    <!-- Icons -->
+    <link rel="icon" href="../icon/ig.ico" type="image/x-icon">
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Core Styles -->
+    <link rel="stylesheet" href="../css/styles.css">
+    
+    <!-- Contact Specific Styles -->
+    <link rel="stylesheet" href="./contact-styles.css">
+    
+    <!-- Vercel Analytics & Speed Insights -->
+    <script src="../js/analytics.js"></script>
+    <script src="../js/speed-insights.js"></script>
+    <script src="../js/navigation-analytics.js"></script>
+    <script src="../js/vercel-monitoring.js"></script>
+</head>
+<body class="contact-page">
+    <!-- Animated Text Vortex Background -->
+    <div id="text-grid"></div>
+    <div id="animated-background-placeholder"></div>
+    
+    <!-- Header -->
+    <div id="site-header-placeholder"></div>
+    
+    <!-- Swipe Overlay for Mobile -->
+    <div id="swipe-overlay"></div>
+    
+    <!-- Main Contact Content -->
+    <div class="contact-wrapper">
+        <div class="contact-container">
+            <!-- Chat Header -->
+            <div class="chat-header">
+                <div class="contact-avatar">
+                    <div class="avatar-circle">
+                        <span class="avatar-text">AA</span>
+                    </div>
+                    <div class="contact-status">
+                        <div class="status-dot"></div>
+                        <span class="status-text">Online</span>
+                    </div>
+                </div>
+                <div class="contact-info">
+                    <h1 class="contact-name">4kmal4lif</h1>
+                    <p class="contact-subtitle">𓂀𓋹𓁈𓃠𓆃☥𓅓𓆣 a.k.a 10x Engineer a.k.a ፏዐጋ a.k.a g̸̢̲̏͠ö̸̢̮̺̲́̀̈́̈́̌̉̄̓͋̽̍͋̑̔͠ḑ̸̨̛̱͕͇̝̗̗̙̖̐͛̑̈͗̏̆̒̄̉̈́̿̍̏̓ͅ 
+                    </p>
+                </div>
+            </div>
+
+            <!-- Chat Messages Area -->
+            <div class="chat-messages-container" id="chatMessagesContainer">
+                <div class="chat-messages" id="chatMessages">
+                    <!-- Initial welcome message -->
+                    <div class="message assistant-message" data-message-id="1">
+                        <div class="message-content">
+                            <p class="message-text" data-message-id="1">Hello! How can I help you today?</p>
+                            <span class="message-time" data-message-id="1">12:00:00 AM | 01/01/2025</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Typing indicator (hidden by default) -->
+                    <div class="message assistant-message typing-message" id="typingIndicator" style="display: none;">
+                        <div class="message-content">
+                            <div class="typing-dots">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Messages end reference for auto-scroll -->
+                    <div id="messagesEnd"></div>
+                </div>
+                
+                <!-- Scroll to Bottom Button -->
+                <div class="scroll-to-bottom" id="scrollToBottom" title="Scroll to bottom">
+                    ↓
+                </div>
+            </div>
+
+            <!-- Chat Input Area -->
+            <div class="chat-input-container">
+                <!-- Left Side: Attachment & Image Buttons -->
+                <div class="chat-input-left">
+                    <button class="attachment-btn" id="attachmentBtn" title="Attach file">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M21.44 11.05L12.25 20.24C11.03 21.46 9.37 22.13 7.64 22.13C5.91 22.13 4.25 21.46 3.03 20.24C1.81 19.02 1.14 17.36 1.14 15.63C1.14 13.9 1.81 12.24 3.03 11.02L10.59 3.46C11.37 2.68 12.43 2.25 13.52 2.25C14.61 2.25 15.67 2.68 16.45 3.46C17.23 4.24 17.66 5.3 17.66 6.39C17.66 7.48 17.23 8.54 16.45 9.32L10.1 15.67C9.71 16.06 9.18 16.28 8.63 16.28C8.08 16.28 7.55 16.06 7.16 15.67C6.77 15.28 6.55 14.75 6.55 14.2C6.55 13.65 6.77 13.12 7.16 12.73L12.8 7.09" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                    
+                    <button class="image-btn" id="imageBtn" title="Add image">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" stroke="currentColor" stroke-width="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5" stroke="currentColor" stroke-width="2"/>
+                            <path d="M21 15L16 10L5 21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Center: Input Field -->
+                <div class="chat-input-wrapper">
+                    <input 
+                        type="text" 
+                        class="chat-input" 
+                        id="chatInput" 
+                        placeholder="Type a message..." 
+                        autocomplete="off"
+                        maxlength="500"
+                    >
+
+                    <button class="voice-btn" id="voiceBtn" title="Voice message">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2C13.1046 2 14 2.89543 14 4V12C14 13.1046 13.1046 14 12 14C10.8954 14 10 13.1046 10 12V4C10 2.89543 10.8954 2 12 2Z" stroke="currentColor" stroke-width="2"/>
+                            <path d="M19 10V12C19 16.4183 15.4183 20 11 20H11C6.58172 20 3 16.4183 3 12V10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <path d="M12 20V24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <path d="M8 24H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Right Side: Send Button -->
+                <div class="chat-input-right">
+                    <button class="send-btn" id="sendBtn" title="Send message" disabled>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="../js/custom-cursor.js"></script>
+    <script src="../js/use-scramble/vanilla-scramble.js"></script>
+    <script type="module" src="../js/modules/musicPlayer.js"></script>
+    <script type="module" src="../js/modules/playerIntegration.js"></script>
+    <script src="../js/script.js"></script>
+    <script src="../js/mobile-menu.js"></script>
+    <script src="../js/mobile-tracklist.js"></script>
+    <script src="./text-vortex.js"></script>
+    <script src="./contact-script.js"></script>
+</body>
+</html>

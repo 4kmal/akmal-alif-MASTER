@@ -1,0 +1,239 @@
+<!-- Animated Grid Background -->
+<div class="animated-grid-background">
+  <div class="grid-base"></div>
+  <div class="grid-pattern" id="gridPattern"></div>
+  <div class="grid-overlay"></div>
+</div>
+
+<script>
+// ========== REUSABLE ANIMATED GRID BACKGROUND SYSTEM ==========
+// Vanilla JavaScript implementation of React/Framer Motion animated grid
+// Mimics useMotionValue, useSpring, and motion.div behavior
+
+(function() {
+    'use strict';
+    
+    class AnimatedGridBackground {
+        constructor() {
+            this.gridPattern = document.getElementById('gridPattern');
+            if (!this.gridPattern) {
+                console.error('❌ Grid pattern element not found!');
+                return;
+            }
+            
+            // Motion values (mimicking useMotionValue from Framer Motion)
+            this.mouseX = 0;
+            this.mouseY = 0;
+            
+            // Spring values (mimicking useSpring from Framer Motion) 
+            this.gridX = 0;
+            this.gridY = 0;
+            this.velocityX = 0;
+            this.velocityY = 0;
+            
+            // Spring configuration - EXACT match to React version
+            this.stiffness = 50;
+            this.damping = 20;
+            this.mass = 0.5;
+            
+            this.animationId = null;
+            this.isInitialized = false;
+            
+            this.init();
+        }
+        
+        init() {
+            if (!this.gridPattern || this.isInitialized) {
+                return;
+            }
+            
+            // Check for reduced motion preference
+            if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                console.log('🌌 Animated grid background: Reduced motion detected, disabling animation');
+                return;
+            }
+            
+            console.log('🌌 Animated grid background initializing...');
+            
+            // Add mouse move listener - EXACT match to React handleMouseMove
+            this.handleMouseMove = this.handleMouseMove.bind(this);
+            window.addEventListener('mousemove', this.handleMouseMove);
+            
+            // Start animation loop
+            this.animate();
+            
+            this.isInitialized = true;
+            console.log('✅ Animated grid background initialized successfully!');
+        }
+        
+        handleMouseMove(e) {
+            // EXACT match to React version handleMouseMove
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            // Calculate offset from center (±20px for subtle movement)
+            this.mouseX = ((e.clientX - centerX) / centerX) * 20;
+            this.mouseY = ((e.clientY - centerY) / centerY) * 20;
+        }
+        
+        // Spring physics animation - EXACT translation from React useSpring
+        animate() {
+            if (!this.gridPattern) {
+                return;
+            }
+            
+            // Calculate spring forces - matching React useSpring physics
+            const deltaTime = 1 / 60; // Assuming 60fps
+            
+            // Spring force calculation for X axis
+            const forceX = (this.mouseX - this.gridX) * this.stiffness;
+            const dampingForceX = this.velocityX * this.damping;
+            const accelerationX = (forceX - dampingForceX) / this.mass;
+            
+            // Update velocity and position for X
+            this.velocityX += accelerationX * deltaTime;
+            this.gridX += this.velocityX * deltaTime;
+            
+            // Spring force calculation for Y axis
+            const forceY = (this.mouseY - this.gridY) * this.stiffness;
+            const dampingForceY = this.velocityY * this.damping;
+            const accelerationY = (forceY - dampingForceY) / this.mass;
+            
+            // Update velocity and position for Y
+            this.velocityY += accelerationY * deltaTime;
+            this.gridY += this.velocityY * deltaTime;
+            
+            // Apply transform with hardware acceleration
+            this.gridPattern.style.transform = `translate3d(${this.gridX}px, ${this.gridY}px, 0)`;
+            
+            // Continue animation loop
+            this.animationId = requestAnimationFrame(() => this.animate());
+        }
+        
+        destroy() {
+            console.log('🌌 Destroying animated grid background...');
+            if (this.animationId) {
+                cancelAnimationFrame(this.animationId);
+                this.animationId = null;
+            }
+            if (this.handleMouseMove) {
+                window.removeEventListener('mousemove', this.handleMouseMove);
+            }
+            this.isInitialized = false;
+        }
+    }
+    
+    // Initialize animated grid background
+    function initAnimatedGridBackground() {
+        let backgroundInstance = null;
+        
+        // Wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                backgroundInstance = new AnimatedGridBackground();
+            });
+        } else {
+            backgroundInstance = new AnimatedGridBackground();
+        }
+        
+        // Cleanup on page unload to prevent memory leaks
+        window.addEventListener('beforeunload', () => {
+            if (backgroundInstance && typeof backgroundInstance.destroy === 'function') {
+                backgroundInstance.destroy();
+            }
+        });
+        
+        return backgroundInstance;
+    }
+    
+    // Auto-initialize when script loads
+    initAnimatedGridBackground();
+    
+    // Expose for manual initialization if needed
+    window.AnimatedGridBackground = AnimatedGridBackground;
+    window.initAnimatedGridBackground = initAnimatedGridBackground;
+    
+})();
+</script>
+
+<style>
+/* ========== ANIMATED GRID BACKGROUND STYLES ========== */
+/* CSS implementation matching the React/Framer Motion version */
+
+.animated-grid-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: -1;
+    pointer-events: none;
+}
+
+/* Base black background - matches "absolute inset-0 bg-black" */
+.grid-base {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #000000;
+}
+
+/* Grid pattern - matches the motion.div with backgroundImage */
+.grid-pattern {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    /* Exact match to React version lines 98-102 */
+    background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+    /* Exact match to React version line 102 */  
+    background-size: clamp(20px, 4vw, 40px) clamp(20px, 4vw, 40px);
+    /* The transform is applied via JavaScript to match x: gridX, y: gridY */
+}
+
+/* Gradient overlay - matches "bg-gradient-to-t from-black via-transparent to-transparent" */
+.grid-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(to top, #000000, transparent, transparent);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .grid-pattern {
+        background-size: clamp(15px, 6vw, 30px) clamp(15px, 6vw, 30px);
+    }
+}
+
+/* Performance optimizations */
+.animated-grid-background {
+    will-change: transform;
+    backface-visibility: hidden;
+    transform-style: preserve-3d;
+}
+
+.grid-pattern {
+    will-change: transform;
+    backface-visibility: hidden;
+    transform-style: preserve-3d;
+}
+
+/* Accessibility - respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    .animated-grid-background {
+        transform: none !important;
+    }
+    
+    .grid-pattern {
+        transform: none !important;
+    }
+}
+</style>
