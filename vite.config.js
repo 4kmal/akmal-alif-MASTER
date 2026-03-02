@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
-import { readdirSync, statSync } from 'fs';
+import { readdirSync, statSync, cpSync, existsSync } from 'fs';
 
 // Function to recursively find all HTML files
 function findHtmlFiles(dir, basePath = '') {
@@ -13,8 +13,8 @@ function findHtmlFiles(dir, basePath = '') {
       const fullPath = resolve(dir, file);
       const relativePath = basePath ? `${basePath}/${file}` : file;
       
-      // Skip node_modules and hidden directories
-      if (file === 'node_modules' || file.startsWith('.')) continue;
+      // Skip node_modules, hidden directories, and build output
+      if (file === 'node_modules' || file === 'dist' || file.startsWith('.')) continue;
       
       const stat = statSync(fullPath);
       
@@ -54,5 +54,20 @@ export default defineConfig({
       input: htmlEntries,
     },
   },
+  plugins: [
+    {
+      name: 'copy-static-assets',
+      closeBundle() {
+        // Copy directories with static files that are not bundled by Vite
+        // (plain <script src> tags, dynamically loaded assets, partial images)
+        const staticDirs = ['js', 'icon', 'lagu', 'album cover'];
+        for (const dir of staticDirs) {
+          if (existsSync(dir)) {
+            cpSync(dir, `dist/${dir}`, { recursive: true });
+          }
+        }
+      },
+    },
+  ],
 });
 
