@@ -3,6 +3,11 @@ const seconds = document.querySelector(".seconds .number"),
   hours = document.querySelector(".hours .number"),
   days = document.querySelector(".days .number");
 
+const DEBUG_APP = false;
+const debugLog = (...args) => {
+    if (DEBUG_APP) console.log(...args);
+};
+
 // Check if timer elements exist before starting the timer
 if (days && seconds && minutes && hours) {
 let secValue = 11,
@@ -54,15 +59,16 @@ function getBasePath() {
     const fullURL = window.location.href;
     const pathWithoutIndex = currentPath.replace(/\/index\.html$/, '/');
     
-    console.log('🌐 Path Resolution Debug:');
-    console.log(`   Full URL: ${fullURL}`);
-    console.log(`   Pathname: ${currentPath}`);
-    console.log(`   Host: ${window.location.host}`);
-    console.log(`   Protocol: ${window.location.protocol}`);
+    debugLog('🌐 Path Resolution Debug:', {
+        fullURL,
+        pathname: currentPath,
+        host: window.location.host,
+        protocol: window.location.protocol
+    });
     
     // For blog pages, we need to go up one level with '../'
     if (pathWithoutIndex.includes('/blog/')) {
-        console.log('📝 Detected blog page, using "../" base path');
+        debugLog('📝 Detected blog page, using "../" base path');
         return '../';
     }
     
@@ -72,18 +78,18 @@ function getBasePath() {
         !segment.endsWith('.html')
     );
     
-    console.log(`📁 Path segments after filtering:`, pathSegments);
+    debugLog(`📁 Path segments after filtering:`, pathSegments);
     
     if (pathSegments.length > 0) {
         // We're in a subdirectory, need to go up
         const levels = pathSegments.length;
         const basePath = '../'.repeat(levels);
-        console.log(`📂 Detected ${levels} level(s) deep, using "${basePath}" base path`);
+        debugLog(`📂 Detected ${levels} level(s) deep, using "${basePath}" base path`);
         return basePath;
     }
     
     // For root level pages, use current directory
-    console.log('🏠 At root level, using "./" base path');
+    debugLog('🏠 At root level, using "./" base path');
     return './';
 }
 
@@ -96,19 +102,19 @@ function fixPartialPaths(container, basePath) {
         return;
     }
     
-    console.log(`🔧 Starting path fixing with base path: "${basePath}"`);
-    console.log(`🔍 Container:`, container);
-    console.log(`📍 Current location: ${window.location.pathname}`);
+    debugLog(`🔧 Starting path fixing with base path: "${basePath}"`);
+    debugLog(`🔍 Container:`, container);
+    debugLog(`📍 Current location: ${window.location.pathname}`);
     
     // Helper function to fix a path
     function fixPath(originalPath) {
         // Only fix paths that start with './' 
         if (originalPath && originalPath.startsWith('./')) {
             const newPath = originalPath.replace('./', basePath);
-            console.log(`✅ Path fix: "${originalPath}" -> "${newPath}"`);
+            debugLog(`✅ Path fix: "${originalPath}" -> "${newPath}"`);
             return newPath;
         }
-        console.log(`❌ Skipping path (doesn't start with './'): "${originalPath}"`);
+        debugLog(`❌ Skipping path (doesn't start with './'): "${originalPath}"`);
         return originalPath;
     }
     
@@ -116,16 +122,16 @@ function fixPartialPaths(container, basePath) {
     
     // Fix img src attributes
     const images = container.querySelectorAll('img[src^="./"]');
-    console.log(`🖼️ Found ${images.length} images to fix`);
+    debugLog(`🖼️ Found ${images.length} images to fix`);
     images.forEach((img, index) => {
         const originalSrc = img.getAttribute('src');
         const newSrc = fixPath(originalSrc);
         img.setAttribute('src', newSrc);
-        console.log(`   Image ${index + 1}: ${originalSrc} -> ${newSrc}`);
+        debugLog(`   Image ${index + 1}: ${originalSrc} -> ${newSrc}`);
         
         // Test if the image loads correctly
         img.addEventListener('load', () => {
-            console.log(`✅ Image loaded successfully: ${newSrc}`);
+            debugLog(`✅ Image loaded successfully: ${newSrc}`);
         });
         img.addEventListener('error', () => {
             console.error(`❌ Image failed to load: ${newSrc}`);
@@ -136,45 +142,45 @@ function fixPartialPaths(container, basePath) {
     
     // Fix link href attributes  
     const links = container.querySelectorAll('a[href^="./"]');
-    console.log(`🔗 Found ${links.length} links to fix`);
+    debugLog(`🔗 Found ${links.length} links to fix`);
     links.forEach((link, index) => {
         const originalHref = link.getAttribute('href');
         const newHref = fixPath(originalHref);
         link.setAttribute('href', newHref);
-        console.log(`   Link ${index + 1}: ${originalHref} -> ${newHref}`);
+        debugLog(`   Link ${index + 1}: ${originalHref} -> ${newHref}`);
         fixedCount++;
     });
     
     // Fix script src attributes (if any)
     const scripts = container.querySelectorAll('script[src^="./"]');
-    console.log(`📜 Found ${scripts.length} scripts to fix`);
+    debugLog(`📜 Found ${scripts.length} scripts to fix`);
     scripts.forEach((script, index) => {
         const originalSrc = script.getAttribute('src');
         const newSrc = fixPath(originalSrc);
         script.setAttribute('src', newSrc);
-        console.log(`   Script ${index + 1}: ${originalSrc} -> ${newSrc}`);
+        debugLog(`   Script ${index + 1}: ${originalSrc} -> ${newSrc}`);
         fixedCount++;
     });
     
     // Fix link href attributes for stylesheets (if any)
     const stylesheets = container.querySelectorAll('link[href^="./"]');
-    console.log(`🎨 Found ${stylesheets.length} stylesheets to fix`);
+    debugLog(`🎨 Found ${stylesheets.length} stylesheets to fix`);
     stylesheets.forEach((link, index) => {
         const originalHref = link.getAttribute('href');
         const newHref = fixPath(originalHref);
         link.setAttribute('href', newHref);
-        console.log(`   Stylesheet ${index + 1}: ${originalHref} -> ${newHref}`);
+        debugLog(`   Stylesheet ${index + 1}: ${originalHref} -> ${newHref}`);
         fixedCount++;
     });
     
     // Fix any other data-src attributes
     const elementsWithDataSrc = container.querySelectorAll('[data-src^="./"]');
-    console.log(`📊 Found ${elementsWithDataSrc.length} data-src elements to fix`);
+    debugLog(`📊 Found ${elementsWithDataSrc.length} data-src elements to fix`);
     elementsWithDataSrc.forEach((element, index) => {
         const originalDataSrc = element.getAttribute('data-src');
         const newDataSrc = fixPath(originalDataSrc);
         element.setAttribute('data-src', newDataSrc);
-        console.log(`   Data-src ${index + 1}: ${originalDataSrc} -> ${newDataSrc}`);
+        debugLog(`   Data-src ${index + 1}: ${originalDataSrc} -> ${newDataSrc}`);
         fixedCount++;
     });
     
@@ -186,17 +192,17 @@ function fixPartialPaths(container, basePath) {
             if (dataSrc && dataSrc.startsWith('./')) {
                 const newDataSrc = fixPath(dataSrc);
                 img.setAttribute('data-src', newDataSrc);
-                console.log(`   Fixed lazy image data-src: ${dataSrc} -> ${newDataSrc}`);
+                debugLog(`   Fixed lazy image data-src: ${dataSrc} -> ${newDataSrc}`);
                 fixedCount++;
             }
         }
     });
     
-    console.log(`🏁 Path fixing complete! Fixed ${fixedCount} relative paths in partial`);
+    debugLog(`🏁 Path fixing complete! Fixed ${fixedCount} relative paths in partial`);
     
     // Log all remaining images for debugging
     const allImagesAfter = container.querySelectorAll('img');
-    console.log(`🔍 All images after fixing:`, Array.from(allImagesAfter).map(img => ({
+    debugLog(`🔍 All images after fixing:`, Array.from(allImagesAfter).map(img => ({
         element: img,
         src: img.getAttribute('src'),
         dataSrc: img.getAttribute('data-src'),
@@ -234,9 +240,9 @@ function executePartialLoadCallback(placeholderId, callback) {
 async function loadHtmlPartial(filePath, placeholderId, callback) {
     const fullPath = BASE_PATH + filePath; // Assumes BASE_PATH is globally available
     
-    console.log(`🚀 Loading HTML partial: ${filePath}`);
-    console.log(`   Target placeholder: ${placeholderId}`);
-    console.log(`   Full path: ${fullPath}`);
+    debugLog(`🚀 Loading HTML partial: ${filePath}`);
+    debugLog(`   Target placeholder: ${placeholderId}`);
+    debugLog(`   Full path: ${fullPath}`);
     
     try {
         const response = await fetch(fullPath);
@@ -248,10 +254,10 @@ async function loadHtmlPartial(filePath, placeholderId, callback) {
             
             for (const fallbackPath of fallbackPaths) {
                 try {
-                    console.log(`🔄 Trying fallback path: ${fallbackPath}`);
+                    debugLog(`🔄 Trying fallback path: ${fallbackPath}`);
                     const fallbackResponse = await fetch(fallbackPath);
                     if (fallbackResponse.ok) {
-                        console.log(`✅ Success with fallback path: ${fallbackPath}`);
+                        debugLog(`✅ Success with fallback path: ${fallbackPath}`);
                         const text = await fallbackResponse.text();
                         const placeholder = document.getElementById(placeholderId);
                         if (placeholder) {
@@ -259,7 +265,7 @@ async function loadHtmlPartial(filePath, placeholderId, callback) {
                             
                             // Execute common initialization logic with the successful path base
                             const successfulBasePath = fallbackPath.replace(filePath, '');
-                            console.log(`🔧 Using successful base path for fixing: ${successfulBasePath}`);
+                            debugLog(`🔧 Using successful base path for fixing: ${successfulBasePath}`);
                             fixPartialPaths(placeholder, successfulBasePath);
                             
                             // Execute other callbacks
@@ -283,7 +289,7 @@ async function loadHtmlPartial(filePath, placeholderId, callback) {
                         return; // Success, exit the function
                     }
                 } catch (fallbackError) {
-                    console.log(`❌ Fallback path ${fallbackPath} also failed:`, fallbackError);
+                    debugLog(`❌ Fallback path ${fallbackPath} also failed:`, fallbackError);
                 }
             }
             
@@ -291,7 +297,7 @@ async function loadHtmlPartial(filePath, placeholderId, callback) {
             throw new Error(`Failed to fetch ${fullPath}: ${response.status} ${response.statusText}`);
         }
         // Success with primary path
-        console.log(`✅ Primary path success: ${fullPath}`);
+        debugLog(`✅ Primary path success: ${fullPath}`);
         const text = await response.text();
         const placeholder = document.getElementById(placeholderId);
         if (placeholder) {
@@ -325,58 +331,11 @@ async function loadHtmlPartial(filePath, placeholderId, callback) {
 // Load music player modules
 async function loadMusicPlayerModules() {
     try {
-        console.log('🎵 Starting to import music player modules...');
-        
-        // Import the music player modules
-        const musicPlayerModule = await import('./modules/musicPlayer.js');
-        const playerIntegrationModule = await import('./modules/playerIntegration.js');
-        
-        console.log('🎵 Music player modules imported successfully');
-        console.log('🎵 Module contents:', {
-            musicPlayerModule: !!musicPlayerModule,
-            musicPlayerDefault: !!musicPlayerModule.default,
-            playerIntegrationModule: !!playerIntegrationModule,
-            windowPersistentPlayer: !!window.persistentPlayer,
-            windowGlobalPlayer: !!window.globalMusicPlayer
-        });
-        
-        // Ensure the persistent player is available on window
-        if (musicPlayerModule.default && !window.persistentPlayer) {
-            console.log('🎵 Assigning imported player to window...');
-            window.persistentPlayer = musicPlayerModule.default;
-            window.globalMusicPlayer = musicPlayerModule.default;
+        if (window.playerIntegration?.init) {
+            await window.playerIntegration.init();
+        } else if (!window.persistentPlayer) {
+            throw new Error('Persistent music player was not loaded by the module script.');
         }
-        
-        // Verify it's now available
-        console.log('🎵 After import assignment:', {
-            windowPersistentPlayer: !!window.persistentPlayer,
-            hasRenderMethod: typeof window.persistentPlayer?.renderTracklist === 'function',
-            trackCount: window.persistentPlayer?.tracks?.length || 0
-        });
-        
-        // Initialize the integration after a short delay to ensure DOM is ready
-        setTimeout(() => {
-            if (window.playerIntegration) {
-                window.playerIntegration.init().then(() => {
-                    console.log('✅ Player integration fully initialized');
-                    
-                    // Additional fallback to ensure tracklist is populated
-                    setTimeout(() => {
-                        if (window.persistentPlayer && typeof window.persistentPlayer.renderTracklist === 'function') {
-                            const tracklistContainer = document.getElementById('tracklist-column');
-                            const trackItems = tracklistContainer?.querySelectorAll('.track-item-card');
-                            
-                            if (!trackItems || trackItems.length === 0) {
-                                console.log('🔄 Final fallback: Re-rendering tracklist...');
-                                window.persistentPlayer.renderTracklist('#tracklist-column');
-                            }
-                        }
-                    }, 1000);
-                }).catch(error => {
-                    console.error('Player integration initialization failed:', error);
-                });
-            }
-        }, 500);
         
     } catch (error) {
         console.error('Failed to load music player modules:', error);
@@ -547,7 +506,7 @@ window.addEventListener('resize', () => {
     
     if (tracklistPanel && swipeOverlay) {
         if (isDesktop) {
-            console.log('📱➡️🖥️ Viewport changed to desktop - ensuring tracklist visibility');
+            debugLog('📱➡️🖥️ Viewport changed to desktop - ensuring tracklist visibility');
             
             // Reset all mobile-specific states and styles
             tracklistPanel.classList.remove('is-open');
@@ -565,9 +524,9 @@ window.addEventListener('resize', () => {
             document.body.style.overflow = '';
             document.body.classList.remove('mobile-menu-open');
             
-            console.log('✅ Desktop tracklist reset complete');
+            debugLog('✅ Desktop tracklist reset complete');
         } else {
-            console.log('🖥️➡️📱 Viewport changed to mobile');
+            debugLog('🖥️➡️📱 Viewport changed to mobile');
             // Ensure mobile tracklist starts closed
             tracklistPanel.classList.remove('is-open');
             swipeOverlay.classList.remove('is-active');
@@ -830,12 +789,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Give the music player a moment to initialize, then ensure tracklist is populated
             await new Promise(resolve => setTimeout(resolve, 500));
             if (window.persistentPlayer && typeof window.persistentPlayer.renderTracklist === 'function') {
-                console.log('🎵 Ensuring tracklist is populated after music player init...');
-                console.log('🎵 Music player instance check:', {
-                    persistentPlayer: !!window.persistentPlayer,
-                    tracks: window.persistentPlayer.tracks?.length || 0,
-                    renderFunction: typeof window.persistentPlayer.renderTracklist
-                });
                 window.persistentPlayer.renderTracklist('#tracklist-column');
             } else {
                 console.error('🎵 Music player not properly initialized!', {
@@ -861,31 +814,34 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.warn("'initializeNewMobileMenu' function is not defined.");
         }
 
-        console.log('All initial partials and scripts should be loaded and initialized.');
+        debugLog('All initial partials and scripts should be loaded and initialized.');
         
         // Setup debug button functionality
         
         // Final comprehensive test after everything is loaded
         setTimeout(() => {
-            console.log('🔍 Final system check:');
-            console.log('  - persistentPlayer:', !!window.persistentPlayer);
-            console.log('  - tracks count:', window.persistentPlayer?.tracks?.length || 0);
-            console.log('  - tracklist container:', !!document.getElementById('tracklist-column'));
-            console.log('  - track items container:', !!document.getElementById('track-items-container'));
-            console.log('  - rendered tracks:', document.querySelectorAll('.track-item-card').length);
-            console.log('  - clock container:', !!document.getElementById('clock-widget-placeholder'));
-            console.log('  - clock panel:', !!document.getElementById('clock-widget-panel'));
+            debugLog('🔍 Final system check:', {
+                persistentPlayer: !!window.persistentPlayer,
+                tracks: window.persistentPlayer?.tracks?.length || 0,
+                tracklistContainer: !!document.getElementById('tracklist-column'),
+                trackItemsContainer: !!document.getElementById('track-items-container'),
+                renderedTracks: document.querySelectorAll('.track-item-card').length,
+                clockContainer: !!document.getElementById('clock-widget-placeholder'),
+                clockPanel: !!document.getElementById('clock-widget-panel')
+            });
             
             // If no tracks are rendered, try one more time
             const renderedTracks = document.querySelectorAll('.track-item-card');
             if (renderedTracks.length === 0 && window.persistentPlayer?.tracks?.length > 0) {
-                console.log('🔄 No tracks found, attempting final render...');
+                debugLog('🔄 No tracks found, attempting final render...');
                 window.persistentPlayer.renderTracklist('#tracklist-column');
             }
         }, 2000);
 
         const onboardingTooltip = document.getElementById('onboarding-tooltip');
         const onboardingOkayBtn = document.getElementById('onboarding-okay-btn');
+        const toggleForTooltip = document.getElementById('headerDarkToggle') || document.querySelector('.dark-mode-toggle');
+        const hasSeenTooltip = localStorage.getItem('hasSeenDarkModeTooltip') === 'true';
 
         // This check ensures the tooltip logic only runs if the tooltip exists on the page
         if (onboardingTooltip && onboardingOkayBtn && toggleForTooltip) {
@@ -942,7 +898,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ========== ENHANCED BENTO ANCHORING SYSTEM ==========
 function initBentoAnchoring() {
-    console.log('🔗 Initializing enhanced bento anchoring system...');
+    debugLog('🔗 Initializing enhanced bento anchoring system...');
     
     const tracklistPanel = document.querySelector('.tracklist-panel');
     const clockWidget = document.querySelector('.clock-widget-panel');
@@ -1047,6 +1003,6 @@ function initBentoAnchoring() {
         });
     });
     
-    console.log('✅ Enhanced bento anchoring system initialized successfully');
-    console.log(`📦 Monitoring ${bentoElements.length} bento elements`);
+    debugLog('✅ Enhanced bento anchoring system initialized successfully');
+    debugLog(`📦 Monitoring ${bentoElements.length} bento elements`);
 }

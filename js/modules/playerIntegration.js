@@ -1,5 +1,10 @@
 // js/modules/playerIntegration.js - Integration between UI and Persistent Player
 
+const DEBUG_PLAYER_INTEGRATION = false;
+const integrationDebug = (...args) => {
+    if (DEBUG_PLAYER_INTEGRATION) console.log(...args);
+};
+
 // Helper function to format time (seconds to MM:SS)
 function formatTime(seconds) {
     if (isNaN(seconds) || seconds < 0) return "0:00";
@@ -18,40 +23,45 @@ class PlayerIntegration {
     }
 
     async init() {
-        if (this.isInitialized) return;
-        
-        // Wait for DOM elements to be available
-        await this.waitForElements();
-        
-        // Initialize the core player (loads waveforms, etc.)
-        // This needs to happen before UI elements that depend on track data (like tracklist)
-        if (this.player && typeof this.player.init === 'function') {
-            await this.player.init(); 
+        if (this.isInitialized || this.isInitializing) return;
+        this.isInitializing = true;
+
+        try {
+            // Wait for DOM elements to be available
+            await this.waitForElements();
+            
+            // Initialize the core player (loads waveforms, etc.)
+            // This needs to happen before UI elements that depend on track data (like tracklist)
+            if (this.player && typeof this.player.init === 'function') {
+                await this.player.init(); 
+            }
+            
+            // Setup event listeners
+            this.setupPlayerControls();
+            // this.setupTrackList(); // Old tracklist setup - REMOVE/COMMENT OUT
+            this.setupWaveformInteraction();
+            this.setupMinimizeButton();
+            this.setupVolumeControl();
+            this.setupTimelineHoverEffect();
+            
+            // Render the new interactive tracklist with retry mechanism
+            if (this.player && typeof this.player.renderTracklist === 'function') {
+                this.renderTracklistWithRetry();
+            }
+            
+            // Initialize UI state
+            this.updateAllUI();
+            
+            this.hookCdRotationToPlayer();
+            
+            // Add viewport change handler to ensure tracks persist
+            this.setupViewportChangeHandler();
+            
+            this.isInitialized = true;
+            integrationDebug('Player integration initialized');
+        } finally {
+            this.isInitializing = false;
         }
-        
-        // Setup event listeners
-        this.setupPlayerControls();
-        // this.setupTrackList(); // Old tracklist setup - REMOVE/COMMENT OUT
-        this.setupWaveformInteraction();
-        this.setupMinimizeButton();
-        this.setupVolumeControl();
-        this.setupTimelineHoverEffect();
-        
-        // Render the new interactive tracklist with retry mechanism
-        if (this.player && typeof this.player.renderTracklist === 'function') {
-            this.renderTracklistWithRetry();
-        }
-        
-        // Initialize UI state
-        this.updateAllUI();
-        
-        this.hookCdRotationToPlayer();
-        
-        // Add viewport change handler to ensure tracks persist
-        this.setupViewportChangeHandler();
-        
-        this.isInitialized = true;
-        console.log('Player integration initialized');
     }
 
     async waitForElements() {
@@ -64,7 +74,7 @@ class PlayerIntegration {
                 trackItemsContainer: document.getElementById('track-items-container')
             };
             
-            console.log('🔍 Checking for required elements:', {
+            integrationDebug('🔍 Checking for required elements:', {
                 playPauseBtn: !!elements.playPauseBtn,
                 waveformCanvas: !!elements.waveformCanvas,
                 waveformContainer: !!elements.waveformContainer,
@@ -81,11 +91,11 @@ class PlayerIntegration {
         };
 
         if (checkElements()) {
-            console.log('✅ All required elements found immediately');
+            integrationDebug('✅ All required elements found immediately');
             return;
         }
 
-        console.log('⏳ Waiting for elements to appear in DOM...');
+        integrationDebug('⏳ Waiting for elements to appear in DOM...');
         return new Promise(resolve => {
             let attempts = 0;
             const maxAttempts = 50; // 5 seconds max wait
@@ -93,7 +103,7 @@ class PlayerIntegration {
             const observer = new MutationObserver(() => {
                 attempts++;
                 if (checkElements()) {
-                    console.log(`✅ All elements found after ${attempts} attempts`);
+                    integrationDebug(`✅ All elements found after ${attempts} attempts`);
                     observer.disconnect();
                     resolve();
                 } else if (attempts >= maxAttempts) {
@@ -471,7 +481,7 @@ class PlayerIntegration {
         
         if (!tracklistContainer) {
             if (retryCount < maxRetries) {
-                console.log(`🎵 Tracklist container not found, retrying in ${(retryCount + 1) * 200}ms... (${retryCount + 1}/${maxRetries})`);
+                integrationDebug(`🎵 Tracklist container not found, retrying in ${(retryCount + 1) * 200}ms... (${retryCount + 1}/${maxRetries})`);
                 setTimeout(() => {
                     this.renderTracklistWithRetry(retryCount + 1, maxRetries);
                 }, (retryCount + 1) * 200);
@@ -481,17 +491,17 @@ class PlayerIntegration {
             return;
         }
         
-        console.log('🎵 Rendering tracklist to container:', tracklistContainer);
+        integrationDebug('🎵 Rendering tracklist to container:', tracklistContainer);
         this.player.renderTracklist('#tracklist-column');
         
         // Check if tracks were actually rendered
         setTimeout(() => {
             const trackItems = tracklistContainer.querySelectorAll('.track-item-card');
             if (trackItems.length === 0 && retryCount < maxRetries) {
-                console.log('🎵 No tracks rendered, retrying...');
+                integrationDebug('🎵 No tracks rendered, retrying...');
                 this.renderTracklistWithRetry(retryCount + 1, maxRetries);
             } else {
-                console.log(`🎵 Successfully rendered ${trackItems.length} tracks`);
+                integrationDebug(`🎵 Successfully rendered ${trackItems.length} tracks`);
             }
         }, 100);
     }
@@ -500,7 +510,7 @@ class PlayerIntegration {
     setupViewportChangeHandler() {
         window.addEventListener('resize', () => {
             const isDesktop = window.innerWidth > 768;
-            console.log('🎵 PlayerIntegration viewport change:', {
+            integrationDebug('🎵 PlayerIntegration viewport change:', {
                 width: window.innerWidth,
                 isDesktop,
                 currentTrack: this.player?.currentTrack,
@@ -510,7 +520,7 @@ class PlayerIntegration {
             // Re-render tracklist to ensure it's visible after viewport change
             if (this.player && typeof this.player.renderTracklist === 'function') {
                 setTimeout(() => {
-                    console.log('🎵 Re-rendering tracklist after viewport change');
+                    integrationDebug('🎵 Re-rendering tracklist after viewport change');
                     this.player.renderTracklist('#tracklist-column');
                     this.updateAllUI();
                 }, 100); // Small delay to let CSS media queries apply
@@ -617,7 +627,7 @@ export function initTracklistDragAndDrop() {
     trackItemsContainer.addEventListener('dragenter', handleDragEnter);
     trackItemsContainer.addEventListener('dragleave', handleDragLeave);
     trackItemsContainer.addEventListener('drop', handleDrop);
-    console.log('Tracklist drag and drop initialized for container.');
+    integrationDebug('Tracklist drag and drop initialized for container.');
 }
 
 // Ensure this init function is called after the tracklist panel and its items are loaded.
@@ -630,7 +640,7 @@ export function initTracklistDragAndDrop() {
 
 // Existing init function in playerIntegration.js
 export function init() {
-    console.log("Player integration module initialized.");
+    integrationDebug("Player integration module initialized.");
     // Add other initializations here if needed
     setupEventListeners();
     // Potentially call initTracklistDragAndDrop() here if track items

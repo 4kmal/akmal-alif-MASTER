@@ -1,5 +1,10 @@
 // js/modules/musicPlayer.js - Persistent Music Player Module
 
+const DEBUG_MUSIC_PLAYER = false;
+const musicDebug = (...args) => {
+    if (DEBUG_MUSIC_PLAYER) console.log(...args);
+};
+
 class PersistentMusicPlayer {
     constructor() {
         this.isInitialized = false;
@@ -38,7 +43,7 @@ class PersistentMusicPlayer {
     }
     
     initializeTracks() {
-        console.log('🎵 Initializing tracks with base path:', this.basePath);
+        musicDebug('🎵 Initializing tracks with base path:', this.basePath);
         
         this.tracks = [
             { id: 'track1', name: "friends", audio: this.getAssetPath("lagu/friends.mp3"), cd: this.getAssetPath("assets/cd/cd2.webp") },
@@ -53,8 +58,8 @@ class PersistentMusicPlayer {
             { id: 'track10', name: "🟡", audio: this.getAssetPath("lagu/test2.mp3"), cd: this.getAssetPath("assets/cd/cd4.webp") }
         ];
         
-        console.log('🎵 Tracks initialized:', this.tracks.length, 'tracks');
-        console.log('🎵 First track paths:', {
+        musicDebug('🎵 Tracks initialized:', this.tracks.length, 'tracks');
+        musicDebug('🎵 First track paths:', {
             audio: this.tracks[0].audio,
             cd: this.tracks[0].cd
         });
@@ -77,14 +82,14 @@ class PersistentMusicPlayer {
         this.updateFloatingPlayer();
         
         // Ensure the player is fully initialized
-        console.log('🎵 Music player constructor completed. Ready for integration.');
+        musicDebug('🎵 Music player constructor completed. Ready for integration.');
     }
 
     async init() {
         if (this.isInitialized) return;
         
         try {
-            console.log('🎵 Initializing Audio Context...');
+            musicDebug('🎵 Initializing Audio Context...');
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             this.analyser = this.audioContext.createAnalyser();
             this.analyser.fftSize = 1024; // Adjusted for a reasonable number of bars for frequency data
@@ -95,7 +100,7 @@ class PersistentMusicPlayer {
             this.analyser.connect(this.audioContext.destination);
             
             this.isInitialized = true;
-            console.log('✅ Audio context initialized. Waveforms will be loaded on demand.');
+            musicDebug('✅ Audio context initialized. Waveforms will be loaded on demand.');
             
         } catch (error) {
             console.error('❌ Failed to initialize audio context:', error);
@@ -112,15 +117,24 @@ class PersistentMusicPlayer {
 
         try {
             const response = await fetch(track.audio);
+            const contentType = response.headers.get('content-type') || '';
+            if (!response.ok || !contentType.includes('audio')) {
+                console.warn(`Skipping waveform for ${track.name}: invalid audio response`, {
+                    url: response.url,
+                    status: response.status,
+                    contentType
+                });
+                return;
+            }
             const arrayBuffer = await response.arrayBuffer();
             const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer.slice(0));
             
             this.audioBuffers.set(track.id, audioBuffer);
             this.waveformData.set(track.id, this.generateWaveformData(audioBuffer));
-            console.log(`Waveform loaded for ${track.name}`);
+            musicDebug(`Waveform loaded for ${track.name}`);
             this.updateMainWaveform(); // Redraw waveform now that data is available
         } catch (error) {
-            console.error(`Failed to load waveform for ${track.name}:`, error);
+            console.warn(`Failed to load waveform for ${track.name}:`, error);
         }
     }
 
@@ -182,7 +196,12 @@ class PersistentMusicPlayer {
 
         audioElement.addEventListener('error', (e) => {
             if (audioElement === this.activeAudioElement) {
-                console.error('Error with primary audio element:', e);
+                const mediaError = audioElement.error;
+                console.warn('Primary audio element error:', {
+                    src: audioElement.currentSrc || audioElement.src,
+                    code: mediaError?.code,
+                    message: mediaError?.message || 'No media error details available'
+                });
             }
         });
     }
@@ -276,7 +295,7 @@ class PersistentMusicPlayer {
         }
 
         if (this.audio.src.endsWith(track.audio) && !autoPlay && this.currentTime > 0) {
-            console.log(`Track ${track.name} already loaded. Updating UI.`);
+            musicDebug(`Track ${track.name} already loaded. Updating UI.`);
             this.currentTrack = trackId;
             if (this.isPlaying) {
                 this.play().catch(e => console.error("Error re-initiating play on loadTrack:", e));
@@ -292,7 +311,7 @@ class PersistentMusicPlayer {
         this.audio.src = track.audio;
         this.audio.preload = 'metadata';
 
-        console.log(`🎵 Loading track: ${track.name}, autoplay: ${autoPlay}, audio src: ${track.audio}`);
+        musicDebug(`🎵 Loading track: ${track.name}, autoplay: ${autoPlay}, audio src: ${track.audio}`);
         
         try {
             if (autoPlay) {
@@ -316,7 +335,7 @@ class PersistentMusicPlayer {
         this.playStartTime = performance.now(); // Track play start time for performance
         
         if (!this.isInitialized) {
-            console.log('🎵 Play called - initializing audio context...');
+            musicDebug('🎵 Play called - initializing audio context...');
             await this.init();
             if (!this.isInitialized) {
                 console.error("❌ Cannot play: AudioContext failed to initialize.");
@@ -351,7 +370,12 @@ class PersistentMusicPlayer {
                     playLatency < 100 ? 'good' : playLatency < 300 ? 'needs-improvement' : 'poor');
             }
         } catch (error) {
-            console.error('Error during play attempt:', error);
+            console.warn('Music playback failed:', {
+                track: this.getCurrentTrack()?.name,
+                src: this.audio.currentSrc || this.audio.src,
+                errorName: error.name,
+                message: error.message
+            });
             this.isPlaying = false;
             this.updateUI();
             this.saveState();
@@ -859,14 +883,14 @@ class PersistentMusicPlayer {
         const nextTrack = this.tracks[nextIndex];
 
         if (nextTrack && this.secondaryAudio.src !== nextTrack.audio) {
-            console.log(`Preloading next track: ${nextTrack.name}`);
+            musicDebug(`Preloading next track: ${nextTrack.name}`);
             this.secondaryAudio.src = nextTrack.audio;
             this.secondaryAudio.load();
         }
     }
 
     renderTracklist(containerSelector) {
-        console.log('🎵 renderTracklist called with selector:', containerSelector);
+        musicDebug('🎵 renderTracklist called with selector:', containerSelector);
         
         const container = document.querySelector(containerSelector);
         if (!container) {
@@ -876,18 +900,18 @@ class PersistentMusicPlayer {
             return;
         }
         
-        console.log('🎵 Container found:', container);
+        musicDebug('🎵 Container found:', container);
         
         // Look for the track items container, or use the main container if not found
         const trackItemsContainer = container.querySelector('#track-items-container') || container;
-        console.log('🎵 Track items container:', trackItemsContainer);
+        musicDebug('🎵 Track items container:', trackItemsContainer);
         
         trackItemsContainer.innerHTML = ''; // Clear existing track items only
         
-        console.log('🎵 Rendering', this.tracks.length, 'tracks');
+        musicDebug('🎵 Rendering', this.tracks.length, 'tracks');
 
         this.tracks.forEach((track, index) => {
-            console.log(`🎵 Rendering track ${index + 1}:`, track.name);
+            musicDebug(`🎵 Rendering track ${index + 1}:`, track.name);
             const trackItemEl = document.createElement('div');
             trackItemEl.className = 'track-item-card';
             trackItemEl.dataset.trackId = track.id;
@@ -906,7 +930,7 @@ class PersistentMusicPlayer {
             trackItemEl.addEventListener('click', (e) => {
                 // Prevent click from firing if dragging the handle
                 if (e.target !== dragHandleEl) {
-                    console.log(`🎵 Track clicked: ${track.name} (${track.id})`);
+                    musicDebug(`🎵 Track clicked: ${track.name} (${track.id})`);
                     this.loadTrack(track.id, true);
                 }
             });
@@ -920,7 +944,7 @@ class PersistentMusicPlayer {
         
         // Verify the tracks were rendered
         const renderedItems = trackItemsContainer.querySelectorAll('.track-item-card');
-        console.log('🎵 Successfully rendered', renderedItems.length, 'track items');
+        musicDebug('🎵 Successfully rendered', renderedItems.length, 'track items');
         
         if (renderedItems.length === 0) {
             console.error('🎵 ERROR: No tracks were rendered! Debugging info:', {
@@ -1062,7 +1086,7 @@ if (typeof window !== 'undefined') {
     // Force a reference to make sure it's accessible
     window.globalMusicPlayer = persistentPlayerInstance;
     
-    console.log('🎵 persistentPlayer created and assigned to window:', {
+    musicDebug('🎵 persistentPlayer created and assigned to window:', {
         exists: !!window.persistentPlayer,
         globalExists: !!window.globalMusicPlayer,
         hasRenderMethod: typeof window.persistentPlayer?.renderTracklist === 'function',
@@ -1078,7 +1102,7 @@ export default persistentPlayerInstance;
 function resizeIpodVisualizer() {
   const container = document.getElementById('ipodGreenScreen');
   const canvas = document.getElementById('ipod-visualizer');
-  console.log('🔧 Resize Visualizer:', {
+  musicDebug('🔧 Resize Visualizer:', {
     container: !!container,
     canvas: !!canvas,
     containerRect: container ? container.getBoundingClientRect() : 'N/A'
@@ -1088,26 +1112,26 @@ function resizeIpodVisualizer() {
     const rect = container.getBoundingClientRect();
     canvas.width = rect.width;
     canvas.height = rect.height;
-    console.log('🔧 Canvas resized to:', rect.width, 'x', rect.height);
+    musicDebug('🔧 Canvas resized to:', rect.width, 'x', rect.height);
   }
 }
 window.addEventListener('resize', resizeIpodVisualizer);
 window.addEventListener('DOMContentLoaded', () => {
-  console.log('🚀 DOM Content Loaded - initializing visualizer...');
+  musicDebug('🚀 DOM Content Loaded - initializing visualizer...');
   resizeIpodVisualizer();
   
   // Force initialize the music player if not already done
   if (window.persistentPlayer) {
     // Ensure the visualizer starts running even without music
     if (typeof window.persistentPlayer.updateIpodVisualizer === 'function') {
-      console.log('🚀 Starting visualizer...');
+      musicDebug('🚀 Starting visualizer...');
       window.persistentPlayer.updateIpodVisualizer();
     }
     
     // Trigger the player initialization to create audio context
     if (typeof window.persistentPlayer.init === 'function') {
       window.persistentPlayer.init().then(() => {
-        console.log('🚀 Player initialized on DOM load');
+        musicDebug('🚀 Player initialized on DOM load');
       }).catch(e => {
         console.error('🚀 Player initialization failed on DOM load:', e);
       });
