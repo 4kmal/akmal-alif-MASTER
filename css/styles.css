@@ -1943,7 +1943,9 @@ body.dark .mobile-submenu-link:hover {
 /* Mobile/Tablet (< 1280px) */
 @media (max-width: 1279px) {
     .home-content-wrapper {
-        display: block; /* Stack vertically */
+        display: flex; /* Stack vertically and keep the card centered */
+        flex-direction: column;
+        align-items: center;
     }
 
     /* Tracklist becomes slide-out drawer on mobile */
@@ -1970,6 +1972,17 @@ body.dark .mobile-submenu-link:hover {
     
     .main-content-column {
         width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .main-content-column .card {
+        width: min(100%, 800px);
+        margin-left: auto;
+        margin-right: auto;
     }
 }
 
