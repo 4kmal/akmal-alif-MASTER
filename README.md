@@ -6,6 +6,51 @@ This repository is not a framework app. There is no React, Vue, Svelte, routing 
 
 ## Architecture
 
+### Codebase Map
+
+```mermaid
+flowchart TD
+    Root[Repository Root] --> Config[vite.config.js]
+    Root --> Package[package.json and pnpm-lock.yaml]
+    Root --> Home[index.html]
+    Root --> BlogIndex[blog.html]
+    Root --> Contact[contact/index.html]
+    Root --> BlogPosts[blog/*.html]
+    Root --> Playground[playground/**/*.html]
+    Root --> Partials[partials/**/*.html]
+    Root --> Styles[css/**/*.css]
+    Root --> Scripts[js/**/*.js]
+    Root --> Assets[assets/, icon/, lagu/, album cover/]
+    Root --> Examples[contoh/]
+
+    Config --> EntryScan[Recursive HTML entry discovery]
+    EntryScan --> Home
+    EntryScan --> BlogIndex
+    EntryScan --> Contact
+    EntryScan --> BlogPosts
+    EntryScan --> Playground
+    EntryScan --> Partials
+
+    Home --> Styles
+    BlogIndex --> Styles
+    Contact --> Styles
+    BlogPosts --> Styles
+    Playground --> Styles
+
+    Home --> Scripts
+    BlogIndex --> Scripts
+    Contact --> Scripts
+    BlogPosts --> Scripts
+    Playground --> Scripts
+
+    Scripts --> Analytics[Vercel Analytics]
+    Scripts --> Navigation[Navigation and menus]
+    Scripts --> Music[Music player]
+    Scripts --> Effects[Cursor, playground, visual effects]
+```
+
+The site is organized as static HTML pages plus shared CSS, shared browser JavaScript, and static media. `vite.config.js` is the central build configuration and automatically treats visible `.html` files as build entries.
+
 ### Runtime Model
 
 - The app is a static multi-page website.
@@ -25,6 +70,53 @@ The scanner skips:
 - Hidden directories such as `.kilo/` and `.git/`
 
 Because entries are discovered dynamically, adding a new visible `.html` file anywhere in the repo makes it part of the Vite build unless it is inside a skipped directory.
+
+### Build Pipeline
+
+```mermaid
+flowchart LR
+    Install[pnpm install] --> Dependencies[node_modules via pnpm]
+    Dependencies --> Build[pnpm build]
+    Build --> Vite[Vite]
+    Vite --> Scan[findHtmlFiles repository scan]
+    Scan --> Inputs[Rollup HTML inputs]
+    Inputs --> Bundle[Bundle module scripts and CSS assets]
+    Bundle --> Dist[dist/]
+    Vite --> CopyPlugin[copy-static-assets plugin]
+    CopyPlugin --> CopyJs[Copy js/]
+    CopyPlugin --> CopyIcon[Copy icon/]
+    CopyPlugin --> CopyMusic[Copy lagu/]
+    CopyPlugin --> CopyCovers[Copy album cover/]
+    CopyJs --> Dist
+    CopyIcon --> Dist
+    CopyMusic --> Dist
+    CopyCovers --> Dist
+    Dist --> Deploy[Vercel static deployment]
+```
+
+Vite bundles module-based entries, emits processed HTML into `dist/`, and then the custom plugin copies static folders that are loaded directly by browser paths or dynamic runtime code.
+
+### Browser Runtime Flow
+
+```mermaid
+sequenceDiagram
+    participant User as Visitor Browser
+    participant Page as HTML Page
+    participant ViteAssets as Built CSS/JS Assets
+    participant StaticFiles as Copied Static Files
+    participant Vercel as Vercel Analytics
+
+    User->>Page: Request route, for example /blog.html
+    Page->>ViteAssets: Load bundled CSS and module scripts
+    Page->>StaticFiles: Load classic scripts, icons, music, images
+    ViteAssets->>Page: Initialize shared UI behavior
+    ViteAssets->>Vercel: inject() Web Analytics script
+    User->>Page: Click links, menus, music controls, forms
+    Page->>ViteAssets: Existing window.analytics helpers track events
+    ViteAssets->>Vercel: Send page views and custom events
+```
+
+Each page is independently loadable. Shared scripts provide common behavior, while `js/analytics.js` initializes the official Vercel Analytics browser package and preserves the existing `window.analytics` helper API used across the codebase.
 
 ### Main Areas
 
