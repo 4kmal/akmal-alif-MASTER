@@ -1,32 +1,22 @@
-// analytics.js - Vercel Analytics Implementation for Vanilla JavaScript
+// analytics.js - Vercel Analytics implementation for this static Vite site.
+
+import { inject, track } from '@vercel/analytics';
 
 class VercelAnalytics {
     constructor() {
         this.initialized = false;
         this.debug = false; // Set to true for development
-        this.endpoint = 'https://va.vercel-scripts.com/v1/script.js';
     }
 
     // Initialize analytics
     init() {
         if (this.initialized) return;
 
-        // Load Vercel Analytics script
-        const script = document.createElement('script');
-        script.src = this.endpoint;
-        script.async = true;
-        script.defer = true;
-        
-        // Add script to head
-        document.head.appendChild(script);
-        
-        // Track page views automatically
-        this.trackPageView();
-        
+        inject();
         this.initialized = true;
         
         if (this.debug) {
-            console.log('🔍 Vercel Analytics initialized');
+            console.log('Vercel Analytics initialized');
         }
     }
 
@@ -44,26 +34,16 @@ class VercelAnalytics {
         this.track('pageview', pageData);
         
         if (this.debug) {
-            console.log('📊 Page view tracked:', pageData);
+            console.log('Page view tracked:', pageData);
         }
     }
 
     // Track custom events
     track(eventName, eventData = {}) {
-        // Wait for Vercel Analytics to load
-        if (typeof window.va !== 'undefined') {
-            window.va('event', eventName, eventData);
-        } else {
-            // Retry after script loads
-            setTimeout(() => {
-                if (typeof window.va !== 'undefined') {
-                    window.va('event', eventName, eventData);
-                }
-            }, 1000);
-        }
+        track(eventName, eventData);
         
         if (this.debug) {
-            console.log(`📈 Event tracked: ${eventName}`, eventData);
+            console.log(`Event tracked: ${eventName}`, eventData);
         }
     }
 
