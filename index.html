@@ -19,14 +19,29 @@
   <div id="animated-background-placeholder"></div>
 
   <!-- Site Header Placeholder -->
-  <div id="site-header-placeholder"></div>
+  <div id="site-header-placeholder">
+    <div class="site-header site-header-skeleton" aria-hidden="true">
+      <div class="site-header-skeleton-inner">
+        <span class="skeleton-dot"></span>
+        <span class="skeleton-pill skeleton-nav-pill"></span>
+        <span class="skeleton-pill skeleton-toggle-pill"></span>
+      </div>
+    </div>
+  </div>
 
   <div id="swipe-overlay"></div>
 
   <!-- Adjust main container to account for fixed header -->
   <div class="main-container">
     <div class="home-content-wrapper"> <!-- New wrapper for three columns -->
-      <div id="tracklist-panel-placeholder"></div> <!-- Placeholder for the tracklist panel -->
+      <div id="tracklist-panel-placeholder">
+        <div class="home-skeleton tracklist-skeleton" aria-hidden="true">
+          <span class="skeleton-line skeleton-title"></span>
+          <span class="skeleton-line"></span>
+          <span class="skeleton-line"></span>
+          <span class="skeleton-line"></span>
+        </div>
+      </div> <!-- Placeholder for the tracklist panel -->
       
       <div class="main-content-column"> <!-- Center column for existing card -->
         <div class="card">
@@ -84,16 +99,41 @@
       </div>
 
       <!-- Music Player Section Placeholder -->
-      <div id="music-player-section-placeholder"></div>
+      <div id="music-player-section-placeholder">
+        <div class="home-skeleton music-player-skeleton" aria-hidden="true">
+          <div class="skeleton-album"></div>
+          <div class="skeleton-player-row">
+            <span class="skeleton-control"></span>
+            <span class="skeleton-control skeleton-control-main"></span>
+            <span class="skeleton-control"></span>
+          </div>
+        </div>
+      </div>
 
       <!-- Vinyl Section Placeholder -->
-      <div id="vinyl-section-placeholder"></div>
+      <div id="vinyl-section-placeholder">
+        <div class="home-skeleton vinyl-skeleton" aria-hidden="true">
+          <span class="skeleton-line skeleton-title"></span>
+          <div class="skeleton-disc-row">
+            <span class="skeleton-disc"></span>
+            <span class="skeleton-disc skeleton-disc-large"></span>
+            <span class="skeleton-disc"></span>
+          </div>
+        </div>
+      </div>
 
     </div> <!-- End .card -->
       </div> <!-- End .main-content-column -->
       
       <!-- Clock Widget Panel (Right Column) -->
-      <div id="clock-widget-placeholder"></div>
+      <div id="clock-widget-placeholder">
+        <div class="home-skeleton clock-skeleton" aria-hidden="true">
+          <span class="skeleton-avatar"></span>
+          <span class="skeleton-line skeleton-title"></span>
+          <span class="skeleton-line"></span>
+          <span class="skeleton-line skeleton-short"></span>
+        </div>
+      </div>
       
     </div> <!-- End .home-content-wrapper -->
 

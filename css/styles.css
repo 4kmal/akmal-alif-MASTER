@@ -1765,6 +1765,225 @@ body.dark .mobile-submenu-link:hover {
   }
 }
 
+
+/* ---------- First Paint Skeletons ---------- */
+.home-skeleton,
+.site-header-skeleton-inner {
+    position: relative;
+    overflow: hidden;
+    background: rgba(26, 26, 26, 0.72);
+    border: 1px solid rgba(107, 114, 128, 0.35);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+.home-skeleton::before,
+.site-header-skeleton-inner::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+    100% { transform: translateX(100%); }
+}
+
+.skeleton-line,
+.skeleton-pill,
+.skeleton-dot,
+.skeleton-album,
+.skeleton-control,
+.skeleton-disc,
+.skeleton-avatar {
+    display: block;
+    position: relative;
+    z-index: 1;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.site-header-skeleton {
+    pointer-events: none;
+}
+
+.site-header-skeleton-inner {
+    height: 56px;
+    border-radius: 16px;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+}
+
+.skeleton-dot {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+}
+
+.skeleton-pill {
+    height: 18px;
+    border-radius: 999px;
+}
+
+.skeleton-nav-pill { width: 160px; }
+.skeleton-toggle-pill { width: 52px; }
+
+.home-skeleton {
+    border-radius: 16px;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+.tracklist-skeleton,
+.clock-skeleton {
+    display: none;
+}
+
+.music-player-skeleton {
+    min-height: 360px;
+    margin: 30px auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+}
+
+.vinyl-skeleton {
+    min-height: 220px;
+    margin: 20px auto;
+}
+
+.skeleton-title {
+    width: 55%;
+    height: 18px;
+    border-radius: 999px;
+    margin-bottom: 18px;
+}
+
+.skeleton-line {
+    height: 14px;
+    width: 100%;
+    border-radius: 999px;
+    margin-bottom: 12px;
+}
+
+.skeleton-short { width: 64%; }
+
+.skeleton-album {
+    width: 180px;
+    height: 180px;
+    border-radius: 18px;
+}
+
+.skeleton-player-row,
+.skeleton-disc-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    position: relative;
+    z-index: 1;
+}
+
+.skeleton-control {
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+}
+
+.skeleton-control-main {
+    width: 52px;
+    height: 52px;
+}
+
+.skeleton-disc {
+    width: 96px;
+    height: 96px;
+    border-radius: 999px;
+}
+
+.skeleton-disc-large {
+    width: 132px;
+    height: 132px;
+}
+
+.skeleton-avatar {
+    width: 76px;
+    height: 76px;
+    border-radius: 18px;
+    margin-bottom: 18px;
+}
+
+@media (min-width: 1280px) {
+    .tracklist-skeleton,
+    .clock-skeleton {
+        display: block;
+        min-height: 320px;
+    }
+}
+
+@media (max-width: 900px) {
+    .profile-container {
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        min-height: auto;
+        overflow: hidden;
+    }
+
+    .profile-pic {
+        margin: 0 auto;
+    }
+
+    .typing-effect {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        text-align: center;
+    }
+
+    .typing-effect .dynamic-text-wrapper {
+        max-width: min(100%, 520px);
+    }
+
+    .typing-effect .dynamic-text li {
+        justify-content: center;
+        white-space: normal;
+        text-align: center;
+    }
+}
+
+@media (max-width: 600px) {
+    .site-header-skeleton-inner {
+        padding: 0 16px;
+    }
+
+    .skeleton-nav-pill {
+        width: 92px;
+    }
+
+    .music-player-skeleton {
+        min-height: 300px;
+    }
+
+    .skeleton-album {
+        width: 140px;
+        height: 140px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .home-skeleton::before,
+    .site-header-skeleton-inner::before {
+        animation: none;
+    }
+}
+
 /* Bento Style Tracklist Section */
 .tracklist-bento-section {
   /* Add some spacing if needed, e.g., margin-top: 20px; */

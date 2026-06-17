@@ -774,14 +774,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        // Load other HTML partials (ensure their placeholder IDs exist in your HTML)
-        await loadHtmlPartial('partials/music-player-section.html', 'music-player-section-placeholder');
-        await loadHtmlPartial('partials/vinyl-section.html', 'vinyl-section-placeholder');
-        await loadHtmlPartial('partials/bento/bento-tracklist.html', 'tracklist-panel-placeholder');
-        
-        // Give the tracklist a moment to load before loading clock widget
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await loadHtmlPartial('partials/bento/bento-clock.html', 'clock-widget-placeholder');
+        // Load independent page partials in parallel to reduce first-render layout shift.
+        await Promise.all([
+            loadHtmlPartial('partials/music-player-section.html', 'music-player-section-placeholder'),
+            loadHtmlPartial('partials/vinyl-section.html', 'vinyl-section-placeholder'),
+            loadHtmlPartial('partials/bento/bento-tracklist.html', 'tracklist-panel-placeholder'),
+            loadHtmlPartial('partials/bento/bento-clock.html', 'clock-widget-placeholder')
+        ]);
 
         // Initialize other functions that depend on the full DOM / loaded partials
         setupDarkModeToggles();
