@@ -710,15 +710,6 @@ class PersistentMusicPlayer {
 
     updateIpodVisualizer() {
         const canvas = document.getElementById('ipod-visualizer');
-        console.log('🎥 Visualizer Debug:', {
-            canvas: !!canvas,
-            canvasSize: canvas ? `${canvas.width}x${canvas.height}` : 'N/A',
-            isInitialized: this.isInitialized,
-            analyser: !!this.analyser,
-            isPlaying: this.isPlaying,
-            currentTrack: this.currentTrack
-        });
-        
         if (!canvas || !this.isInitialized || !this.analyser) { // Added isInitialized check
             // Clear canvas or draw idle if analyser not ready
             if(canvas) {

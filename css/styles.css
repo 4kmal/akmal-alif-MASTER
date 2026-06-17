@@ -2026,9 +2026,8 @@ body.dark .mobile-submenu-link:hover {
 }
 
 .tracklist-bento-grid .track-item.active-track {
-  border-left: 5px solid var(--accent-color-green); /* Or your theme's accent color */
   background-color: var(--accent-color-dark-green); /* Slightly different bg for active */
-  box-shadow: 0 6px 15px rgba(var(--accent-color-green-rgb), 0.3);
+  box-shadow: 0 6px 15px rgba(0, 0, 0, 0.18);
 }
 
 .tracklist-bento-grid .track-item .track-number {
@@ -2233,8 +2232,7 @@ body.dark .mobile-submenu-link:hover {
   background-color: var(--primary-accent-color-translucent, rgba(106, 0, 173, 0.3));
   /* FLUID PLAYING STATE with enhanced visual feedback */
   transform: scale(1.01);
-  box-shadow: 0 2px 8px rgba(106, 0, 173, 0.2);
-  border-left: 3px solid var(--primary-accent-color, #6A0DAD);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 .track-item-card:active {

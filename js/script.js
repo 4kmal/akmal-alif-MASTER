@@ -602,9 +602,11 @@ window.addEventListener('resize', handleResizeLinks);
 const darkToggle = document.getElementById('darkToggle');
 const body = document.body;
 function applyDarkMode(isDark) {
-    if (!body) return; // Check if body exists
-    body.classList.toggle('dark', isDark);
-    localStorage.setItem('darkMode', String(isDark));
+    const enabled = Boolean(isDark);
+    document.documentElement.classList.toggle('dark', enabled);
+    if (body) body.classList.toggle('dark', enabled);
+    localStorage.setItem('theme', enabled ? 'dark' : 'light');
+    localStorage.setItem('darkMode', String(enabled));
     updateLinksScrollableState(); // Call this after class change
 }
 
@@ -781,6 +783,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadHtmlPartial('partials/bento/bento-tracklist.html', 'tracklist-panel-placeholder'),
             loadHtmlPartial('partials/bento/bento-clock.html', 'clock-widget-placeholder')
         ]);
+        document.dispatchEvent(new CustomEvent('profile-metrics:targets-ready'));
 
         // Initialize other functions that depend on the full DOM / loaded partials
         setupDarkModeToggles();
@@ -861,7 +864,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('All initial partials and scripts should be loaded and initialized.');
         
         // Setup debug button functionality
-        setupDebugButton();
         
         // Final comprehensive test after everything is loaded
         setTimeout(() => {
@@ -937,71 +939,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 // document.addEventListener('DOMContentLoaded', setupEmptyLinkPopups);
 // document.addEventListener('DOMContentLoaded', generateBlogOutline); 
 // etc., if they were previously separate.
-
-// ========== DEBUG BUTTON FUNCTIONALITY ==========
-function setupDebugButton() {
-    const debugBtn = document.getElementById('debug-render-tracks');
-    if (debugBtn) {
-        debugBtn.addEventListener('click', () => {
-            console.log('🐛 Debug: Manual render tracks clicked');
-            console.log('🐛 persistentPlayer exists:', !!window.persistentPlayer);
-            console.log('🐛 globalMusicPlayer exists:', !!window.globalMusicPlayer);
-            console.log('🐛 simpleMusicPlayer exists:', !!window.simpleMusicPlayer);
-            console.log('🐛 tracks array:', window.persistentPlayer?.tracks?.length || window.globalMusicPlayer?.tracks?.length || window.simpleMusicPlayer?.tracks?.length);
-            console.log('🐛 All window properties:', Object.keys(window).filter(k => k.toLowerCase().includes('music') || k.toLowerCase().includes('player')));
-            
-            const player = window.persistentPlayer || window.globalMusicPlayer || window.simpleMusicPlayer;
-            
-            if (player && player.renderTracklist) {
-                player.renderTracklist('#tracklist-column');
-                
-                // Check if rendering worked
-                setTimeout(() => {
-                    const tracks = document.querySelectorAll('.track-item-card');
-                    console.log('🐛 Tracks rendered after manual trigger:', tracks.length);
-                    if (tracks.length === 0) {
-                        console.log('🐛 Manual rendering failed - trying fallback...');
-                        // Fallback: manually add a few test tracks
-                        const container = document.getElementById('track-items-container');
-                        if (container && player.tracks) {
-                            container.innerHTML = player.tracks.map(track => 
-                                `<div class="track-item-card" data-track-id="${track.id}">
-                                    <span class="track-item-name">${track.name}</span>
-                                    <span class="track-item-drag-handle">☰</span>
-                                </div>`
-                            ).join('');
-                            console.log('🐛 Fallback tracks added:', container.children.length);
-                            
-                            // Add click event listeners to the fallback tracks
-                            container.querySelectorAll('.track-item-card').forEach(trackEl => {
-                                trackEl.addEventListener('click', () => {
-                                    const trackId = trackEl.dataset.trackId;
-                                    console.log('🎵 Playing track:', trackId);
-                                    if (player && player.loadTrack) {
-                                        player.loadTrack(trackId, true);
-                                    }
-                                });
-                            });
-                        }
-                    }
-                }, 500);
-            } else {
-                console.error('🐛 persistentPlayer or renderTracklist not available');
-                console.error('🐛 Available window properties:', Object.keys(window).filter(k => k.includes('player')));
-            }
-        });
-        console.log('🐛 Debug button event listener attached');
-    } else {
-        // Try again after a delay if button not found
-        setTimeout(() => {
-            const debugBtn = document.getElementById('debug-render-tracks');
-            if (debugBtn && !debugBtn.hasAttribute('data-debug-attached')) {
-                debugBtn.setAttribute('data-debug-attached', 'true');
-                setupDebugButton();
-            }
-        }, 1000);
-    }
-}
 
 // ========== ENHANCED BENTO ANCHORING SYSTEM ==========
 function initBentoAnchoring() {

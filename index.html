@@ -6,15 +6,27 @@
   <title>Akmal Alif</title>
   <link rel="icon" href="./icon/ig.ico" type="image/x-icon">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  <script>
+    (() => {
+      const savedTheme = localStorage.getItem('theme') || localStorage.getItem('darkMode');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const isDark = savedTheme === null ? prefersDark : savedTheme === 'dark' || savedTheme === 'true';
+      document.documentElement.classList.toggle('dark', isDark);
+    })();
+  </script>
   <link rel="stylesheet" href="./css/styles.css">
   
   <!-- Vercel Analytics & Speed Insights -->
   <script type="module" src="./js/analytics.js"></script>
   <script type="module" src="./js/speed-insights.js"></script>
+  <script type="module" src="./js/profile-metrics.js"></script>
   <script src="./js/navigation-analytics.js"></script>
   <script src="./js/vercel-monitoring.js"></script>
 </head>
 <body>
+  <script>
+    document.body.classList.toggle('dark', document.documentElement.classList.contains('dark'));
+  </script>
   <!-- Animated Grid Background Placeholder -->
   <div id="animated-background-placeholder"></div>
 
