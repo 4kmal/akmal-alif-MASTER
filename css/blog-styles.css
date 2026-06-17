@@ -25,10 +25,16 @@ body.blog-page {
     left: auto;
     right: auto;
     transform: none;
+    display: flex;
+    justify-content: center;
 }
 
 .blog-listing-card,
 .blog-post-full {
+    width: 100%;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
     padding: 10px 30px;  /* Reduced top/bottom padding from 40px to 10px */
     background: transparent;
     border-radius: 0;

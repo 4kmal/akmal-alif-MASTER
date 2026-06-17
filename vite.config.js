@@ -56,6 +56,25 @@ export default defineConfig({
   },
   plugins: [
     {
+      name: 'local-clean-url-rewrites',
+      configureServer(server) {
+        server.middlewares.use((req, _res, next) => {
+          const url = req.url?.split('?')[0] ?? '';
+
+          if (url === '/blogs' || url === '/blogs/') {
+            req.url = req.url?.replace(/^\/blogs\/?/, '/blog.html');
+          } else {
+            const blogMatch = url.match(/^\/blog\/([^/.]+)\/?$/);
+            if (blogMatch) {
+              req.url = req.url?.replace(/^\/blog\/([^/.]+)\/?/, '/blog/$1.html');
+            }
+          }
+
+          next();
+        });
+      },
+    },
+    {
       name: 'copy-static-assets',
       closeBundle() {
         // Copy directories with static files that are not bundled by Vite

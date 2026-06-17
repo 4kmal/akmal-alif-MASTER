@@ -373,27 +373,6 @@ body.dark .links-inner a:hover {
 #volumeSlider::-ms-fill-lower, #volumeSlider::-ms-fill-upper { background: #333; border-radius: 5px; }
 .section.music-player-container { padding-bottom: 120px; }
 
-
-/* --- Onboarding Backdrop --- */
-#onboarding-backdrop {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.65); z-index: 1050; opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none; display: none;
-}
-#onboarding-backdrop.show { opacity: 1; pointer-events: auto; }
-
-/* --- Onboarding Tooltip Styles --- */
-.onboarding-tooltip {
-    position: fixed; background-color: #333; color: #fff; padding: 12px 18px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); font-size: 14px; line-height: 1.5; max-width: 220px; z-index: 1100; opacity: 0; transform: scale(0.95) translateY(-10px); transform-origin: top center; transition: opacity 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); pointer-events: none; display: none; text-align: center;
-}
-.onboarding-tooltip.show { opacity: 1; transform: scale(1) translateY(0); pointer-events: auto; }
-.onboarding-tooltip .tooltip-arrow {
-    position: absolute; width: 0; height: 0; border-style: solid; top: -8px; left: 50%; transform: translateX(-50%); border-width: 0 8px 8px 8px; border-color: transparent transparent #333 transparent;
-}
-#onboarding-okay-btn {
-    display: block; width: calc(100% - 20px); padding: 8px 15px; margin: 15px auto 5px auto; background-color: #555; color: #fff; border: none; border-radius: 5px; font-size: 13px; font-weight: bold; cursor: pointer; transition: background-color 0.2s ease;
-}
-#onboarding-okay-btn:hover { background-color: #666; }
-
-
 /* --- Mobile Adjustments --- */
 @media (max-width: 600px) {
    /* Profile Header variables - Smaller */
@@ -431,10 +410,6 @@ body.dark .links-inner a:hover {
    .reflection img { 
        height: 130px; /* Match cover height */
    }
-   /* Adjust tooltip width/positioning slightly if needed */
-    .onboarding-tooltip { max-width: 180px; font-size: 13px; }
-    #onboarding-okay-btn { font-size: 12px; padding: 6px 12px;}
-
 }
 
 /* Adjustments for Desktop (Ensure no mobile styles leak) */
@@ -449,8 +424,6 @@ body.dark .links-inner a:hover {
      .profile-container { padding: 0; flex-direction: row; align-items: center; justify-content: center; min-height: var(--pfp-container-height); }
      /* Restore toggle position */
      .dark-mode-toggle { top: 15px; right: -15px; }
-     /* Restore tooltip arrow */
-     .onboarding-tooltip .tooltip-arrow { left: 50%; /* Ensure centered on desktop */ }
 }
 
 /* === WIDESCREEN OPTIMIZATIONS === */

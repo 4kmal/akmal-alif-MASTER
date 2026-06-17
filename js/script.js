@@ -838,42 +838,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }, 2000);
 
-        const onboardingTooltip = document.getElementById('onboarding-tooltip');
-        const onboardingOkayBtn = document.getElementById('onboarding-okay-btn');
-        const toggleForTooltip = document.getElementById('headerDarkToggle') || document.querySelector('.dark-mode-toggle');
-        const hasSeenTooltip = localStorage.getItem('hasSeenDarkModeTooltip') === 'true';
-
-        // This check ensures the tooltip logic only runs if the tooltip exists on the page
-        if (onboardingTooltip && onboardingOkayBtn && toggleForTooltip) {
-            if (!hasSeenTooltip) {
-                // Position the tooltip relative to the toggle switch
-                const rect = toggleForTooltip.getBoundingClientRect();
-                onboardingTooltip.style.top = `${rect.bottom + 10}px`;
-                onboardingTooltip.style.left = `${rect.left + (rect.width / 2)}px`; // Center it
-                onboardingTooltip.style.transform = 'translateX(-50%)'; // Adjust for centering
-                
-                // Show backdrop and tooltip
-                const backdrop = document.getElementById('onboarding-backdrop');
-                if(backdrop) {
-                    backdrop.style.display = 'block';
-                    setTimeout(() => backdrop.classList.add('show'), 10);
-                }
-                onboardingTooltip.style.display = 'block';
-                setTimeout(() => onboardingTooltip.classList.add('show'), 10);
-            }
-
-            onboardingOkayBtn.addEventListener('click', () => {
-                const backdrop = document.getElementById('onboarding-backdrop');
-                if(backdrop) {
-                    backdrop.classList.remove('show');
-                    setTimeout(() => backdrop.style.display = 'none', 300);
-                }
-                onboardingTooltip.classList.remove('show');
-                setTimeout(() => onboardingTooltip.style.display = 'none', 300);
-                localStorage.setItem('hasSeenDarkModeTooltip', 'true');
-            });
-        }
-
         // Apply saved dark mode state on load (default to dark mode if no preference)
         const darkModeSetting = localStorage.getItem('darkMode');
         const savedDarkMode = darkModeSetting === null ? true : darkModeSetting === 'true';
