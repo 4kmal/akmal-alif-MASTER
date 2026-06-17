@@ -52,6 +52,7 @@ function getBasePath() {
     // Get the current page's path
     const currentPath = window.location.pathname;
     const fullURL = window.location.href;
+    const pathWithoutIndex = currentPath.replace(/\/index\.html$/, '/');
     
     console.log('🌐 Path Resolution Debug:');
     console.log(`   Full URL: ${fullURL}`);
@@ -60,15 +61,14 @@ function getBasePath() {
     console.log(`   Protocol: ${window.location.protocol}`);
     
     // For blog pages, we need to go up one level with '../'
-    if (currentPath.includes('/blog/')) {
+    if (pathWithoutIndex.includes('/blog/')) {
         console.log('📝 Detected blog page, using "../" base path');
         return '../';
     }
     
     // Check if we're in any subdirectory by counting slashes
-    const pathSegments = currentPath.split('/').filter(segment => 
+    const pathSegments = pathWithoutIndex.split('/').filter(segment => 
         segment && 
-        segment !== 'index.html' && 
         !segment.endsWith('.html')
     );
     

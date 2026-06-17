@@ -27,7 +27,7 @@ class PersistentMusicPlayer {
     
     // Method to determine the correct base path based on current location
     determineBasePath() {
-        const currentPath = window.location.pathname;
+        const currentPath = window.location.pathname.replace(/\/index\.html$/, '/');
         const depth = currentPath.split('/').filter(segment => segment !== '').length - 1;
         return depth > 0 ? '../'.repeat(depth) : './';
     }
