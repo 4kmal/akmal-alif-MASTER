@@ -218,6 +218,31 @@ dist/
 
 During build, Vite processes all discovered HTML entry points and the custom plugin copies static asset directories into `dist/`.
 
+## Vercel Deployment
+
+This site is deployed as a static Vite project on Vercel.
+
+Use these Vercel project settings:
+
+```text
+Framework Preset: Vite
+Root Directory: ./
+Install Command: pnpm install
+Build Command: pnpm build
+Output Directory: dist
+```
+
+The repository is public so Vercel Hobby deployments can be triggered from Git commits without private-repository collaboration restrictions. When the repository was private, Vercel blocked deployments from commits authored by accounts that were not members of the Vercel team. Making the repository public avoids that commit-author access block for normal Git-based deployments.
+
+If a deployment is blocked with a message about the commit author not having access, check these items:
+
+- The GitHub repository connected to Vercel is public, or the commit author is a member of the Vercel project/team.
+- The Vercel project is connected to the intended GitHub repository and branch.
+- The latest commit exists on the branch Vercel is deploying, usually `main`.
+- The commit author email is connected to the expected GitHub/Vercel account if the repo is private.
+
+Vercel Analytics is initialized from `js/analytics.js` with the official `@vercel/analytics` browser package. After deployment, visit the live site and navigate between pages to generate page views in the Vercel Analytics dashboard.
+
 ## Preview Build
 
 Preview the production build locally:
