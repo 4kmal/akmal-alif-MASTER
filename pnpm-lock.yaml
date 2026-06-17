@@ -11,6 +11,9 @@ importers:
       '@vercel/analytics':
         specifier: ^2.0.1
         version: 2.0.1
+      '@vercel/speed-insights':
+        specifier: ^2.0.0
+        version: 2.0.0
     devDependencies:
       vite:
         specifier: ^5.4.11
@@ -326,6 +329,32 @@ packages:
       vue-router:
         optional: true
 
+  '@vercel/speed-insights@2.0.0':
+    resolution: {integrity: sha512-jwkNcrTeafWxjmWq4AHBaptSqZiJkYU5adLC9QBSqeim0GcqDMgN5Ievh8OG1rJ6W3A4l1oiP7qr9CWxGuzu3w==}
+    peerDependencies:
+      '@sveltejs/kit': ^1 || ^2
+      next: '>= 13'
+      nuxt: '>= 3'
+      react: ^18 || ^19 || ^19.0.0-rc
+      svelte: '>= 4'
+      vue: ^3
+      vue-router: ^4
+    peerDependenciesMeta:
+      '@sveltejs/kit':
+        optional: true
+      next:
+        optional: true
+      nuxt:
+        optional: true
+      react:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
+      vue-router:
+        optional: true
+
   esbuild@0.21.5:
     resolution: {integrity: sha512-mg3OPMV4hXywwpoDxu3Qda5xCKQi+vCTZq8S9J/EpkhB2HzKXq4SNFZE3+NK93JYxc8VMSep+lOUSC/RVKaBqw==}
     engines: {node: '>=12'}
@@ -537,6 +566,8 @@ snapshots:
   '@types/estree@1.0.9': {}
 
   '@vercel/analytics@2.0.1': {}
+
+  '@vercel/speed-insights@2.0.0': {}
 
   esbuild@0.21.5:
     optionalDependencies:

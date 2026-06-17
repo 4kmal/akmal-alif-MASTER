@@ -241,7 +241,7 @@ If a deployment is blocked with a message about the commit author not having acc
 - The latest commit exists on the branch Vercel is deploying, usually `main`.
 - The commit author email is connected to the expected GitHub/Vercel account if the repo is private.
 
-Vercel Analytics is initialized from `js/analytics.js` with the official `@vercel/analytics` browser package. After deployment, visit the live site and navigate between pages to generate page views in the Vercel Analytics dashboard.
+Vercel Analytics is initialized from `js/analytics.js` with the official `@vercel/analytics` browser package. Vercel Speed Insights is initialized from `js/speed-insights.js` with the official `@vercel/speed-insights` browser package. After deployment, visit the live site and navigate between pages to generate page views and real-user performance metrics in the Vercel dashboards.
 
 ## Preview Build
 
