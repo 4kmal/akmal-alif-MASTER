@@ -7,7 +7,7 @@
       <link rel="icon" href="./icon/ig.ico" type="image/x-icon">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./css/styles.css">
-  <link rel="stylesheet" href="./css/blog-styles.css"> <!-- We will create this file -->
+  <link rel="stylesheet" href="./css/blog-styles.css">
   
   <!-- Vercel Analytics & Speed Insights -->
   <script type="module" src="./js/analytics.js"></script>
@@ -26,114 +26,12 @@
     <div class="main-container blog-page-container">
         <div class="card blog-listing-card">
             <!-- Blog Category Filter Buttons -->
-            <div class="blog-category-filters">
-                <button class="category-btn active" data-category="all">All</button>
-                <button class="category-btn" data-category="psychology">Psychology</button>
-                <button class="category-btn" data-category="machine-learning">Machine Learning</button>
-                <button class="category-btn" data-category="neuroscience">Neuroscience</button>
-            </div>
+            <div class="blog-category-filters" data-blog-filters></div>
             
             <header class="blog-header">
                 <h1>My Blog</h1>
             </header>
-            <main class="blog-posts-list">
-                <div class="blog-card" data-category="psychology">
-                    <div class="blog-card-image-wrapper">
-                        <img src="./blog/blogpic/pic2.jpg" alt="Blog Post Image" class="blog-card-image">
-                    </div>
-                    <div class="blog-card-content">
-                        <h2 class="post-title"><a href="./blog/context-dependence-of-habit.html">Notice the Context-Dependence of Your Habit</a></h2>
-                        <p class="post-meta">
-                            <span class="post-date">20 January 2024</span>
-                            <span class="post-read-time">5 min read</span>
-                        </p>
-                        <div class="blog-category-tag">Psychology</div>
-                        <p class="post-excerpt">How context-dependence of habit can work against you. Habit and memories are context-dependent. This means the context you are in when you form the habit or memory becomes an associative cue for it...</p>
-                        <a href="./blog/context-dependence-of-habit.html" class="read-more-button">Read Full Post</a>
-                    </div>
-                </div>
-
-                <div class="blog-card" data-category="neuroscience">
-                    <div class="blog-card-image-wrapper">
-                        <img src="./blog/blogpic/pic1.jpg" alt="Blog Post Image" class="blog-card-image">
-                    </div>
-                    <div class="blog-card-content">
-                        <h2 class="post-title"><a href="./blog/consciousness-vs-sentience-vs-soul.html">Consciousness vs Sentience vs Soul</a></h2>
-                        <p class="post-meta">
-                            <span class="post-date">19 January 2077</span>
-                            <span class="post-read-time">7 min read</span>
-                        </p>
-                        <div class="blog-category-tag">Neuroscience</div>
-                        <p class="post-excerpt">A bit of neuroscience of social motivation, isolation, and loneliness...</p>
-                        <a href="./blog/consciousness-vs-sentience-vs-soul.html" class="read-more-button">Read Full Post</a>
-                    </div>
-                </div>
-
-                <div class="blog-card" data-category="psychology">
-                    <div class="blog-card-image-wrapper">
-                        <img src="./blog/blogpic/pic4.jpg" alt="Blog Post Image" class="blog-card-image">
-                    </div>
-                    <div class="blog-card-content">
-                        <h2 class="post-title"><a href="./blog/chaotic-passionate-vs-disciplined.html">Chaotic Passionate vs Disciplined</a></h2>
-                        <p class="post-meta">
-                            <span class="post-date">17 January 2024</span>
-                            <span class="post-read-time">6 min read</span>
-                        </p>
-                        <div class="blog-category-tag">Psychology</div>
-                        <p class="post-excerpt">Is discipline really the only way to achieve success?...</p>
-                        <a href="./blog/chaotic-passionate-vs-disciplined.html" class="read-more-button">Read Full Post</a>
-                    </div>
-                </div>
-                
-                <div class="blog-card" data-category="psychology">
-                    <div class="blog-card-image-wrapper">
-                        <img src="./blog/blogpic/pic3.jpg" alt="Blog Post Image" class="blog-card-image">
-                    </div>
-                    <div class="blog-card-content">
-                        <h2 class="post-title"><a href="./blog/work-life-balance-burnout.html">Work Life Balance & Burnout</a></h2>
-                        <p class="post-meta">
-                            <span class="post-date">22 January 2024</span>
-                            <span class="post-read-time">8 min read</span>
-                        </p>
-                        <div class="blog-category-tag">Psychology</div>
-                        <p class="post-excerpt">A discussion on work-life balance and the increasing issue of professional burnout.</p>
-                        <a href="./blog/work-life-balance-burnout.html" class="read-more-button">Read Full Post</a>
-                    </div>
-                </div>
-
-                <div class="blog-card" data-category="machine-learning">
-                    <div class="blog-card-image-wrapper">
-                        <img src="./blog/blogpic/pic3.jpg" alt="Blog Post Image" class="blog-card-image">
-                    </div>
-                    <div class="blog-card-content">
-                        <h2 class="post-title"><a href="./blog/hexapod-robots-military.html">Advantage of Hexapod Robots for Military Use</a></h2>
-                        <p class="post-meta">
-                            <span class="post-date">23 January 2024</span>
-                            <span class="post-read-time">10 min read</span>
-                        </p>
-                        <div class="blog-category-tag">Machine Learning</div>
-                        <p class="post-excerpt">Exploring the tactical advantages of six-legged robots in military applications.</p>
-                        <a href="./blog/hexapod-robots-military.html" class="read-more-button">Read Full Post</a>
-                    </div>
-                </div>
-
-                <div class="blog-card" data-category="machine-learning">
-                    <div class="blog-card-image-wrapper">
-                        <img src="./blog/blogpic/pic3.jpg" alt="Blog Post Image" class="blog-card-image">
-                    </div>
-                    <div class="blog-card-content">
-                        <h2 class="post-title"><a href="./blog/versatility-humanoid-robots.html">The Versatility of Humanoid Robots</a></h2>
-                        <p class="post-meta">
-                            <span class="post-date">24 January 2024</span>
-                            <span class="post-read-time">9 min read</span>
-                        </p>
-                        <div class="blog-category-tag">Machine Learning</div>
-                        <p class="post-excerpt">A look into the wide-ranging applications and adaptability of humanoid robots.</p>
-                        <a href="./blog/versatility-humanoid-robots.html" class="read-more-button">Read Full Post</a>
-                    </div>
-                </div>
-                <!-- Add more blog post summaries here -->
-            </main>
+            <main class="blog-posts-list" data-blog-posts></main>
             
         </div>
     </div>
@@ -146,6 +44,7 @@
     <script type="module" src="./js/modules/playerIntegration.js"></script>
     <script src="./js/script.js"></script>
     <script src="./js/mobile-menu.js"></script> 
+    <script type="module" src="./js/blog-listing.js"></script>
     <script src="./js/blog-filters.js"></script>
 </body>
 </html> 

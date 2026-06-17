@@ -60,7 +60,7 @@ export default defineConfig({
       closeBundle() {
         // Copy directories with static files that are not bundled by Vite
         // (plain <script src> tags, dynamically loaded assets, partial images)
-        const staticDirs = ['js', 'icon', 'lagu', 'album cover', 'assets'];
+        const staticDirs = ['js', 'icon', 'lagu', 'album cover', 'assets', 'blog/blogpic'];
         for (const dir of staticDirs) {
           if (existsSync(dir)) {
             cpSync(dir, `dist/${dir}`, { recursive: true });

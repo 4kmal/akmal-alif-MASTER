@@ -1,7 +1,9 @@
 // Blog Category Filter Functionality
-document.addEventListener('DOMContentLoaded', function() {
+function initBlogFilters() {
     const categoryButtons = document.querySelectorAll('.category-btn');
     const blogCards = document.querySelectorAll('.blog-card');
+
+    if (!categoryButtons.length || !blogCards.length) return;
 
     // Set category colors for tags
     function setCategoryColors() {
@@ -17,6 +19,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add click event listeners to category buttons
     categoryButtons.forEach(button => {
+        if (button.dataset.filterBound === 'true') return;
+        button.dataset.filterBound = 'true';
+
         button.addEventListener('click', function() {
             const selectedCategory = this.getAttribute('data-category');
             
@@ -46,7 +51,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
             
-            console.log(`Filtered blog posts for category: ${selectedCategory}`);
         });
     });
 
@@ -65,6 +69,7 @@ document.addEventListener('DOMContentLoaded', function() {
             card.style.transform = 'translateY(0)';
         }, index * 150);
     });
-    
-    console.log('Blog filter system initialized with enhanced animations');
-});
+}
+
+document.addEventListener('DOMContentLoaded', initBlogFilters);
+document.addEventListener('blog:rendered', initBlogFilters);
