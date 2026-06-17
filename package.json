@@ -2,6 +2,7 @@
   "name": "akmal-alif-master",
   "version": "1.0.0",
   "description": "Personal portfolio website",
+  "packageManager": "pnpm@11.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
