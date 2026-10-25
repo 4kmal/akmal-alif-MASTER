@@ -134,6 +134,7 @@ body.dark .grid-pattern {
   width: 100%;
   max-width: 1440px;
   padding: calc(var(--portfolio-header-clearance) + 16px) 16px 32px;
+  overflow: visible;
 }
 
 .main-content-column > .card {
@@ -412,6 +413,43 @@ body.dark #headerDarkToggle .theme-icon {
   width: 100%;
   max-width: 800px;
   padding: 20px;
+}
+
+/* Keep the tactile controls readable against both light and dark player cards. */
+.music-player-container .player-controls .control-btn,
+.music-player-container #playerMinimizeBtn {
+  box-sizing: border-box;
+  color: var(--portfolio-text) !important;
+  background: var(--portfolio-surface-soft) !important;
+  border: 1px solid var(--portfolio-border) !important;
+  box-shadow: var(--portfolio-control-shadow);
+}
+
+.music-player-container .player-controls .control-btn svg,
+.music-player-container #playerMinimizeBtn svg {
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}
+
+.music-player-container .player-controls .control-btn:hover,
+.music-player-container #playerMinimizeBtn:hover {
+  color: var(--portfolio-text) !important;
+  background: var(--portfolio-surface-muted) !important;
+  border-color: var(--portfolio-border-strong) !important;
+}
+
+.music-player-container .player-controls #playPauseBtn,
+.music-player-container .player-controls #playPauseBtn:hover {
+  color: var(--portfolio-accent-ink) !important;
+  background: var(--portfolio-accent) !important;
+  border-color: var(--portfolio-accent) !important;
+}
+
+.music-player-container .player-controls #loopBtn.active,
+.music-player-container .player-controls #downloadBtn.active {
+  color: var(--portfolio-accent-ink) !important;
+  background: var(--portfolio-accent) !important;
+  border-color: var(--portfolio-accent) !important;
 }
 
 .typing-effect .dynamic-text li.active-text-item {
