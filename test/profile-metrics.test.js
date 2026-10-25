@@ -127,7 +127,7 @@ function deferred() {
 }
 
 async function flushPromises() {
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < 20; index += 1) {
     await Promise.resolve();
   }
 }
@@ -379,6 +379,30 @@ test('records one canonical-host visit per session path even when storage is una
 
   assert.deepEqual(page.fetchCalls.map((call) => call.method), ['POST', 'GET']);
   assert.equal(JSON.parse(page.fetchCalls[0].options.body).page_path, '/about');
+
+  await page.cleanup();
+});
+
+test('does not persist a failed POST while the in-memory guard blocks same-page retries', async () => {
+  const storage = makeStorage();
+  const page = await loadBrowserModule({
+    hostname: 'www.akmalalif.com',
+    pathname: '/retry',
+    storage,
+    responses: [
+      new Error('write failed'),
+      response({ profile_views: 51, post_impressions: 61 }),
+      response({ profile_views: 52, post_impressions: 62 }),
+    ],
+  });
+  metricPair(page.document);
+
+  await flushPromises();
+  assert.deepEqual(page.fetchCalls.map((call) => call.method), ['POST', 'GET']);
+  assert.equal(storage.getItem('profile-visit:/retry'), null);
+
+  await page.browser.window.profileMetrics.refresh();
+  assert.deepEqual(page.fetchCalls.map((call) => call.method), ['POST', 'GET', 'GET']);
 
   await page.cleanup();
 });

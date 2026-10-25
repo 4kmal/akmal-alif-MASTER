@@ -1,5 +1,6 @@
 const METRICS_ENDPOINT = '/api/profile-metrics';
 const POLL_INTERVAL_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 10_000;
 const CANONICAL_HOSTNAME = 'www.akmalalif.com';
 const UNAVAILABLE_MARK = '—';
 const METRIC_FIELDS = ['profile_views', 'post_impressions'];
@@ -9,41 +10,14 @@ const metricFormat = new Intl.NumberFormat('en', {
   maximumFractionDigits: 1,
 });
 
-let latestMetrics = null;
-let hasSuccessfulMetrics = false;
-let statusState = null;
-let initializationPromise = null;
-let initialized = false;
-let inFlightRequest = null;
-let pollTimer = null;
-let pageIsHidden = false;
-let activityIsReady = isPageActive();
-let failureHasBeenReported = false;
-let lifecycleListenersAttached = false;
+let latestMetrics = null, statusState = null, initializationPromise = null;
+let initialized = false, inFlightRequest = null, pollTimer = null;
+let pageIsHidden = false, activityIsReady = isPageActive();
+let failureHasBeenReported = false, disposed = false;
 const attemptedVisitKeys = new Set();
 
-function handleTargetsReady() {
-  if (hasSuccessfulMetrics) renderMetrics();
-  else if (statusState === 'unavailable') renderUnavailableMetrics();
-  renderStatus();
-}
-
-function getNavigator() {
-  return window.navigator || globalThis.navigator || {};
-}
-
-function getLocation() {
-  return window.location || {};
-}
-
-function isOnline() {
-  return getNavigator().onLine !== false;
-}
-
 function isPageActive() {
-  return !pageIsHidden
-    && document.visibilityState !== 'hidden'
-    && isOnline();
+  return !pageIsHidden && document.visibilityState !== 'hidden' && window.navigator.onLine !== false;
 }
 
 function hasValidMetrics(metrics) {
@@ -57,82 +31,22 @@ function hasValidMetrics(metrics) {
   ));
 }
 
-function metricPath() {
-  return getLocation().pathname || '/';
-}
-
-function isCanonicalHost() {
-  return getLocation().hostname === CANONICAL_HOSTNAME;
-}
-
-function sessionStorageForPage() {
-  try {
-    return window.sessionStorage || null;
-  } catch {
-    return null;
-  }
-}
-
-function visitKey() {
-  return `profile-visit:${metricPath()}`;
-}
-
-function visitWasAttempted(key) {
-  if (attemptedVisitKeys.has(key)) return true;
-
-  const storage = sessionStorageForPage();
-  if (!storage) return false;
-
-  try {
-    if (storage.getItem(key)) {
-      attemptedVisitKeys.add(key);
-      return true;
-    }
-  } catch {
-    return false;
-  }
-
-  return false;
-}
-
-function markVisitAttempted(key) {
-  attemptedVisitKeys.add(key);
-
-  const storage = sessionStorageForPage();
-  if (!storage) return;
-
-  try {
-    storage.setItem(key, 'true');
-  } catch {
-    // The in-memory guard still prevents a duplicate attempt this page.
-  }
-}
-
-function renderMetrics(metrics = latestMetrics) {
-  if (!hasValidMetrics(metrics)) return;
-
+function render() {
   document.querySelectorAll('[data-metric]').forEach((element) => {
     const metricName = element.dataset.metric;
+    if (!latestMetrics) {
+      if (statusState === 'unavailable') {
+        element.textContent = UNAVAILABLE_MARK;
+        element.removeAttribute('title');
+      }
+      return;
+    }
     if (!METRIC_FIELDS.includes(metricName)) return;
-
-    const value = metrics[metricName];
+    const value = latestMetrics[metricName];
     element.textContent = metricFormat.format(value);
     element.setAttribute('title', value.toLocaleString('en'));
   });
-}
-
-function renderUnavailableMetrics() {
-  if (hasSuccessfulMetrics) return;
-
-  document.querySelectorAll('[data-metric]').forEach((element) => {
-    element.textContent = UNAVAILABLE_MARK;
-    element.removeAttribute('title');
-  });
-}
-
-function renderStatus() {
   if (!statusState) return;
-
   const statusText = statusState === 'updated'
     ? 'Updated'
     : 'Temporarily unavailable';
@@ -144,11 +58,6 @@ function renderStatus() {
   });
 }
 
-function markStatus(state) {
-  statusState = state;
-  renderStatus();
-}
-
 function applyMetrics(metrics) {
   if (!hasValidMetrics(metrics)) {
     throw new Error('Profile metrics response contained invalid totals');
@@ -158,22 +67,41 @@ function applyMetrics(metrics) {
     profile_views: metrics.profile_views,
     post_impressions: metrics.post_impressions,
   };
-  hasSuccessfulMetrics = true;
   failureHasBeenReported = false;
-  renderMetrics();
-  markStatus('updated');
+  statusState = 'updated';
+  render();
   return latestMetrics;
 }
 
 function recordMetricsFailure(error, source) {
-  if (!hasSuccessfulMetrics) renderUnavailableMetrics();
-  markStatus('unavailable');
-
+  statusState = 'unavailable';
+  render();
   if (failureHasBeenReported) return;
-  failureHasBeenReported = true;
 
+  failureHasBeenReported = true;
   const detail = error instanceof Error ? error.message : String(error);
   console.warn(`Profile metrics ${source} unavailable: ${detail}`);
+}
+
+function sessionVisitWasAttempted(key) {
+  if (attemptedVisitKeys.has(key)) return true;
+
+  try {
+    if (!window.sessionStorage?.getItem(key)) return false;
+  } catch {
+    return false;
+  }
+
+  attemptedVisitKeys.add(key);
+  return true;
+}
+
+function persistVisit(key) {
+  try {
+    window.sessionStorage?.setItem(key, 'true');
+  } catch {
+    // Storage is optional; the in-memory guard remains active.
+  }
 }
 
 async function requestMetrics(method = 'GET') {
@@ -185,55 +113,49 @@ async function requestMetrics(method = 'GET') {
     cache: 'no-store',
   };
 
-  if (method === 'POST') {
-    const navigatorInfo = getNavigator();
-    options.headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify({
-      page_path: metricPath(),
+  if (method === 'POST') Object.assign(options, {
+    headers: { ...options.headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      page_path: window.location.pathname || '/',
       referrer: document.referrer || null,
-      user_agent: navigatorInfo.userAgent || null,
-    });
+      user_agent: window.navigator.userAgent || null,
+    }),
+  });
+
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    options.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   }
 
-  const pendingRequest = (async () => {
-    const response = await fetch(METRICS_ENDPOINT, options);
+  const pendingRequest = fetch(METRICS_ENDPOINT, options).then(async (response) => {
     if (!response.ok) {
       throw new Error(`Profile metrics request failed (${response.status})`);
     }
-
     const payload = await response.json();
     if (!hasValidMetrics(payload)) {
       throw new Error('Profile metrics response contained invalid totals');
     }
-
     return payload;
-  })();
+  });
 
-  inFlightRequest = pendingRequest.then(
-    (result) => {
-      inFlightRequest = null;
-      return result;
-    },
-    (error) => {
-      inFlightRequest = null;
-      throw error;
-    },
-  );
-
+  inFlightRequest = pendingRequest.finally(() => {
+    inFlightRequest = null;
+  });
   return inFlightRequest;
 }
 
 async function loadInitialMetrics() {
-  const shouldTrack = isCanonicalHost();
-  const key = visitKey();
+  const shouldTrack = window.location.hostname === CANONICAL_HOSTNAME;
+  const key = `profile-visit:${window.location.pathname || '/'}`;
 
   try {
-    if (shouldTrack && !visitWasAttempted(key)) {
-      markVisitAttempted(key);
-      return applyMetrics(await requestMetrics('POST'));
+    if (shouldTrack && !sessionVisitWasAttempted(key)) {
+      attemptedVisitKeys.add(key);
+      const metrics = await requestMetrics('POST');
+      const appliedMetrics = applyMetrics(metrics);
+      persistVisit(key);
+      return appliedMetrics;
     }
-
-    return applyMetrics(await requestMetrics('GET'));
+    return applyMetrics(await requestMetrics());
   } catch (error) {
     recordMetricsFailure(error, shouldTrack ? 'initial load' : 'initial read');
   }
@@ -241,66 +163,50 @@ async function loadInitialMetrics() {
   if (!shouldTrack) return latestMetrics;
 
   try {
-    return applyMetrics(await requestMetrics('GET'));
+    return applyMetrics(await requestMetrics());
   } catch (fallbackError) {
     recordMetricsFailure(fallbackError, 'initial read');
     return latestMetrics;
   }
 }
 
-async function initProfileMetrics() {
+function initProfileMetrics() {
   if (initializationPromise) return initializationPromise;
 
-  initializationPromise = (async () => {
-    await loadInitialMetrics();
+  initializationPromise = loadInitialMetrics().then(() => {
     initialized = true;
     schedulePoll();
     return latestMetrics;
-  })();
-
+  });
   return initializationPromise;
 }
 
-async function pollMetrics() {
-  if (!initialized || !isPageActive()) return;
-
-  try {
-    applyMetrics(await requestMetrics('GET'));
-  } catch (error) {
-    recordMetricsFailure(error, 'poll');
-  } finally {
-    schedulePoll();
-  }
-}
-
 function stopPolling() {
-  if (pollTimer === null) return;
-  clearTimeout(pollTimer);
+  if (pollTimer !== null) clearTimeout(pollTimer);
   pollTimer = null;
 }
 
 function schedulePoll() {
   stopPolling();
-  if (!lifecycleListenersAttached || !initialized || !isPageActive()) return;
+  if (disposed || !initialized || !isPageActive()) return;
 
   pollTimer = setTimeout(() => {
     pollTimer = null;
-    void pollMetrics();
+    if (!isPageActive()) return;
+
+    void requestMetrics()
+      .then(applyMetrics)
+      .catch((error) => recordMetricsFailure(error, 'poll'))
+      .finally(schedulePoll);
   }, POLL_INTERVAL_MS);
 }
 
 async function refreshMetrics(source = 'refresh') {
-  if (!initializationPromise) {
-    await initProfileMetrics();
-    return latestMetrics;
-  }
-
-  if (!initialized && initializationPromise) {
-    await initializationPromise;
-  }
+  if (!initializationPromise) return initProfileMetrics();
+  if (!initialized) await initializationPromise;
 
   try {
-    return applyMetrics(await requestMetrics('GET'));
+    return applyMetrics(await requestMetrics());
   } catch (error) {
     recordMetricsFailure(error, source);
     throw error;
@@ -309,72 +215,52 @@ async function refreshMetrics(source = 'refresh') {
 
 function refreshOnResume() {
   if (!initialized || !isPageActive()) return;
-
-  void refreshMetrics('resume')
-    .catch(() => undefined)
-    .finally(() => schedulePoll());
+  void refreshMetrics('resume').catch(() => undefined).finally(schedulePoll);
 }
 
 function updateActivityState() {
-  const nextActivityState = isPageActive();
-
-  if (!nextActivityState) {
+  if (!isPageActive()) {
     activityIsReady = false;
     stopPolling();
     return;
   }
-
   if (!activityIsReady) {
     activityIsReady = true;
     refreshOnResume();
-  } else {
-    schedulePoll();
+    return;
   }
+  schedulePoll();
 }
 
-function handlePageHide() {
-  pageIsHidden = true;
-  updateActivityState();
-}
-
-function handlePageShow() {
-  pageIsHidden = false;
-  updateActivityState();
-}
-
-function attachLifecycleListeners() {
-  if (lifecycleListenersAttached) return;
-  lifecycleListenersAttached = true;
-
-  document.addEventListener('visibilitychange', updateActivityState);
-  document.addEventListener('DOMContentLoaded', initProfileMetrics, { once: true });
-  document.addEventListener('profile-metrics:targets-ready', handleTargetsReady);
-  window.addEventListener('online', updateActivityState);
-  window.addEventListener('offline', updateActivityState);
-  window.addEventListener('pagehide', handlePageHide);
-  window.addEventListener('pageshow', handlePageShow);
-}
+function handlePageHide() { pageIsHidden = true; updateActivityState(); }
+function handlePageShow() { pageIsHidden = false; updateActivityState(); }
+function handleTargetsReady() { render(); }
 
 function cleanupProfileMetrics() {
+  disposed = true;
   stopPolling();
-  document.removeEventListener('visibilitychange', updateActivityState);
+  lifecycleListeners.forEach(([target, type, listener]) => target.removeEventListener(type, listener));
   document.removeEventListener('DOMContentLoaded', initProfileMetrics);
-  document.removeEventListener('profile-metrics:targets-ready', handleTargetsReady);
-  window.removeEventListener('online', updateActivityState);
-  window.removeEventListener('offline', updateActivityState);
-  window.removeEventListener('pagehide', handlePageHide);
-  window.removeEventListener('pageshow', handlePageShow);
-  lifecycleListenersAttached = false;
 }
 
 window.profileMetrics = {
   refresh: () => refreshMetrics(),
 };
 
-attachLifecycleListeners();
+const lifecycleListeners = [
+  [document, 'visibilitychange', updateActivityState],
+  [document, 'profile-metrics:targets-ready', handleTargetsReady],
+  [window, 'online', updateActivityState],
+  [window, 'offline', updateActivityState],
+  [window, 'pagehide', handlePageHide],
+  [window, 'pageshow', handlePageShow],
+];
+lifecycleListeners.forEach(([target, type, listener]) => {
+  target.addEventListener(type, listener);
+});
 
 if (document.readyState === 'loading') {
-  // DOMContentLoaded starts the single initialization path.
+  document.addEventListener('DOMContentLoaded', initProfileMetrics, { once: true });
 } else {
   void initProfileMetrics();
 }
