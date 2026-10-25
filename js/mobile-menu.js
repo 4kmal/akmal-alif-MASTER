@@ -1,5 +1,6 @@
 (() => {
-  const menuBreakpoint = 767;
+  const menuBreakpoint = 768;
+  const drawerOpenEvent = 'portfolio:drawer-open';
 
   function focusable(container) {
     return Array.from(container.querySelectorAll(
@@ -18,8 +19,15 @@
     const menuButton = document.querySelector('.mobile-menu-button');
     const menuDropdown = document.getElementById('mobileMenuDropdown') || document.querySelector('.mobile-menu-dropdown');
     const menuContent = document.getElementById('mobileMenuContent');
+    const tracklistTrigger = document.querySelector('.mobile-tracklist-button');
 
     if (!menuButton || !menuDropdown || !menuContent) return false;
+
+    if (tracklistTrigger && !document.getElementById('tracklist-column')) {
+      tracklistTrigger.hidden = true;
+      tracklistTrigger.setAttribute('aria-hidden', 'true');
+    }
+
     if (menuButton.dataset.menuInitialized === 'true') return true;
 
     const nestedDropdowns = Array.from(menuDropdown.querySelectorAll('.mobile-nested-dropdown'));
@@ -39,7 +47,13 @@
 
     const closeNested = () => nestedDropdowns.forEach((dropdown) => setNestedState(dropdown, false));
 
-    const closeMenu = (restoreFocus = true) => {
+    const getDesktopFocusTarget = () => [
+      document.querySelector('.site-header .logo-section-link'),
+      document.querySelector('.site-header .header-nav a[href]'),
+      menuButton,
+    ].find((element) => element && !element.hidden && !element.closest('[hidden]')) || null;
+
+    const closeMenu = (restoreFocus = true, focusTarget = null) => {
       if (menuDropdown.hidden && !menuDropdown.classList.contains('active')) return;
 
       menuDropdown.classList.remove('active');
@@ -55,13 +69,19 @@
         if (!menuDropdown.classList.contains('active')) menuDropdown.hidden = true;
       }, 170);
 
-      if (restoreFocus && previouslyFocused?.isConnected) previouslyFocused.focus();
+      const nextFocus = focusTarget?.isConnected
+        ? focusTarget
+        : restoreFocus && previouslyFocused?.isConnected
+          ? previouslyFocused
+          : null;
+      nextFocus?.focus();
       previouslyFocused = null;
     };
 
     const openMenu = () => {
       if (window.innerWidth > menuBreakpoint) return;
 
+      document.dispatchEvent(new CustomEvent(drawerOpenEvent, { detail: { source: 'menu' } }));
       previouslyFocused = document.activeElement;
       menuDropdown.hidden = false;
       menuDropdown.setAttribute('aria-hidden', 'false');
@@ -74,6 +94,10 @@
 
       window.requestAnimationFrame(() => focusable(menuContent)[0]?.focus());
     };
+
+    document.addEventListener(drawerOpenEvent, (event) => {
+      if (event.detail?.source !== 'menu') closeMenu(false);
+    });
 
     menuButton.addEventListener('click', (event) => {
       event.preventDefault();
@@ -128,7 +152,9 @@
     });
 
     window.addEventListener('resize', () => {
-      if (window.innerWidth > menuBreakpoint) closeMenu(false);
+      if (window.innerWidth > menuBreakpoint && menuDropdown.classList.contains('active')) {
+        closeMenu(false, getDesktopFocusTarget());
+      }
     }, { passive: true });
 
     menuButton.dataset.menuInitialized = 'true';

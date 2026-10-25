@@ -464,6 +464,10 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   background: transparent;
 }
 
+.mobile-tracklist-button[hidden] {
+  display: none !important;
+}
+
 .tracklist-panel,
 .clock-widget-panel {
   box-sizing: border-box !important;
@@ -806,7 +810,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 
 }
 
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .site-header {
     padding: 0 10px;
   }
@@ -833,19 +837,85 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   }
 
   .clock-widget-panel .profile-card-container {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'identity'
+      'bio'
+      'location'
+      'stats'
+      'status';
+    gap: 8px;
+    align-items: center;
+  }
+
+  .clock-widget-panel .bento-profile-header {
+    display: grid;
+    grid-area: identity;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 12px;
+    row-gap: 2px;
+    align-items: center;
+  }
+
+  .clock-widget-panel .profile-avatar-wrapper {
+    grid-row: 1 / span 2;
+    width: 48px;
+    height: 48px;
+    margin: 0;
+  }
+
+  .clock-widget-panel .profile-name,
+  .clock-widget-panel .profile-handle {
+    grid-column: 2;
+  }
+
+  .clock-widget-panel .profile-name {
+    font-size: 1rem;
+    line-height: 1.15;
+  }
+
+  .clock-widget-panel .profile-handle {
+    font-size: 0.78rem;
+    line-height: 1.1;
+  }
+
+  .clock-widget-panel .profile-bio {
+    grid-area: bio;
+    font-size: 0.76rem;
+    line-height: 1.3;
+  }
+
+  .clock-widget-panel .profile-location {
+    grid-area: location;
+    font-size: 0.72rem;
   }
 
   .clock-widget-panel .profile-stats {
+    display: grid;
+    grid-area: stats;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
     min-width: 0;
-    padding: 14px 0 0;
+    padding: 8px 0 0;
+    margin: 0;
     border-top: 1px solid var(--portfolio-border);
     border-left: 0;
   }
 
+  .clock-widget-panel .stat-row {
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .clock-widget-panel .stat-label,
+  .clock-widget-panel .stat-value {
+    font-size: 0.7rem;
+  }
+
   .clock-widget-panel .profile-metrics-status {
+    grid-area: status;
     grid-column: auto;
   }
 
@@ -861,6 +931,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 }
 
 #swipe-overlay {
+  display: block;
   z-index: 70;
   background: rgba(18, 18, 18, 0.48) !important;
   transition: opacity var(--portfolio-motion);
@@ -872,6 +943,10 @@ body.tracklist-drawer-open {
 }
 
 @media (min-width: 1280px) {
+  #swipe-overlay {
+    display: none;
+  }
+
   .tracklist-panel,
   .clock-widget-panel {
     top: calc(var(--portfolio-header-clearance) + 16px) !important;

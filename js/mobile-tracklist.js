@@ -1,5 +1,6 @@
 (() => {
   const drawerBreakpoint = 1279;
+  const drawerOpenEvent = 'portfolio:drawer-open';
 
   function focusable(container) {
     return Array.from(container.querySelectorAll(
@@ -40,7 +41,13 @@
       overlay.setAttribute('aria-hidden', String(!open));
     };
 
-    const closePanel = (restoreFocus = true) => {
+    const getDesktopFocusTarget = () => [
+      document.querySelector('.site-header .logo-section-link'),
+      document.querySelector('.site-header .header-nav a[href]'),
+      trigger,
+    ].find((element) => element && !element.hidden && !element.closest('[hidden]')) || null;
+
+    const closePanel = (restoreFocus = true, focusTarget = null) => {
       if (!panel.classList.contains('is-open') && panel.hidden) return;
 
       panel.classList.remove('is-open');
@@ -55,13 +62,19 @@
         if (!panel.classList.contains('is-open') && window.innerWidth <= drawerBreakpoint) panel.hidden = true;
       }, 170);
 
-      if (restoreFocus && previouslyFocused?.isConnected) previouslyFocused.focus();
+      const nextFocus = focusTarget?.isConnected
+        ? focusTarget
+        : restoreFocus && previouslyFocused?.isConnected
+          ? previouslyFocused
+          : null;
+      nextFocus?.focus();
       previouslyFocused = null;
     };
 
     const openPanel = () => {
       if (window.innerWidth > drawerBreakpoint) return;
 
+      document.dispatchEvent(new CustomEvent(drawerOpenEvent, { detail: { source: 'tracklist' } }));
       previouslyFocused = document.activeElement;
       panel.hidden = false;
       panel.setAttribute('aria-hidden', 'false');
@@ -74,9 +87,16 @@
       window.requestAnimationFrame(() => closeButton?.focus() || focusable(panel)[0]?.focus());
     };
 
+    document.addEventListener(drawerOpenEvent, (event) => {
+      if (event.detail?.source !== 'tracklist') closePanel(false);
+    });
+
     const syncViewport = () => {
       const desktop = window.innerWidth > drawerBreakpoint;
       if (desktop) {
+        const focusTarget = panel.classList.contains('is-open') || panel.contains(document.activeElement)
+          ? getDesktopFocusTarget()
+          : null;
         panel.classList.remove('is-open');
         panel.hidden = false;
         panel.setAttribute('aria-hidden', 'false');
@@ -85,6 +105,7 @@
         trigger.setAttribute('aria-expanded', 'false');
         trigger.setAttribute('aria-label', 'Open tracklist');
         document.body.classList.remove('tracklist-drawer-open');
+        focusTarget?.focus();
         previouslyFocused = null;
         return;
       }
