@@ -26,6 +26,21 @@ body.blog-page:has(.blog-listing-card) .blog-page-container {
     padding-top: 0;
 }
 
+body.blog-page .blog-page-container {
+    margin: 0 auto 20px;
+    padding: 16px clamp(8px, 2vw, 20px) 32px;
+}
+
+body.blog-page .blog-post-full {
+    border: 0;
+    color: var(--portfolio-text, #2a2a2a);
+}
+
+.blog-listing-card,
+.blog-listing-card * {
+    box-sizing: border-box;
+}
+
 /*
  * These aliases let the blog consume the shared portfolio tokens when they are
  * present while keeping the static site usable on its own.
@@ -286,9 +301,14 @@ body.dark .blog-post-full {
     text-align: center;
 }
 
+.blog-header h1 {
+    font-size: clamp(1.75rem, 3vw, 2.25rem);
+    font-weight: 600;
+}
+
 .blog-posts-list {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
     gap: clamp(14px, 2vw, 20px);
     width: 100%;
     max-width: 1100px;
@@ -329,7 +349,7 @@ body.dark .blog-post-full {
     isolation: isolate;
     overflow: hidden;
     border: 1px solid var(--blog-border, rgba(42, 42, 42, 0.16));
-    border-radius: var(--portfolio-radius-panel, 20px);
+    border-radius: var(--portfolio-radius-nested, 16px);
     background: var(--blog-surface-raised, #ffffff);
     color: var(--blog-text, #2a2a2a);
     box-shadow:

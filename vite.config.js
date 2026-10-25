@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv, normalizePath } from 'vite';
 import { relative, resolve } from 'path';
 import { readdirSync, statSync, cpSync, existsSync, mkdirSync } from 'fs';
+import { Agent as HttpsAgent } from 'node:https';
 
 const projectRoot = resolve(__dirname, '.');
 const ignoredDirectories = new Set(['node_modules', 'dist', 'repo-reference', 'coverage']);
@@ -77,9 +78,13 @@ function copyStaticDirectory(sourceDir, targetDir = sourceDir) {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectRoot, 'PORTFOLIO_');
   const backend = env.PORTFOLIO_DEV_BACKEND || 'https://www.akmalalif.com';
+  const agent = backend.startsWith('https:')
+    ? new HttpsAgent({ keepAlive: true, family: 4 })
+    : undefined;
   const proxy = Object.fromEntries(backendPaths.map((prefix) => [prefix, {
     target: backend,
     changeOrigin: true,
+    agent,
   }]));
 
   return {

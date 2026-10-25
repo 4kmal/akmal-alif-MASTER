@@ -54,6 +54,7 @@ function render() {
   document.querySelectorAll('[data-metrics-status]').forEach((element) => {
     element.dataset.state = statusState;
     element.textContent = statusText;
+    element.hidden = statusState !== 'unavailable';
     element.setAttribute('aria-live', 'off');
   });
 }
