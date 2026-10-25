@@ -78,6 +78,8 @@ function makeRadarScope() {
       : new FakeNode(attribute.replace('data-', ''), document);
     if (node !== parent) parent.appendChild(node);
     node.setAttribute(attribute, '');
+    if (attribute === 'data-radar-area') node.setAttribute('class', 'skill-focus-radar-area');
+    if (attribute === 'data-radar-outline') node.setAttribute('class', 'skill-focus-radar-outline');
   });
 
   header.appendChild(svg);
@@ -105,8 +107,12 @@ test('renders the weighted focus radar once and exposes its text equivalent', ()
   assert.equal(svg.querySelector('[data-radar-rings]').children.length, 3);
   assert.equal(svg.querySelector('[data-radar-labels]').children.length, 6);
   assert.equal(svg.querySelector('[data-radar-nodes]').children.length, 6);
-  assert.match(scope.querySelector('[data-skill-focus-summary]').textContent, /Software engineering/);
-  assert.match(scope.querySelector('[data-skill-focus-summary]').textContent, /UI\/UX/);
+  assert.equal(svg.querySelector('[data-radar-area]').getAttribute('class'), 'skill-focus-radar-area');
+  assert.equal(svg.querySelector('[data-radar-outline]').getAttribute('class'), 'skill-focus-radar-outline');
+  assert.equal(
+    scope.querySelector('[data-skill-focus-summary]').textContent,
+    'Current research and project focus: AI/ML is highest; Software engineering and Robotics are high; Systems/cloud, Cybersecurity, and UI/UX are moderate.'
+  );
 
   assert.equal(renderSkillFocusRadar(scope), false);
   assert.equal(svg.querySelector('[data-radar-labels]').children.length, 6);

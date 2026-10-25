@@ -1,7 +1,7 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const RADAR_CENTER = 120;
 const RADAR_RADIUS = 58;
-const LABEL_RADIUS = 91;
+const LABEL_RADIUS = 80;
 const MAX_WEIGHT = 5;
 
 export const SKILL_FOCUS_DATA = Object.freeze([
@@ -40,6 +40,40 @@ function getLabelLines(label) {
     if (label.length > 12 && label.includes('/')) return label.split('/');
     if (label.length > 15) return label.split(' ');
     return [label];
+}
+
+function formatLabelList(labels) {
+    if (labels.length === 1) return labels[0];
+    if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+    return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+}
+
+function getFocusLevel(weight) {
+    if (weight >= MAX_WEIGHT) return 'highest';
+    if (weight >= MAX_WEIGHT - 1) return 'high';
+    return 'moderate';
+}
+
+function getTextEquivalent() {
+    const groups = new Map();
+
+    SKILL_FOCUS_DATA.forEach(({ label, weight }) => {
+        const level = getFocusLevel(weight);
+        const labels = groups.get(level) || [];
+        labels.push(label);
+        groups.set(level, labels);
+    });
+
+    const levels = ['highest', 'high', 'moderate'];
+    const descriptions = levels
+        .filter((level) => groups.has(level))
+        .map((level) => {
+            const labels = groups.get(level);
+            const verb = labels.length === 1 ? 'is' : 'are';
+            return `${formatLabelList(labels)} ${verb} ${level}`;
+        });
+
+    return `Current research and project focus: ${descriptions.join('; ')}.`;
 }
 
 function clearChildren(element) {
@@ -142,7 +176,7 @@ export function renderSkillFocusRadar(scope = typeof document === 'undefined' ? 
 
     const summary = getElement(scope, '[data-skill-focus-summary]');
     if (summary) {
-        summary.textContent = `Current focus areas: ${SKILL_FOCUS_DATA.map(({ label }) => label).join(', ')}.`;
+        summary.textContent = getTextEquivalent();
     }
 
     svg.setAttribute('data-radar-rendered', 'true');

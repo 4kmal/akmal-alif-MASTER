@@ -655,8 +655,9 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 }
 
 .clock-widget-panel .skill-focus-radar {
-  width: 100%;
+  width: min(100%, 248px);
   min-width: 0;
+  margin-inline: auto;
 }
 
 .clock-widget-panel .skill-focus-radar-svg {
@@ -664,7 +665,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   width: 100%;
   max-width: 100%;
   height: auto;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .clock-widget-panel .skill-focus-radar-axis,
@@ -704,7 +705,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 .clock-widget-panel .skill-focus-radar-label {
   fill: var(--portfolio-text-muted);
   font-family: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -808,7 +809,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 
   .clock-widget-panel .profile-card-container {
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-columns: 248px minmax(0, 1fr);
     grid-template-areas:
       'focus bio'
       'focus location'
