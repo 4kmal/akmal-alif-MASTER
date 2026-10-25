@@ -58,9 +58,19 @@ test('CloudFront URL rewriting targets the media route and preserves encoded pat
   });
 });
 
+test('single-line SQL preserves CRLF values with SQLite char concatenation', () => {
+  const tableStatements = new Map([
+    ['blog_posts', [{ columns: ['content_html'], rows: [['before\r\nafter']] }]],
+  ]);
+  const result = buildImportSql(tableStatements, { singleLine: true });
+  assert.equal(/[\r\n]/.test(result.sql), false);
+  assert.match(result.sql, /char\(13\) \|\| char\(10\)/);
+});
+
 test('converter emits ordered import SQL that executes against the real migration', async () => {
   const inputDir = await mkdtemp(path.join(os.tmpdir(), 'supabase-export-'));
   const outputPath = path.join(inputDir, 'private.sql');
+  const consoleOutputPath = path.join(inputDir, 'd1-import-console.sql');
   try {
     await writeFile(path.join(inputDir, 'blog_categories_rows.sql'), String.raw`
       INSERT INTO public.blog_categories (id, slug, name, description, color_class, sort_order, is_active, created_at, updated_at)
@@ -111,6 +121,12 @@ article C:\tmp</p>', NULL,
     assert.ok(result.sql.indexOf('INSERT INTO blog_posts') < result.sql.indexOf('INSERT INTO blog_post_tags'));
     assert.ok(result.sql.indexOf('INSERT OR REPLACE INTO profile_metrics') > result.sql.indexOf('INSERT INTO profile_page_events'));
 
+    const consoleResult = await convertDirectory(inputDir, consoleOutputPath, { singleLine: true });
+    assert.equal(consoleResult.manifest.single_line, true);
+    assert.equal(/[\r\n]/.test(consoleResult.sql), false);
+    assert.match(consoleResult.sql, /char\(10\)/);
+    assert.match(consoleResult.sql, /\/\* blog_admins: no rows in export \*\//);
+
     const database = new DatabaseSync(':memory:');
     try {
       database.exec(migrationSql);
@@ -128,6 +144,22 @@ article C:\tmp</p>', NULL,
       assert.equal(post.cover_image_url, '/media/images/cover.jpg');
     } finally {
       database.close();
+    }
+
+    const consoleDatabase = new DatabaseSync(':memory:');
+    try {
+      consoleDatabase.exec(migrationSql);
+      consoleDatabase.exec(consoleResult.sql);
+      const consolePost = consoleDatabase.prepare('SELECT content_html, cover_image_url FROM blog_posts WHERE slug = ?').get('hello');
+      assert.equal(consolePost.content_html, "<p>Bob's\narticle C:\\tmp</p>");
+      assert.equal(consolePost.cover_image_url, '/media/images/cover.jpg');
+      assert.deepEqual({ ...consoleDatabase.prepare('SELECT profile_views, post_impressions FROM profile_metrics WHERE id = 1').get() }, {
+        profile_views: 7,
+        post_impressions: 11,
+      });
+      assert.deepEqual(consoleDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+    } finally {
+      consoleDatabase.close();
     }
   } finally {
     await rm(inputDir, { recursive: true, force: true });
