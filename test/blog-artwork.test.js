@@ -305,6 +305,20 @@ test('pauses artwork for viewport, document, filter, reduced-motion, and user st
   assert.equal(fixture.mutations.disconnected, true);
 });
 
+test('disposal pauses artwork and ignores queued observer callbacks', () => {
+  const fixture = makeMotionFixture();
+
+  fixture.intersection.setVisible(fixture.sprite, true);
+  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'playing');
+
+  fixture.controller.dispose();
+  assert.equal(fixture.controller.getState().disposed, true);
+  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'paused');
+
+  fixture.intersection.setVisible(fixture.sprite, true);
+  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'paused');
+});
+
 test('reduced motion wins over stored pause state and storage failures stay in memory', () => {
   const reduced = makeMotionFixture({ paused: 'true', reducedMotion: true });
 
@@ -355,8 +369,14 @@ test('initialization is idempotent for the same listing and can be disposed', ()
   const second = initBlogArtworkMotion(documentRef);
   assert.equal(first, second);
 
-  disposeBlogArtworkMotion(documentRef);
+  first.dispose();
+  assert.equal(first.getState().disposed, true);
+
   const third = initBlogArtworkMotion(documentRef);
   assert.notEqual(third, first);
-  third.dispose();
+  assert.equal(third.getState().disposed, false);
+  assert.equal(third.getArtworkState(sprite), 'playing');
+
+  disposeBlogArtworkMotion(documentRef);
+  assert.equal(third.getState().disposed, true);
 });

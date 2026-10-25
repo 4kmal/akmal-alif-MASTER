@@ -217,6 +217,8 @@ export function createBlogArtworkMotionController({
   const MutationObserverRef = mutationObserver;
   const observer = typeof IntersectionObserverRef === 'function'
     ? new IntersectionObserverRef((entries) => {
+      if (state.disposed) return;
+
       entries.forEach((entry) => visible.set(entry.target, entry.isIntersecting));
       updatePlayback();
     }, { threshold: 0.01 })
@@ -254,6 +256,8 @@ export function createBlogArtworkMotionController({
   }
 
   function updatePlayback() {
+    if (state.disposed) return;
+
     listArtwork(root).forEach((sprite) => {
       sprite.dataset.artworkMotionState = shouldPlay(sprite) ? 'playing' : 'paused';
     });
@@ -284,7 +288,7 @@ export function createBlogArtworkMotionController({
   }
 
   function togglePlayback() {
-    if (state.reducedMotion) return state.userPaused;
+    if (state.disposed || state.reducedMotion) return state.userPaused;
 
     state.userPaused = !state.userPaused;
     writePaused(storage, state.userPaused);
@@ -293,11 +297,15 @@ export function createBlogArtworkMotionController({
   }
 
   function handleVisibilityChange() {
+    if (state.disposed) return;
+
     state.documentHidden = Boolean(documentRef?.hidden);
     updatePlayback();
   }
 
   function handleMotionChange(event) {
+    if (state.disposed) return;
+
     state.reducedMotion = Boolean(event.matches);
     updatePlayback();
   }
@@ -306,6 +314,9 @@ export function createBlogArtworkMotionController({
     if (state.disposed) return;
 
     state.disposed = true;
+    listArtwork(root).forEach((sprite) => {
+      sprite.dataset.artworkMotionState = 'paused';
+    });
     observer?.disconnect();
     observed.clear();
     mutations?.disconnect();
@@ -343,8 +354,12 @@ export function initBlogArtworkMotion(documentRef = globalThis.document) {
 
   const existing = controllers.get(root);
   if (existing) {
-    existing.refresh();
-    return existing;
+    if (!existing.getState().disposed) {
+      existing.refresh();
+      return existing;
+    }
+
+    controllers.delete(root);
   }
 
   const controller = createBlogArtworkMotionController({ root, documentRef, windowRef: documentRef?.defaultView ?? globalThis.window });
