@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { fetch as workerFetch } from '../worker/index.js';
 
-class FakeStatement {
-  constructor(db, sql) {
-    this.db = db;
-    this.sql = sql;
+const migrationSql = readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8');
+
+class SQLiteStatement {
+  constructor(statement) {
+    this.statement = statement;
     this.params = [];
   }
 
@@ -15,111 +18,51 @@ class FakeStatement {
     return this;
   }
 
-  async all() {
-    return this.db.execute(this.sql, this.params);
+  all() {
+    return { results: this.statement.all(...this.params) };
   }
 
-  async first() {
-    const result = await this.all();
-    return result.results?.[0] ?? null;
+  first() {
+    return this.statement.get(...this.params) ?? null;
   }
 
-  async run() {
-    return this.db.execute(this.sql, this.params);
+  run() {
+    return { success: true, meta: this.statement.run(...this.params) };
+  }
+
+  execute() {
+    if (/^\s*(select|pragma|with)\b/i.test(this.statement.sourceSQL)) {
+      return { results: this.statement.all(...this.params) };
+    }
+    return this.run();
   }
 }
 
-class FakeD1 {
-  constructor({ categories = [], posts = [], profileMetrics = {} } = {}) {
-    this.categories = categories;
-    this.posts = posts;
-    this.metrics = {
-      profile_views: profileMetrics.profile_views ?? 0,
-      post_impressions: profileMetrics.post_impressions ?? 0,
-    };
-    this.events = [];
-    this.nextEventId = 1;
+class SQLiteD1 {
+  constructor(database) {
+    this.database = database;
+    this.failBatchAt = null;
   }
 
   prepare(sql) {
-    return new FakeStatement(this, sql);
+    return new SQLiteStatement(this.database.prepare(sql));
   }
 
-  async batch(statements) {
-    return statements.map((statement) => this.execute(statement.sql, statement.params));
-  }
-
-  execute(sql, params) {
-    const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
-
-    if (normalized.startsWith('select profile_views')) {
-      return { results: [{ ...this.metrics }] };
-    }
-
-    if (normalized.startsWith('select slug, name, color_class, sort_order')) {
-      const rows = this.categories
-        .filter((category) => category.is_active === 1 || category.is_active === true)
-        .sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name));
-      return { results: rows.map((category) => ({
-        slug: category.slug,
-        name: category.name,
-        color_class: category.color_class ?? null,
-        sort_order: category.sort_order,
-      })) };
-    }
-
-    if (normalized.includes('from blog_posts as p')) {
-      const now = params[params.length - 1];
-      const slug = params.length === 2 ? params[0] : undefined;
-      const matching = this.posts
-        .filter((post) => post.status === 'published')
-        .filter((post) => post.published_at != null && post.published_at <= now)
-        .filter((post) => slug === undefined || post.slug === slug)
-        .sort((left, right) => right.published_at.localeCompare(left.published_at));
-      const rows = matching.map((post) => {
-        const category = this.categories.find((candidate) => candidate.id === post.category_id);
-        return {
-          slug: post.slug,
-          title: post.title,
-          excerpt: post.excerpt,
-          cover_image_url: post.cover_image_url ?? null,
-          cover_image_alt: post.cover_image_alt ?? null,
-          read_minutes: post.read_minutes,
-          published_at: post.published_at,
-          meta_title: post.meta_title ?? null,
-          meta_description: post.meta_description ?? null,
-          canonical_path: post.canonical_path ?? null,
-          content_html: post.content_html,
-          category_slug: category?.slug ?? null,
-          category_name: category?.name ?? null,
-          category_color_class: category?.color_class ?? null,
-          category_sort_order: category?.sort_order ?? null,
-        };
+  batch(statements) {
+    this.database.exec('BEGIN');
+    try {
+      const results = statements.map((statement, index) => {
+        if (index === this.failBatchAt) {
+          throw new Error('synthetic D1 batch failure');
+        }
+        return statement.execute();
       });
-      return { results: slug === undefined ? rows : rows.slice(0, 1) };
+      this.database.exec('COMMIT');
+      return results;
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
     }
-
-    if (normalized.startsWith('insert into profile_page_events')) {
-      const [pagePath, referrer, userAgent, createdAt] = params;
-      this.events.push({
-        id: this.nextEventId++,
-        page_path: pagePath,
-        referrer,
-        user_agent: userAgent,
-        created_at: createdAt,
-      });
-      return { results: [], success: true };
-    }
-
-    if (normalized.startsWith('update profile_metrics')) {
-      const [postImpression, updatedAt] = params;
-      this.metrics.profile_views += 1;
-      this.metrics.post_impressions += postImpression;
-      this.updatedAt = updatedAt;
-      return { results: [], success: true };
-    }
-
-    throw new Error(`Unhandled fake D1 SQL: ${sql}`);
   }
 }
 
@@ -161,6 +104,7 @@ class FakeR2 {
     return {
       size: entry.bytes.length,
       etag: entry.etag,
+      httpEtag: entry.httpEtag,
       uploaded: entry.uploaded,
       httpMetadata: { contentType: entry.contentType },
     };
@@ -192,6 +136,7 @@ class FakeR2 {
       size: bytes.length,
       range,
       etag: entry.etag,
+      httpEtag: entry.httpEtag,
       uploaded: entry.uploaded,
       httpMetadata: { contentType: entry.contentType },
     };
@@ -248,9 +193,72 @@ function blogFixtures() {
   };
 }
 
-test('blog APIs return only active categories and currently published post fields', async () => {
-  const db = new FakeD1(blogFixtures());
-  const env = environment(db);
+function createDatabase(fixtures = null) {
+  const database = new DatabaseSync(':memory:');
+  database.exec(migrationSql);
+
+  if (fixtures) {
+    const insertCategory = database.prepare(`
+      INSERT INTO blog_categories
+        (id, slug, name, description, color_class, sort_order, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const category of fixtures.categories) {
+      insertCategory.run(
+        category.id,
+        category.slug,
+        category.name,
+        null,
+        category.color_class,
+        category.sort_order,
+        category.is_active,
+        '2024-01-01T00:00:00.000Z',
+        '2024-01-01T00:00:00.000Z',
+      );
+    }
+
+    const insertPost = database.prepare(`
+      INSERT INTO blog_posts
+        (id, slug, title, subtitle, excerpt, content_html, content_markdown,
+         cover_image_url, cover_image_alt, category_id, status, featured, read_minutes,
+         meta_title, meta_description, canonical_path, published_at, created_by, updated_by,
+         created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const post of fixtures.posts) {
+      insertPost.run(
+        `post-${post.slug}`,
+        post.slug,
+        post.title,
+        null,
+        post.excerpt,
+        post.content_html,
+        null,
+        post.cover_image_url ?? null,
+        post.cover_image_alt ?? null,
+        post.category_id ?? null,
+        post.status,
+        0,
+        post.read_minutes,
+        post.meta_title ?? null,
+        post.meta_description ?? null,
+        post.canonical_path ?? null,
+        post.published_at ?? null,
+        null,
+        null,
+        '2024-01-01T00:00:00.000Z',
+        '2024-01-01T00:00:00.000Z',
+      );
+    }
+  }
+
+  return { database, d1: new SQLiteD1(database) };
+}
+
+test('blog APIs return only active categories and currently published post fields', async (t) => {
+  const { database, d1 } = createDatabase(blogFixtures());
+  t.after(() => database.close());
+  const env = environment(d1);
 
   const categories = await workerFetch(request('/api/blog/categories'), env);
   assert.equal(categories.status, 200);
@@ -287,18 +295,20 @@ test('blog APIs return only active categories and currently published post field
   assert.match(posts.headers.get('Cache-Control'), /no-store/);
 });
 
-test('profile metrics preserve RPC normalization, blog prefix behavior, and atomic batches', async () => {
-  const db = new FakeD1();
-  const env = environment(db);
+test('profile metrics preserve RPC normalization, blog prefix behavior, and atomic batches', async (t) => {
+  const { database, d1 } = createDatabase();
+  t.after(() => database.close());
+  const env = environment(d1);
   const longPath = `/blog/${'x'.repeat(700)}`;
   const first = await workerFetch(request('/api/profile-metrics', {
     method: 'POST',
     body: { page_path: longPath, referrer: 'r'.repeat(1200), user_agent: '' },
   }), env);
   assert.deepEqual(await first.json(), { profile_views: 1, post_impressions: 1 });
-  assert.equal(db.events[0].page_path.length, 512);
-  assert.equal(db.events[0].referrer.length, 1024);
-  assert.equal(db.events[0].user_agent, null);
+  const firstEvent = database.prepare('SELECT page_path, referrer, user_agent FROM profile_page_events ORDER BY id LIMIT 1').get();
+  assert.equal(firstEvent.page_path.length, 512);
+  assert.equal(firstEvent.referrer.length, 1024);
+  assert.equal(firstEvent.user_agent, null);
 
   await workerFetch(request('/api/profile-metrics', {
     method: 'POST', body: { page_path: '/blogs/archive', referrer: '', user_agent: null },
@@ -312,34 +322,60 @@ test('profile metrics preserve RPC normalization, blog prefix behavior, and atom
   await workerFetch(request('/api/profile-metrics', {
     method: 'POST', body: { page_path: null },
   }), env);
-  assert.deepEqual(db.metrics, { profile_views: 5, post_impressions: 3 });
-  assert.equal(db.events.at(-1).page_path, '/');
+  assert.deepEqual({ ...database.prepare('SELECT profile_views, post_impressions FROM profile_metrics WHERE id = 1').get() }, {
+    profile_views: 5,
+    post_impressions: 3,
+  });
+  assert.equal(database.prepare('SELECT page_path FROM profile_page_events ORDER BY id DESC LIMIT 1').get().page_path, '/');
 
-  const eventsBeforeSuppressedWrite = db.events.length;
+  const eventsBeforeSuppressedWrite = database.prepare('SELECT count(*) AS count FROM profile_page_events').get().count;
   const suppressed = await workerFetch(request('/api/profile-metrics', {
     host: 'akmal-alif.workers.dev',
     method: 'POST',
     body: { page_path: '/blog/ignored' },
   }), env);
   assert.deepEqual(await suppressed.json(), { profile_views: 5, post_impressions: 3 });
-  assert.equal(db.events.length, eventsBeforeSuppressedWrite);
+  assert.equal(database.prepare('SELECT count(*) AS count FROM profile_page_events').get().count, eventsBeforeSuppressedWrite);
+
+  d1.failBatchAt = 1;
+  const originalConsoleError = console.error;
+  let failedBatch;
+  console.error = () => {};
+  try {
+    failedBatch = await workerFetch(request('/api/profile-metrics', {
+      method: 'POST', body: { page_path: '/blog/rolled-back' },
+    }), env);
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.equal(failedBatch.status, 500);
+  d1.failBatchAt = null;
+  assert.deepEqual({ ...database.prepare('SELECT profile_views, post_impressions FROM profile_metrics WHERE id = 1').get() }, {
+    profile_views: 5,
+    post_impressions: 3,
+  });
+  assert.equal(database.prepare('SELECT count(*) AS count FROM profile_page_events').get().count, eventsBeforeSuppressedWrite);
 
   await Promise.all(Array.from({ length: 20 }, () => workerFetch(request('/api/profile-metrics', {
     method: 'POST', body: { page_path: '/blog/concurrent' },
   }), env)));
-  assert.deepEqual(db.metrics, { profile_views: 25, post_impressions: 23 });
-  assert.equal(db.events.length, eventsBeforeSuppressedWrite + 20);
+  assert.deepEqual({ ...database.prepare('SELECT profile_views, post_impressions FROM profile_metrics WHERE id = 1').get() }, {
+    profile_views: 25,
+    post_impressions: 23,
+  });
+  assert.equal(database.prepare('SELECT count(*) AS count FROM profile_page_events').get().count, eventsBeforeSuppressedWrite + 20);
 });
 
-test('clean routes redirect or rewrite to exact assets while preserving query strings', async () => {
-  const db = new FakeD1();
+test('clean routes redirect or rewrite to exact assets while preserving query strings', async (t) => {
+  const { database, d1 } = createDatabase();
+  t.after(() => database.close());
   const assets = new FakeAssets({
     '/index.html': 'home',
     '/blog.html': 'blog index',
     '/blog/hello.html': 'hello',
     '/contact/index.html': 'contact',
   });
-  const env = environment(db, assets);
+  const env = environment(d1, assets);
 
   const blogRedirect = await workerFetch(request('/blog.html?view=all'), env);
   assert.equal(blogRedirect.status, 308);
@@ -370,30 +406,49 @@ test('clean routes redirect or rewrite to exact assets while preserving query st
   assert.deepEqual(assets.requests.at(-1), { method: 'GET', pathname: '/missing/index.html', search: '?x=1' });
 });
 
-test('R2 media paths support metadata, full and ranged GET/HEAD, and missing objects', async () => {
-  const db = new FakeD1();
+test('R2 media paths support metadata, conditional requests, full and ranged GET/HEAD, and missing objects', async (t) => {
+  const { database, d1 } = createDatabase();
+  t.after(() => database.close());
   const media = new FakeR2({
     'demo.bin': {
       bytes: new TextEncoder().encode('abcdef'),
       contentType: 'application/octet-stream',
-      etag: '"demo"',
+      etag: 'demo',
+      httpEtag: '"demo"',
       uploaded: new Date('2025-01-01T00:00:00.000Z'),
     },
     'assets/video/zopo (@aesopcash).mp4': {
       bytes: new TextEncoder().encode('zopo'),
       contentType: 'video/mp4',
-      etag: '"zopo"',
+      etag: 'zopo',
+      httpEtag: '"zopo"',
+      uploaded: new Date('2025-01-01T00:00:00.000Z'),
+    },
+    'fonts/demo.woff2': {
+      bytes: new TextEncoder().encode('font'),
+      etag: 'font',
+      httpEtag: '"font"',
       uploaded: new Date('2025-01-01T00:00:00.000Z'),
     },
   });
-  const env = environment(db, new FakeAssets(), media);
+  const env = environment(d1, new FakeAssets(), media);
 
   const full = await workerFetch(request('/media/demo.bin'), env);
   assert.equal(full.status, 200);
   assert.equal(await full.text(), 'abcdef');
   assert.equal(full.headers.get('Content-Length'), '6');
   assert.equal(full.headers.get('ETag'), '"demo"');
-  assert.match(full.headers.get('Cache-Control'), /immutable/);
+  assert.equal(full.headers.get('Cache-Control'), 'public, max-age=86400');
+
+  const callsBeforeNotModified = media.calls.length;
+  const notModified = await workerFetch(request('/media/demo.bin', {
+    headers: { 'If-None-Match': '"demo"' },
+  }), env);
+  assert.equal(notModified.status, 304);
+  assert.equal(await notModified.text(), '');
+  assert.equal(notModified.headers.get('ETag'), '"demo"');
+  assert.equal(media.calls.length, callsBeforeNotModified + 1);
+  assert.equal(media.calls.at(-1).operation, 'head');
 
   const head = await workerFetch(request('/media/demo.bin', { method: 'HEAD' }), env);
   assert.equal(head.status, 200);
@@ -426,6 +481,10 @@ test('R2 media paths support metadata, full and ranged GET/HEAD, and missing obj
   const encodedDirectPath = await workerFetch(request('/assets/video/zopo%20(@aesopcash).mp4'), env);
   assert.equal(encodedDirectPath.status, 200);
   assert.equal(await encodedDirectPath.text(), 'zopo');
+
+  const font = await workerFetch(request('/media/fonts/demo.woff2'), env);
+  assert.equal(font.status, 200);
+  assert.equal(font.headers.get('Content-Type'), 'font/woff2');
 
   const missing = await workerFetch(request('/media/nope.bin'), env);
   assert.equal(missing.status, 404);

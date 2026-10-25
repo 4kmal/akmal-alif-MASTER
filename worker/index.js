@@ -1,5 +1,5 @@
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
-const MEDIA_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+const MEDIA_CACHE_CONTROL = 'public, max-age=86400';
 const READ_ONLY_MEDIA_CACHE_CONTROL = 'no-store';
 const WRITE_ALLOWED_HOSTS = new Set([
   'www.akmalalif.com',
@@ -353,6 +353,9 @@ function mediaContentType(key) {
     gif: 'image/gif',
     webp: 'image/webp',
     svg: 'image/svg+xml',
+    ttf: 'font/ttf',
+    woff: 'font/woff',
+    woff2: 'font/woff2',
     css: 'text/css; charset=utf-8',
     js: 'text/javascript; charset=utf-8',
   };
@@ -372,8 +375,9 @@ function setMediaMetadataHeaders(headers, metadata, key) {
   if (httpMetadata.contentEncoding) {
     headers.set('Content-Encoding', httpMetadata.contentEncoding);
   }
-  if (metadata?.etag) {
-    headers.set('ETag', metadata.etag);
+  const httpEtag = metadata?.httpEtag ?? (metadata?.etag ? `"${metadata.etag.replace(/^"|"$/g, '')}"` : null);
+  if (httpEtag) {
+    headers.set('ETag', httpEtag);
   }
   if (metadata?.uploaded) {
     const uploaded = metadata.uploaded instanceof Date
@@ -430,6 +434,18 @@ function parseByteRange(value, size) {
   return { start, end, length: end - start + 1 };
 }
 
+function matchesIfNoneMatch(value, etag) {
+  if (!value || !etag) {
+    return false;
+  }
+
+  const normalizedEtag = etag.replace(/^W\//, '');
+  return value
+    .split(',')
+    .map((candidate) => candidate.trim())
+    .some((candidate) => candidate === '*' || candidate.replace(/^W\//, '') === normalizedEtag);
+}
+
 function mediaNotFound() {
   return new Response('Not Found', {
     status: 404,
@@ -454,6 +470,13 @@ async function handleMedia(request, env, key) {
   }
 
   const size = Number(head.size ?? 0);
+  const headers = new Headers();
+  setMediaMetadataHeaders(headers, head, key);
+  if (matchesIfNoneMatch(request.headers.get('If-None-Match'), headers.get('ETag'))) {
+    headers.set('Cache-Control', MEDIA_CACHE_CONTROL);
+    return new Response(null, { status: 304, headers });
+  }
+
   const rangeHeader = request.headers.get('Range');
   const range = rangeHeader ? parseByteRange(rangeHeader, size) : null;
   if (rangeHeader && !range) {
@@ -466,9 +489,6 @@ async function handleMedia(request, env, key) {
       },
     });
   }
-
-  const headers = new Headers();
-  setMediaMetadataHeaders(headers, head, key);
 
   if (!range) {
     headers.set('Content-Length', String(size));
