@@ -14,31 +14,51 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function normaliseCategories(categories) {
+  const uniqueCategories = [];
+  const seenSlugs = new Set();
+
+  for (const category of Array.isArray(categories) ? categories : []) {
+    const slug = String(category?.slug ?? '').trim();
+    const name = String(category?.name ?? '').trim();
+
+    if (!slug || !name || seenSlugs.has(slug)) continue;
+
+    seenSlugs.add(slug);
+    uniqueCategories.push({ slug, name });
+  }
+
+  return uniqueCategories;
+}
+
 function renderCategories(container, categories) {
+  const uniqueCategories = normaliseCategories(categories);
+
   container.innerHTML = [
-    '<button class="category-btn active" data-category="all">All</button>',
-    ...categories.map((category) => (
-      `<button class="category-btn" data-category="${escapeHtml(category.slug)}">${escapeHtml(category.name)}</button>`
+    '<button type="button" class="category-btn active" data-category="all" aria-pressed="true">All</button>',
+    ...uniqueCategories.map((category) => (
+      `<button type="button" class="category-btn" data-category="${escapeHtml(category.slug)}" aria-pressed="false">${escapeHtml(category.name)}</button>`
     )),
   ].join('');
 }
 
 function renderPosts(container, posts) {
-  if (!posts.length) {
-    container.innerHTML = '<p class="blog-state-message">No published blog posts yet.</p>';
+  if (!Array.isArray(posts) || !posts.length) {
+    container.innerHTML = '<p class="blog-state-message blog-state-message--empty" data-blog-state="empty" role="status">No published blog posts yet.</p>';
     return;
   }
 
   container.innerHTML = posts.map((post) => {
     const category = getPostCategory(post);
-    const categorySlug = category?.slug ?? 'uncategorized';
-    const categoryName = category?.name ?? 'Uncategorized';
-    const postHref = `/blog/${encodeURIComponent(post.slug)}`;
-    const imageUrl = post.cover_image_url || '/blog/blogpic/pic3.jpg';
-    const imageAlt = post.cover_image_alt || post.title;
+    const categorySlug = String(category?.slug ?? 'uncategorized').trim() || 'uncategorized';
+    const categoryName = String(category?.name ?? 'Uncategorized').trim() || 'Uncategorized';
+    const postSlug = String(post?.slug ?? '').trim();
+    const postHref = `/blog/${encodeURIComponent(postSlug)}`;
+    const imageUrl = post?.cover_image_url || '/blog/blogpic/pic3.jpg';
+    const imageAlt = post?.cover_image_alt || post?.title || 'Blog post';
 
     return `
-      <div class="blog-card" data-category="${escapeHtml(categorySlug)}">
+      <article class="blog-card" data-category="${escapeHtml(categorySlug)}" data-blog-state="ready">
         <div class="blog-card-image-wrapper">
           <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageAlt)}" class="blog-card-image">
         </div>
@@ -52,9 +72,26 @@ function renderPosts(container, posts) {
           <p class="post-excerpt">${escapeHtml(post.excerpt)}</p>
           <a href="${postHref}" class="read-more-button">Read Full Post</a>
         </div>
-      </div>
+      </article>
     `;
   }).join('');
+}
+
+function renderStateMessage(container, state, message) {
+  const role = state === 'error' ? 'alert' : 'status';
+  container.innerHTML = `<p class="blog-state-message blog-state-message--${escapeHtml(state)}" data-blog-state="${escapeHtml(state)}" role="${role}">${escapeHtml(message)}</p>`;
+}
+
+function deriveCategories(posts) {
+  return normaliseCategories(
+    (Array.isArray(posts) ? posts : []).map((post) => getPostCategory(post)),
+  );
+}
+
+function emitRendered(state) {
+  document.dispatchEvent(new CustomEvent('blog:rendered', {
+    detail: { state },
+  }));
 }
 
 async function initBlogListing() {
@@ -63,20 +100,48 @@ async function initBlogListing() {
 
   if (!filtersContainer || !postsContainer) return;
 
-  postsContainer.innerHTML = '<p class="blog-state-message">Loading blog posts...</p>';
+  renderStateMessage(postsContainer, 'loading', 'Loading blog posts…');
 
   try {
-    const [categories, posts] = await Promise.all([
+    const [categoriesResult, postsResult] = await Promise.allSettled([
       fetchBlogCategories(),
       fetchPublishedBlogPosts(),
     ]);
 
+    if (categoriesResult.status === 'rejected') {
+      console.warn('Unable to load blog categories:', categoriesResult.reason);
+    }
+
+    if (postsResult.status === 'rejected') {
+      renderCategories(filtersContainer, []);
+      renderStateMessage(postsContainer, 'error', 'Unable to load blog posts right now.');
+      emitRendered('error');
+      return;
+    }
+
+    if (!Array.isArray(postsResult.value)) {
+      console.warn('Blog posts response was not an array.');
+      renderCategories(filtersContainer, []);
+      renderStateMessage(postsContainer, 'error', 'Unable to load blog posts right now.');
+      emitRendered('error');
+      return;
+    }
+
+    const posts = postsResult.value;
+    const categories = categoriesResult.status === 'fulfilled'
+      && Array.isArray(categoriesResult.value)
+      && categoriesResult.value.length
+      ? categoriesResult.value
+      : deriveCategories(posts);
+
     renderCategories(filtersContainer, categories);
     renderPosts(postsContainer, posts);
-    document.dispatchEvent(new CustomEvent('blog:rendered'));
+    emitRendered(posts.length ? 'ready' : 'empty');
   } catch (error) {
     console.warn('Unable to load blog posts:', error);
-    postsContainer.innerHTML = '<p class="blog-state-message">Unable to load blog posts right now.</p>';
+    renderCategories(filtersContainer, []);
+    renderStateMessage(postsContainer, 'error', 'Unable to load blog posts right now.');
+    emitRendered('error');
   }
 }
 
