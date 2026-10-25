@@ -442,7 +442,7 @@ body.dark .typing-effect {
   }
   .typing-effect .dynamic-text-wrapper {
     height: calc(1.3rem * 1.2 * 3); /* Adjust for mobile font size */
-    flex: 0 1 100%;
+    flex: 0 1 auto;
     width: 100%;
     max-width: 300px; /* Prevent very wide text on mobile */
     text-align: center;
@@ -1852,7 +1852,7 @@ body.dark .mobile-submenu-link:hover {
     }
 
     .typing-effect .dynamic-text-wrapper {
-        flex: 0 1 100%;
+        flex: 0 1 auto;
         width: 100%;
         max-width: min(100%, 520px);
     }
