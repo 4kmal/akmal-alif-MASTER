@@ -216,6 +216,10 @@ class Creative3DPlaygroundController {
 
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
+            if (e.defaultPrevented || e.target?.closest?.('a, button, input, select, textarea, [contenteditable]')) {
+                return;
+            }
+
             if (e.key === 'ArrowLeft') {
                 e.preventDefault();
                 this.rotateTool(-1);
