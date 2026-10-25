@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "akmalalif-portfolio",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-26",
+  "account_id": "73138007ecb740aea99f9c99bb2a2705",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "akmalalif-portfolio",
+      "database_id": "675ccbd5-f4aa-4ad6-b292-0d8fac7c54d5",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "akmalalif-portfolio-media"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  }
+}

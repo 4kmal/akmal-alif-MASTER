@@ -1,271 +1,79 @@
 # Akmal Alif Portfolio
 
-Static personal portfolio website built with Vite, plain HTML, CSS, and JavaScript.
+Vite 5, plain HTML, CSS and JavaScript, served by Cloudflare Workers Static Assets. The existing multi-page design and clean URLs are preserved.
 
-This repository is not a framework app. There is no React, Vue, Svelte, routing framework, or backend runtime. Vite is used as the development server and production build tool for a multi-page static site.
+| Resource | Name / binding |
+| --- | --- |
+| Worker | `akmalalif-portfolio` |
+| Static build | `dist/` / `ASSETS` |
+| D1 | `akmalalif-portfolio` / `DB` |
+| R2 | `akmalalif-portfolio-media` / `MEDIA` |
+| Preview | `https://akmalalif-portfolio.iamaleep.workers.dev` |
+| Canonical domain | `https://www.akmalalif.com` |
 
-## Architecture
-
-### Codebase Map
-
-```mermaid
-flowchart TD
-    Root[Repository Root] --> Config[vite.config.js]
-    Root --> Package[package.json and pnpm-lock.yaml]
-    Root --> Home[index.html]
-    Root --> BlogIndex[blog.html]
-    Root --> Contact[contact/index.html]
-    Root --> BlogPosts[blog/*.html]
-    Root --> Playground[playground/**/*.html]
-    Root --> Partials[partials/**/*.html]
-    Root --> Styles[css/**/*.css]
-    Root --> Scripts[js/**/*.js]
-    Root --> Assets[assets/, icon/, lagu/, album cover/]
-    Root --> Examples[contoh/]
-
-    Config --> EntryScan[Recursive HTML entry discovery]
-    EntryScan --> Home
-    EntryScan --> BlogIndex
-    EntryScan --> Contact
-    EntryScan --> BlogPosts
-    EntryScan --> Playground
-    EntryScan --> Partials
-
-    Home --> Styles
-    BlogIndex --> Styles
-    Contact --> Styles
-    BlogPosts --> Styles
-    Playground --> Styles
-
-    Home --> Scripts
-    BlogIndex --> Scripts
-    Contact --> Scripts
-    BlogPosts --> Scripts
-    Playground --> Scripts
-
-    Scripts --> Analytics[Vercel Analytics]
-    Scripts --> Navigation[Navigation and menus]
-    Scripts --> Music[Music player]
-    Scripts --> Effects[Cursor, playground, visual effects]
-```
-
-The site is organized as static HTML pages plus shared CSS, shared browser JavaScript, and static media. `vite.config.js` is the central build configuration and automatically treats visible `.html` files as build entries.
-
-### Runtime Model
-
-- The app is a static multi-page website.
-- Pages are regular `.html` files served by Vite during development and emitted into `dist/` during production builds.
-- Styling is loaded from plain CSS files referenced by each page.
-- Interactivity is handled by plain JavaScript files under `js/` and page-local scripts.
-- Some scripts are referenced as classic browser scripts instead of bundled ES modules, so Vite may warn that those scripts cannot be bundled without `type="module"`. The build still succeeds.
-
-### Vite Entry Discovery
-
-`vite.config.js` recursively scans the repository for `.html` files and passes them to Rollup as build inputs.
-
-The scanner skips:
-
-- `node_modules/`
-- `dist/`
-- Hidden directories such as `.kilo/` and `.git/`
-
-Because entries are discovered dynamically, adding a new visible `.html` file anywhere in the repo makes it part of the Vite build unless it is inside a skipped directory.
-
-### Build Pipeline
-
-```mermaid
-flowchart LR
-    Install[pnpm install] --> Dependencies[node_modules via pnpm]
-    Dependencies --> Build[pnpm build]
-    Build --> Vite[Vite]
-    Vite --> Scan[findHtmlFiles repository scan]
-    Scan --> Inputs[Rollup HTML inputs]
-    Inputs --> Bundle[Bundle module scripts and CSS assets]
-    Bundle --> Dist[dist/]
-    Vite --> CopyPlugin[copy-static-assets plugin]
-    CopyPlugin --> CopyJs[Copy js/]
-    CopyPlugin --> CopyIcon[Copy icon/]
-    CopyPlugin --> CopyMusic[Copy lagu/]
-    CopyPlugin --> CopyCovers[Copy album cover/]
-    CopyJs --> Dist
-    CopyIcon --> Dist
-    CopyMusic --> Dist
-    CopyCovers --> Dist
-    Dist --> Deploy[Vercel static deployment]
-```
-
-Vite bundles module-based entries, emits processed HTML into `dist/`, and then the custom plugin copies static folders that are loaded directly by browser paths or dynamic runtime code.
-
-### Browser Runtime Flow
-
-```mermaid
-sequenceDiagram
-    participant User as Visitor Browser
-    participant Page as HTML Page
-    participant ViteAssets as Built CSS/JS Assets
-    participant StaticFiles as Copied Static Files
-    participant Vercel as Vercel Analytics
-
-    User->>Page: Request route, for example /blog.html
-    Page->>ViteAssets: Load bundled CSS and module scripts
-    Page->>StaticFiles: Load classic scripts, icons, music, images
-    ViteAssets->>Page: Initialize shared UI behavior
-    ViteAssets->>Vercel: inject() Web Analytics script
-    User->>Page: Click links, menus, music controls, forms
-    Page->>ViteAssets: Existing window.analytics helpers track events
-    ViteAssets->>Vercel: Send page views and custom events
-```
-
-Each page is independently loadable. Shared scripts provide common behavior, while `js/analytics.js` initializes the official Vercel Analytics browser package and preserves the existing `window.analytics` helper API used across the codebase.
-
-### Main Areas
-
-- `index.html` is the main portfolio landing page.
-- `blog.html` is the blog listing page.
-- `blog/` contains individual blog article pages.
-- `contact/` contains the contact page and contact-specific scripts/styles.
-- `playground/` contains experimental interactive pages.
-- `partials/` contains reusable HTML fragments used by the site.
-- `js/` contains shared browser scripts for analytics, navigation, custom cursor, music player behavior, menus, and other interactions.
-- `icon/`, `lagu/`, and `album cover/` contain static assets copied directly into the build output.
-- `contoh/` contains example or reference content. The nested `contoh/scramble effect/package.json` is not part of the root app workspace.
-
-### Static Asset Copying
-
-The custom `copy-static-assets` plugin in `vite.config.js` copies these directories into `dist/` after production builds:
-
-- `js/`
-- `icon/`
-- `lagu/`
-- `album cover/`
-
-This preserves files that are loaded directly by browser paths or dynamic runtime code instead of being bundled by Vite.
-
-## Package Manager
-
-This repo uses pnpm.
-
-The expected package manager is declared in `package.json`:
-
-```json
-"packageManager": "pnpm@11.2.2"
-```
-
-Dependencies are locked in `pnpm-lock.yaml`. The root npm lockfile has been removed.
-
-`pnpm-workspace.yaml` is present only for pnpm build-script approval:
-
-```yaml
-allowBuilds:
-  esbuild: true
-```
-
-It does not define workspace packages, so nested example packages are not enrolled as part of a pnpm workspace.
-
-## Requirements
-
-- Node.js compatible with Vite 5.
-- pnpm 11.2.2 or compatible.
-
-If pnpm is not available, enable it with Corepack:
-
-```powershell
-corepack enable
-corepack prepare pnpm@11.2.2 --activate
-```
-
-## Install
-
-Install root dependencies from the repository root:
-
-```powershell
-pnpm install
-```
+`wrangler.jsonc` contains the resource configuration. D1 ID: `675ccbd5-f4aa-4ad6-b292-0d8fac7c54d5`. Worker invocation logs are enabled. Cloudflare Web Analytics is configured through the dashboard.
 
 ## Development
 
-Start the Vite development server:
+Use Node **24.21.0** and pnpm **11.2.2**, pinned in `.nvmrc`, `package.json` and Cloudflare build settings.
 
 ```powershell
-pnpm dev
-```
-
-The dev server is configured to:
-
-- Run on port `3000`.
-- Open the browser automatically.
-- Use polling for better Windows/XAMPP filesystem compatibility.
-
-Default local URL:
-
-```text
-http://localhost:3000/
-```
-
-## Production Build
-
-Build the static site:
-
-```powershell
+pnpm install --frozen-lockfile
+pnpm exec wrangler d1 execute akmalalif-portfolio --local --file migrations/0001_initial.sql
 pnpm build
+pnpm dev:worker
 ```
 
-The output is written to:
-
-```text
-dist/
-```
-
-During build, Vite processes all discovered HTML entry points and the custom plugin copies static asset directories into `dist/`.
-
-## Vercel Deployment
-
-This site is deployed as a static Vite project on Vercel.
-
-Use these Vercel project settings:
-
-```text
-Framework Preset: Vite
-Root Directory: ./
-Install Command: pnpm install
-Build Command: pnpm build
-Output Directory: dist
-```
-
-The repository is public so Vercel Hobby deployments can be triggered from Git commits without private-repository collaboration restrictions. When the repository was private, Vercel blocked deployments from commits authored by accounts that were not members of the Vercel team. Making the repository public avoids that commit-author access block for normal Git-based deployments.
-
-If a deployment is blocked with a message about the commit author not having access, check these items:
-
-- The GitHub repository connected to Vercel is public, or the commit author is a member of the Vercel project/team.
-- The Vercel project is connected to the intended GitHub repository and branch.
-- The latest commit exists on the branch Vercel is deploying, usually `main`.
-- The commit author email is connected to the expected GitHub/Vercel account if the repo is private.
-
-Vercel Analytics is initialized from `js/analytics.js` with the official `@vercel/analytics` browser package. Vercel Speed Insights is initialized from `js/speed-insights.js` with the official `@vercel/speed-insights` browser package. After deployment, visit the live site and navigate between pages to generate page views and real-user performance metrics in the Vercel dashboards.
-
-## Preview Build
-
-Preview the production build locally:
+Wrangler serves the complete app at `http://localhost:8787`. For Vite hot reload, run `pnpm dev` in a second terminal; it proxies `/api` and `/media` to Wrangler. Local D1/R2 data stay under ignored `.wrangler/`. Seed private article data and media locally when required.
 
 ```powershell
-pnpm preview
-```
-
-Run `pnpm build` before previewing so `dist/` exists and reflects the latest source.
-
-## Common Workflow
-
-```powershell
-pnpm install
-pnpm dev
+pnpm test
 pnpm build
-pnpm preview
+pnpm exec wrangler deploy --dry-run
 ```
 
-## Notes For Contributors
+Tests execute the real schema and Worker SQL through Node SQLite. Coverage includes published/future/draft filtering, missing posts, atomic visit updates and rollback, clean routes, and media range/HEAD requests.
 
-- Keep new root dependencies in `package.json` and update `pnpm-lock.yaml` with `pnpm install`.
-- Do not add `package-lock.json`; this project uses pnpm.
-- Do not add workspace package globs unless intentionally converting the repo into a workspace.
-- Place hidden planning or agent files under hidden directories such as `.kilo/` so Vite entry discovery ignores them.
-- Be careful when adding new `.html` files in visible directories because they automatically become Vite build entries.
+## HTTP interface
+
+- `GET /api/blog/categories`: active categories, ordered by sort order/name.
+- `GET /api/blog/posts`: published posts whose publication time has passed.
+- `GET /api/blog/posts/:slug`: one published post, or JSON `null`.
+- `GET /api/profile-metrics`: views and blog impressions.
+- `POST /api/profile-metrics`: record a visit and update counters in one D1 batch.
+
+Writes are allowed on `www.akmalalif.com` and localhost. The workers.dev address returns metrics without recording visits. Browser tracking retains the per-path session key. Any path beginning `/blog`, including `/blogs`, increments impressions. Paths are truncated to 512 Unicode characters; referrer/user agent to 1,024.
+
+`/blogs` serves `blog.html`; `/blog/:slug` serves its article HTML. Former `.html` URLs redirect with 308 while preserving queries. Existing directory pages and the deployed `contoh/awge-website` examples remain available.
+
+## Media
+
+`/media/<key>` serves original CloudFront media from private R2 through the Worker. Original LFS paths also map directly to R2:
+
+- `/assets/video/brandon.mp4`
+- `/assets/video/zopo%20(@aesopcash).mp4`
+- `/blog/blogpic/thumb1.mp4`
+
+MP4s are excluded from the static build so LFS pointers cannot be served as videos. Media supports seeking, HEAD, ETags and one-day caching. Fonts and Three.js are bundled locally. Social links and external video embeds remain external.
+
+## Data and editing
+
+Use D1 Studio to edit content. Seven tables preserve article/category/tag relationships, counters and visit history. Former Supabase user IDs remain text metadata. Published posts require `status='published'` and a UTC `published_at` in the past.
+
+Keep exports, generated SQL, media manifests and rollback records outside Git. Convert dashboard SQL exports with:
+
+```powershell
+node scripts/import-supabase.mjs --input <private-export-directory> --output <private-import.sql>
+```
+
+For the dashboard console, add `--single-line --chunks-dir <private-chunk-directory>`. Content newlines are preserved with SQLite `char()` expressions. D1 supplies transaction handling; imports contain no explicit transaction markers. Apply the schema first and import into a new database; regular inserts reject duplicate data.
+
+`node scripts/prepare-media.mjs --help` describes media preparation. Its private manifest records original URLs, object keys, sizes and SHA-256 hashes.
+
+## Deployment
+
+Workers Builds uses the existing `4kmal/akmal-alif-MASTER` GitHub connection, production branch `main`, root `/`, Node `24.21.0`, pnpm `11.2.2`, build `pnpm build`, deploy `pnpm exec wrangler deploy`. Preview builds are disabled. Bindings come from `wrangler.jsonc`.
+
+`www` uses a Worker Custom Domain. The apex uses a proxied placeholder DNS record and a Cloudflare 308 redirect to `www`, preserving paths and queries. Keep the registrar and Cloudflare nameservers unchanged.
+
+For rollback, use the saved original DNS zone and Vercel deployment. Retain the old deployment, Supabase exports and media backup; permanent deletion is separate from routine deployment.
