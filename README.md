@@ -19,12 +19,22 @@ Use Node **24.21.0** and pnpm **11.2.2**, pinned in `.nvmrc`, `package.json` and
 
 ```powershell
 pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Open `http://localhost:3000`. Vite serves source files immediately, hot-swaps CSS without interrupting music, and reloads HTML partials and JavaScript changes automatically. No build, database import or Cloudflare login is required for frontend work. `repo-reference/`, build output and local Worker state are excluded from the build/watch inputs.
+
+The frontend forwards public API and R2 media reads to `https://www.akmalalif.com`, including the three original video URLs. Only GET/HEAD requests are forwarded; visits from localhost are not recorded. Public lifetime counters refresh every 15 seconds while the page is visible and online, retaining their last successful values during an interruption.
+
+For backend development, run the local Worker separately:
+
+```powershell
 pnpm exec wrangler d1 execute akmalalif-portfolio --local --file migrations/0001_initial.sql
 pnpm build
 pnpm dev:worker
 ```
 
-Wrangler serves the complete app at `http://localhost:8787`. For Vite hot reload, run `pnpm dev` in a second terminal; it proxies `/api` and `/media` to Wrangler. Local D1/R2 data stay under ignored `.wrangler/`. Seed private article data and media locally when required.
+Wrangler serves the complete app at `http://localhost:8787`. To read that backend through Vite, copy `.env.example` to `.env.local`, set `PORTFOLIO_DEV_BACKEND=http://localhost:8787`, and restart `pnpm dev`. Vite still blocks write forwarding; test writes directly against the local Worker. Local D1/R2 data stay under ignored `.wrangler/`. Seed private article data and media locally when required. The native file watcher is used by default; set `CHOKIDAR_USEPOLLING=true` only if your filesystem needs polling.
 
 ```powershell
 pnpm test
@@ -42,7 +52,7 @@ Tests execute the real schema and Worker SQL through Node SQLite. Coverage inclu
 - `GET /api/profile-metrics`: views and blog impressions.
 - `POST /api/profile-metrics`: record a visit and update counters in one D1 batch.
 
-Writes are allowed on `www.akmalalif.com` and localhost. The workers.dev address returns metrics without recording visits. Browser tracking retains the per-path session key. Any path beginning `/blog`, including `/blogs`, increments impressions. Paths are truncated to 512 Unicode characters; referrer/user agent to 1,024.
+The Worker accepts writes on `www.akmalalif.com` and localhost for direct local API testing. Browser visit tracking writes only on `www.akmalalif.com`; localhost and workers.dev previews only read metrics. Browser tracking retains the per-path session key, and polling never records visits. Any path beginning `/blog`, including `/blogs`, increments impressions. Paths are truncated to 512 Unicode characters; referrer/user agent to 1,024.
 
 `/blogs` serves `blog.html`; `/blog/:slug` serves its article HTML. Former `.html` URLs redirect with 308 while preserving queries. Existing directory pages and the deployed `contoh/awge-website` examples remain available.
 

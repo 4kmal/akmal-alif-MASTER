@@ -1,8 +1,16 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv, normalizePath } from 'vite';
 import { relative, resolve } from 'path';
 import { readdirSync, statSync, cpSync, existsSync, mkdirSync } from 'fs';
 
-// Function to recursively find all HTML files
+const projectRoot = resolve(__dirname, '.');
+const ignoredDirectories = new Set(['node_modules', 'dist', 'repo-reference', 'coverage']);
+const backendPaths = ['/api', '/media', '/assets/video/', '/blog/blogpic/thumb1.mp4'];
+
+function isBackendPath(url = '') {
+  const pathname = url.split('?')[0];
+  return backendPaths.some((prefix) => pathname.startsWith(prefix));
+}
+
 function findHtmlFiles(dir, basePath = '') {
   const entries = {};
   
@@ -13,8 +21,7 @@ function findHtmlFiles(dir, basePath = '') {
       const fullPath = resolve(dir, file);
       const relativePath = basePath ? `${basePath}/${file}` : file;
       
-      // Skip node_modules, hidden directories, and build output
-      if (file === 'node_modules' || file === 'dist' || file.startsWith('.')) continue;
+      if (ignoredDirectories.has(file) || file.startsWith('.')) continue;
       
       const stat = statSync(fullPath);
       
@@ -35,7 +42,7 @@ function findHtmlFiles(dir, basePath = '') {
 }
 
 // Get all HTML entry points
-const htmlEntries = findHtmlFiles(resolve(__dirname, '.'));
+const htmlEntries = findHtmlFiles(projectRoot);
 
 const excludedStaticAssets = new Set([
   'assets/video/brandon.mp4',
@@ -67,25 +74,24 @@ function copyStaticDirectory(sourceDir, targetDir = sourceDir) {
   }
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, projectRoot, 'PORTFOLIO_');
+  const backend = env.PORTFOLIO_DEV_BACKEND || 'https://www.akmalalif.com';
+  const proxy = Object.fromEntries(backendPaths.map((prefix) => [prefix, {
+    target: backend,
+    changeOrigin: true,
+  }]));
+
+  return {
   root: '.',
   publicDir: false, // We're serving static files directly
   server: {
     port: 3000,
-    open: true, // Auto-open browser
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8787',
-        changeOrigin: true,
-      },
-      '/media': {
-        target: 'http://localhost:8787',
-        changeOrigin: true,
-      },
-    },
+    strictPort: true,
+    open: false,
+    proxy,
     watch: {
-      // Watch all files for changes
-      usePolling: true, // Better compatibility on Windows
+      ignored: ['**/repo-reference/**', '**/dist/**', '**/.wrangler/**', '**/coverage/**'],
     },
   },
   build: {
@@ -95,6 +101,19 @@ export default defineConfig({
     },
   },
   plugins: [
+    {
+      name: 'read-only-development-backend',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (isBackendPath(req.url) && !['GET', 'HEAD'].includes(req.method)) {
+            res.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'The frontend preview only forwards public reads.' }));
+            return;
+          }
+          next();
+        });
+      },
+    },
     {
       name: 'local-clean-url-rewrites',
       configureServer(server) {
@@ -112,6 +131,23 @@ export default defineConfig({
 
           next();
         });
+      },
+    },
+    {
+      name: 'reload-fetched-partials-and-scripts',
+      apply: 'serve',
+      handleHotUpdate({ file, modules, timestamp, server }) {
+        const pathname = normalizePath(relative(projectRoot, file));
+        const partial = pathname.startsWith('partials/') && pathname.endsWith('.html');
+        const script = pathname.startsWith('js/') && pathname.endsWith('.js');
+        if (!partial && !script) return;
+
+        const invalidated = new Set();
+        for (const module of modules) {
+          server.moduleGraph.invalidateModule(module, invalidated, timestamp, true);
+        }
+        server.ws.send({ type: 'full-reload', path: '*' });
+        return [];
       },
     },
     {
@@ -136,5 +172,6 @@ export default defineConfig({
       },
     },
   ],
+  };
 });
 
