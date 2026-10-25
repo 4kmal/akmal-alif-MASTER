@@ -74,6 +74,14 @@ For the dashboard console, add `--single-line --chunks-dir <private-chunk-direct
 
 Workers Builds uses the existing `4kmal/akmal-alif-MASTER` GitHub connection, production branch `main`, root `/`, Node `24.21.0`, pnpm `11.2.2`, build `pnpm build`, deploy `pnpm exec wrangler deploy`. Preview builds are disabled. Bindings come from `wrangler.jsonc`.
 
+Verify a deployment against the private article exports and media manifest:
+
+```powershell
+node scripts/verify-deployment.mjs --base https://www.akmalalif.com --backup-dir <private-backup-directory>
+```
+
+Production verification reads data without adding visits. The workers.dev check also verifies that visit writes are suppressed. Reports stay in the private backup directory.
+
 `www` uses a Worker Custom Domain. The apex uses a proxied placeholder DNS record and a Cloudflare 308 redirect to `www`, preserving paths and queries. Keep the registrar and Cloudflare nameservers unchanged.
 
 For rollback, use the saved original DNS zone and Vercel deployment. Retain the old deployment, Supabase exports and media backup; permanent deletion is separate from routine deployment.
