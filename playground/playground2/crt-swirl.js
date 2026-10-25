@@ -273,6 +273,10 @@ class CRTSwirlController {
         
         // Keyboard controls
         document.addEventListener('keydown', (e) => {
+            if (e.defaultPrevented || e.target?.closest?.('a, button, input, select, textarea, [contenteditable]')) {
+                return;
+            }
+
             switch(e.code) {
                 case 'Space':
                     e.preventDefault();

@@ -91,10 +91,10 @@ body.dark .empty-popup { background: rgba(200,200,200,0.9); color: #000; }
 }
 .profile-header { padding-bottom: 10px; }
 .profile-container {
-    display: flex; align-items: center; justify-content: center; min-height: var(--pfp-container-height); position: relative;
+    display: flex; align-items: center; justify-content: center; gap: clamp(16px, 3vw, 40px); min-height: var(--pfp-container-height); position: relative;
 }
 .profile-pic {
-    position: relative; width: var(--pfp-container-width); height: var(--pfp-container-height); filter: drop-shadow(0 0 0.25rem gray); flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin: 0 auto; overflow: hidden;
+    position: relative; width: var(--pfp-container-width); height: var(--pfp-container-height); filter: drop-shadow(0 0 0.25rem gray); flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin: 0; overflow: hidden;
 }
 /* PFP Image */
 .pfp-fallback {
@@ -341,7 +341,7 @@ body.dark .links-inner a:hover {
      .retro-progress-section { bottom: 5px; left: 5%; width: 90%; gap: 3px; padding: 4px; }
      .progress-bar-retro-container { height: 15px; }
      .progress-bar-retro-text { font-size: 0.7rem; }
-    .profile-pic { margin: 0 auto; }
+    .profile-pic { margin: 0; }
      .profile-container { padding: 0; flex-direction: row; align-items: center; justify-content: center; min-height: var(--pfp-container-height); }
      /* Restore toggle position */
      .dark-mode-toggle { top: 15px; right: -15px; }
@@ -358,6 +358,8 @@ body.dark .links-inner a:hover {
   font-family: 'Arial', sans-serif; /* Or your preferred font */
   position: relative; 
   width: auto;
+  flex: 0 0 auto;
+  min-width: 0;
   justify-content: center;
   margin-top: 20px;
   color: #000; /* Default text color for the static part */
@@ -375,6 +377,9 @@ body.dark .typing-effect {
 
 .typing-effect .dynamic-text-wrapper {
   height: calc(1.8rem * 1.2 * 3); /* Show 3 lines: current, one above, one below */
+  flex: 0 0 var(--dynamic-text-slot-width, 14rem);
+  width: var(--dynamic-text-slot-width, 14rem);
+  min-width: 0;
   line-height: 1.2;
   overflow: hidden;
   position: relative;
@@ -396,7 +401,7 @@ body.dark .typing-effect {
   align-items: center;
   justify-content: flex-start;
   opacity: 0.3; /* Default for non-active, non-focused items */
-  transition: opacity 0.4s ease-in-out, color 0.4s ease-in-out, font-weight 0.4s ease-in-out;
+  transition: opacity 0.4s ease-in-out, color 0.4s ease-in-out;
   will-change: opacity, transform; /* Performance hint */
   white-space: nowrap;
 }
@@ -409,6 +414,10 @@ body.dark .typing-effect {
 
 .typing-effect .dynamic-text li.visible-neighbor {
   opacity: 0.3; /* Opacity for items above/below the active one */
+}
+
+.typing-effect .dynamic-text.is-static li:not(.active-text-item) {
+  display: none;
 }
 
 /* JS will add/remove these classes and handle transform for scrolling */
@@ -433,6 +442,7 @@ body.dark .typing-effect {
   }
   .typing-effect .dynamic-text-wrapper {
     height: calc(1.3rem * 1.2 * 3); /* Adjust for mobile font size */
+    flex: 0 1 100%;
     width: 100%;
     max-width: 300px; /* Prevent very wide text on mobile */
     text-align: center;
@@ -1842,6 +1852,8 @@ body.dark .mobile-submenu-link:hover {
     }
 
     .typing-effect .dynamic-text-wrapper {
+        flex: 0 1 100%;
+        width: 100%;
         max-width: min(100%, 520px);
     }
 

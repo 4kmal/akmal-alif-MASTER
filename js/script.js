@@ -608,22 +608,85 @@ function initNewDynamicTextAnimation() {
     const items = Array.from(dynamicTextList.children);
     if (items.length === 0) return;
 
-    const itemHeight = items[0].offsetHeight;
+    const existingState = dynamicTextList.__dynamicTextState;
+    if (existingState) {
+        existingState.recomputeLayout();
+        return;
+    }
+
     const animationInterval = 2500; // Time each item is active (milliseconds)
     const visibleNeighborCount = 1; // Number of items to show above/below with reduced opacity (e.g., 1 means 1 above, 1 below)
+    const reducedMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    let reducedMotion = Boolean(reducedMotionQuery?.matches);
 
     let currentIndex = 0;
     let intervalId = null;
+    let rowHeight = 0;
+    let resizeFrame = null;
 
-    // Ensure wrapper has a defined height to clip overflow
-    dynamicTextContainer.style.height = `${itemHeight * (1 + 2 * visibleNeighborCount)}px`;
+    function measureRoleSlot() {
+        if (!document.body || typeof document.createElement !== 'function' || typeof window.getComputedStyle !== 'function') return;
+
+        const sample = items.find((item) => item.textContent.trim());
+        if (!sample) return;
+
+        const sampleStyle = window.getComputedStyle(sample);
+        const measure = document.createElement('span');
+        measure.setAttribute('aria-hidden', 'true');
+        measure.style.position = 'fixed';
+        measure.style.left = '-9999px';
+        measure.style.top = '0';
+        measure.style.visibility = 'hidden';
+        measure.style.whiteSpace = 'nowrap';
+        measure.style.fontFamily = sampleStyle.fontFamily;
+        measure.style.fontSize = sampleStyle.fontSize;
+        measure.style.fontStyle = sampleStyle.fontStyle;
+        measure.style.fontVariant = sampleStyle.fontVariant;
+        measure.style.fontWeight = '700';
+        measure.style.letterSpacing = sampleStyle.letterSpacing;
+        measure.style.textTransform = sampleStyle.textTransform;
+        document.body.appendChild(measure);
+
+        let widest = 0;
+        items.forEach((item) => {
+            const label = item.textContent.trim();
+            if (!label) return;
+            measure.textContent = label;
+            widest = Math.max(widest, measure.getBoundingClientRect().width);
+        });
+
+        measure.remove();
+        if (widest > 0) {
+            const currentWidth = parseFloat(window.getComputedStyle(dynamicTextContainer).width);
+            const slotWidth = Number.isFinite(currentWidth) ? Math.max(widest, currentWidth) : widest;
+            dynamicTextContainer.style.setProperty('--dynamic-text-slot-width', `${Math.ceil(slotWidth)}px`);
+        }
+    }
+
+    function measureRowHeight() {
+        const firstItem = items[0];
+        const rect = firstItem.getBoundingClientRect?.();
+        const measured = rect?.height || firstItem.offsetHeight;
+        if (measured > 0) rowHeight = measured;
+
+        if (!rowHeight && typeof window.getComputedStyle === 'function') {
+            const lineHeight = parseFloat(window.getComputedStyle(firstItem).lineHeight);
+            if (Number.isFinite(lineHeight) && lineHeight > 0) rowHeight = lineHeight;
+        }
+
+        if (rowHeight > 0) {
+            const visibleLineCount = reducedMotion ? 1 : 1 + visibleNeighborCount * 2;
+            dynamicTextContainer.style.height = `${rowHeight * visibleLineCount}px`;
+        }
+    }
+
     dynamicTextContainer.style.overflow = 'hidden';
+    dynamicTextList.classList.toggle('is-static', reducedMotion);
 
     function updateTextItems() {
-        // Calculate the translateY for the <ul> to center the current item
-        // The wrapper shows (1 + 2 * visibleNeighborCount) items.
-        // The active one should be in the middle.
-        const translateY = -(currentIndex * itemHeight) + (itemHeight * visibleNeighborCount);
+        if (!rowHeight) return;
+
+        const translateY = -(currentIndex * rowHeight) + (reducedMotion ? 0 : rowHeight * visibleNeighborCount);
         dynamicTextList.style.transform = `translateY(${translateY}px)`;
 
         items.forEach((item, index) => {
@@ -631,41 +694,86 @@ function initNewDynamicTextAnimation() {
 
             if (index === currentIndex) {
                 item.classList.add('active-text-item');
-            } else {
-                // Determine if it's a visible neighbor
-                let diff = Math.abs(index - currentIndex);
-                // Handle wrap-around for neighbors (if list is not long enough)
-                if (items.length > (1 + 2 * visibleNeighborCount)) { // Only wrap if there are enough items to make wrapping meaningful
-                    if (diff > items.length / 2) {
-                        diff = items.length - diff;
-                    }
-                }
+                return;
+            }
 
-                if (diff <= visibleNeighborCount) {
-                    item.classList.add('visible-neighbor');
-                }
+            let diff = Math.abs(index - currentIndex);
+            if (!reducedMotion && items.length > (1 + 2 * visibleNeighborCount) && diff > items.length / 2) {
+                diff = items.length - diff;
+            }
+
+            if (!reducedMotion && diff <= visibleNeighborCount) {
+                item.classList.add('visible-neighbor');
             }
         });
-
-        currentIndex = (currentIndex + 1) % items.length;
     }
 
-    // Clear existing interval if any (e.g., during hot-reloads or re-init)
-    if (dynamicTextList.dataset.intervalId) {
-        clearInterval(parseInt(dynamicTextList.dataset.intervalId));
+    function recomputeLayout() {
+        measureRoleSlot();
+        measureRowHeight();
+        updateTextItems();
     }
 
-    if (items.length > 1) {
-        // Apply a transition for smooth scrolling. Adjust timing and easing as needed.
-        dynamicTextList.style.transition = 'transform 0.6s cubic-bezier(0.68, -0.55, 0.27, 1.55)'; // Example easing
-        updateTextItems(); // Initial call to set first item
-        intervalId = setInterval(updateTextItems, animationInterval);
-        dynamicTextList.dataset.intervalId = String(intervalId); // Store interval ID for potential clearing
-    } else if (items.length === 1) {
-        // If only one item, just make it active and center it
-        items[0].classList.add('active-text-item');
-        dynamicTextList.style.transform = `translateY(${itemHeight * visibleNeighborCount}px)`;
+    function scheduleLayout() {
+        if (resizeFrame !== null) return;
+
+        const run = () => {
+            resizeFrame = null;
+            recomputeLayout();
+        };
+
+        if (typeof window.requestAnimationFrame === 'function') {
+            resizeFrame = window.requestAnimationFrame(run);
+        } else {
+            run();
+        }
     }
+
+    function stopInterval() {
+        if (intervalId === null) return;
+        clearInterval(intervalId);
+        intervalId = null;
+        delete dynamicTextList.dataset.intervalId;
+    }
+
+    function startInterval() {
+        if (reducedMotion || items.length <= 1 || intervalId !== null) return;
+
+        dynamicTextList.style.transition = 'transform 0.6s cubic-bezier(0.68, -0.55, 0.27, 1.55)';
+        intervalId = setInterval(() => {
+            currentIndex = (currentIndex + 1) % items.length;
+            updateTextItems();
+        }, animationInterval);
+        dynamicTextList.dataset.intervalId = String(intervalId);
+    }
+
+    function syncMotionPreference(nextReducedMotion) {
+        if (reducedMotion === nextReducedMotion) return;
+
+        reducedMotion = nextReducedMotion;
+        currentIndex = 0;
+        dynamicTextList.classList.toggle('is-static', reducedMotion);
+
+        if (reducedMotion) {
+            stopInterval();
+            dynamicTextList.style.transition = 'none';
+        }
+
+        recomputeLayout();
+
+        if (!reducedMotion) startInterval();
+    }
+
+    dynamicTextList.__dynamicTextState = { recomputeLayout };
+    recomputeLayout();
+    dynamicTextList.style.transition = 'none';
+    startInterval();
+
+    window.addEventListener('resize', scheduleLayout, { passive: true });
+    reducedMotionQuery?.addEventListener?.('change', (event) => {
+        syncMotionPreference(Boolean(event.matches));
+    });
+    if (document.fonts?.ready?.then) document.fonts.ready.then(scheduleLayout);
 }
 
 // -------- Blog Outline/Table of Contents Generator --------
