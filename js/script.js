@@ -657,9 +657,7 @@ function initNewDynamicTextAnimation() {
 
         measure.remove();
         if (widest > 0) {
-            const currentWidth = parseFloat(window.getComputedStyle(dynamicTextContainer).width);
-            const slotWidth = Number.isFinite(currentWidth) ? Math.max(widest, currentWidth) : widest;
-            dynamicTextContainer.style.setProperty('--dynamic-text-slot-width', `${Math.ceil(slotWidth)}px`);
+            dynamicTextContainer.style.setProperty('--dynamic-text-slot-width', `${Math.ceil(widest)}px`);
         }
     }
 

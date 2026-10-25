@@ -377,8 +377,8 @@ body.dark .typing-effect {
 
 .typing-effect .dynamic-text-wrapper {
   height: calc(1.8rem * 1.2 * 3); /* Show 3 lines: current, one above, one below */
-  flex: 0 0 var(--dynamic-text-slot-width, 14rem);
-  width: var(--dynamic-text-slot-width, 14rem);
+  flex: 0 0 var(--dynamic-text-slot-width, 18rem);
+  width: var(--dynamic-text-slot-width, 18rem);
   min-width: 0;
   line-height: 1.2;
   overflow: hidden;

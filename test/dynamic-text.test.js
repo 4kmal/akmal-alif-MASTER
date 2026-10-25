@@ -33,7 +33,7 @@ class FakeClassList {
   }
 }
 
-function createAnimationFixture({ reducedMotion = false } = {}) {
+function createAnimationFixture({ reducedMotion = false, wrapperWidth = 224, widestLabelWidth = 224 } = {}) {
   const items = ['producer', 'ui/ux designer', 'full stack developer', 'data hoarder', '𓅓', '?', ''].map((label) => ({
     textContent: label,
     classList: new FakeClassList(),
@@ -60,6 +60,7 @@ function createAnimationFixture({ reducedMotion = false } = {}) {
   const animationFrames = [];
   const intervals = [];
   const clearedIntervals = [];
+  let currentWrapperWidth = wrapperWidth;
   const reducedMotionQuery = {
     matches: reducedMotion,
     addEventListener(type, callback) {
@@ -82,7 +83,10 @@ function createAnimationFixture({ reducedMotion = false } = {}) {
         textContent: '',
         setAttribute() {},
         getBoundingClientRect() {
-          return { width: this.textContent.length * 10, height: 0 };
+          const width = this.textContent === 'full stack developer'
+            ? widestLabelWidth
+            : this.textContent.length * 10;
+          return { width, height: 0 };
         },
         remove() {},
       };
@@ -96,7 +100,7 @@ function createAnimationFixture({ reducedMotion = false } = {}) {
     matchMedia() {
       return reducedMotionQuery;
     },
-    getComputedStyle() {
+    getComputedStyle(element) {
       return {
         fontFamily: 'Arial',
         fontSize: '28.8px',
@@ -105,7 +109,7 @@ function createAnimationFixture({ reducedMotion = false } = {}) {
         letterSpacing: 'normal',
         textTransform: 'none',
         lineHeight: '34.56px',
-        width: '224px',
+        width: element === wrapper ? `${currentWrapperWidth}px` : '224px',
       };
     },
     requestAnimationFrame(callback) {
@@ -143,6 +147,9 @@ function createAnimationFixture({ reducedMotion = false } = {}) {
     intervals,
     clearedIntervals,
     reducedMotionQuery,
+    setWrapperWidth(width) {
+      currentWrapperWidth = width;
+    },
   };
 }
 
@@ -199,4 +206,17 @@ test('dynamic text resyncs its interval, line count, and static state when motio
   assert.equal(fixture.list.classList.contains('is-static'), false);
   assert.equal(parseFloat(fixture.wrapper.style.height), 103.68);
   assert.match(fixture.list.style.transition, /^transform 0\.6s/);
+});
+
+test('dynamic text reserves only measured label width across breakpoint changes', () => {
+  const fixture = createAnimationFixture({ wrapperWidth: 520, widestLabelWidth: 224 });
+
+  fixture.animate();
+
+  assert.equal(fixture.wrapper.style['--dynamic-text-slot-width'], '224px');
+
+  fixture.setWrapperWidth(224);
+  fixture.resizeListeners[0]();
+  fixture.animationFrames.at(-1)();
+  assert.equal(fixture.wrapper.style['--dynamic-text-slot-width'], '224px');
 });
