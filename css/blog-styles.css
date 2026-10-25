@@ -231,6 +231,10 @@ body.dark .blog-post-full {
 }
 
 .category-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
     flex: 0 0 auto;
     min-block-size: 2.75rem;
     padding: 0.55rem 0.9rem;
@@ -249,6 +253,13 @@ body.dark .blog-post-full {
         box-shadow 160ms ease,
         color 160ms ease,
         transform 160ms ease;
+}
+
+.blog-filter-icon {
+    flex: 0 0 1.1rem;
+    width: 1.1rem;
+    height: 1.1rem;
+    shape-rendering: crispEdges;
 }
 
 .category-btn.active,
@@ -274,6 +285,13 @@ body.dark .blog-post-full {
         border-color: var(--blog-accent, #fbda29);
         background: var(--blog-accent, #fbda29);
         color: var(--blog-accent-foreground, #2a2a2a);
+    }
+
+    .blog-artwork-toggle:not(:disabled):hover {
+        border-color: var(--blog-text, #2a2a2a);
+        color: var(--blog-text, #2a2a2a);
+        box-shadow: var(--blog-shadow-control-hover, 0 4px 10px rgba(42, 42, 42, 0.14));
+        transform: translateY(-1px);
     }
 }
 
@@ -304,6 +322,45 @@ body.dark .blog-post-full {
 .blog-header h1 {
     font-size: clamp(1.75rem, 3vw, 2.25rem);
     font-weight: 600;
+}
+
+.blog-header-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+}
+
+.blog-header-row h1 {
+    grid-column: 2;
+    margin: 0;
+    text-align: center;
+}
+
+.blog-artwork-toggle {
+    grid-column: 3;
+    justify-self: end;
+    min-block-size: 2.75rem;
+    padding: 0.55rem 0.9rem;
+    border: 1px solid var(--blog-border, rgba(42, 42, 42, 0.16));
+    border-radius: var(--portfolio-radius-nested, 16px);
+    background: var(--blog-surface-muted, #f5f5f5);
+    color: var(--blog-muted, #6b6b6b);
+    box-shadow: var(--blog-shadow-control, 0 2px 6px rgba(42, 42, 42, 0.1));
+    cursor: pointer;
+    font-size: 0.76rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    transition:
+        border-color 160ms ease,
+        box-shadow 160ms ease,
+        color 160ms ease,
+        transform 160ms ease;
+}
+
+.blog-artwork-toggle:disabled {
+    cursor: not-allowed;
+    opacity: 0.72;
 }
 
 .blog-posts-list {
@@ -376,6 +433,112 @@ body.dark .blog-post-full {
     object-fit: cover;
     filter: saturate(0.84) contrast(1.04);
     transition: filter 160ms ease, transform 160ms ease;
+}
+
+.blog-card-sprite {
+    display: block;
+    width: 100%;
+    height: 100%;
+    color: var(--blog-text, #2a2a2a);
+    image-rendering: pixelated;
+    shape-rendering: crispEdges;
+}
+
+.blog-card-sprite .blog-artwork-bg {
+    fill: var(--blog-surface-muted, #f5f5f5);
+}
+
+.blog-card-sprite .blog-artwork-shadow,
+.blog-card-sprite .blog-artwork-deep {
+    fill: var(--blog-text, #2a2a2a);
+}
+
+.blog-card-sprite .blog-artwork-surface,
+.blog-card-sprite .blog-artwork-mid {
+    fill: var(--blog-muted, #6b6b6b);
+}
+
+.blog-card-sprite .blog-artwork-line {
+    fill: var(--blog-border, rgba(42, 42, 42, 0.16));
+}
+
+.blog-card-sprite .blog-artwork-accent {
+    fill: var(--blog-accent, #fbda29);
+}
+
+.blog-card-sprite .blog-artwork-motion {
+    animation-duration: 8s;
+    animation-iteration-count: infinite;
+    animation-play-state: paused;
+    animation-timing-function: steps(2, end);
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.blog-card-sprite .blog-artwork-motion--blink {
+    animation-name: blog-artwork-blink;
+}
+
+.blog-card-sprite .blog-artwork-motion--leg {
+    animation-name: blog-artwork-leg-step;
+}
+
+.blog-card-sprite .blog-artwork-motion--steam {
+    animation-name: blog-artwork-steam;
+}
+
+.blog-card-sprite--robot-workstation .blog-artwork-motion {
+    animation-delay: -1.3s;
+}
+
+.blog-card-sprite--hexapod .blog-artwork-motion {
+    animation-delay: -3.9s;
+}
+
+.blog-card-sprite--burnout-desk .blog-artwork-motion {
+    animation-delay: -6.2s;
+}
+
+@keyframes blog-artwork-blink {
+    0%,
+    44% {
+        opacity: 0.34;
+    }
+
+    50%,
+    100% {
+        opacity: 0.9;
+    }
+}
+
+@keyframes blog-artwork-leg-step {
+    0%,
+    52% {
+        transform: translateY(0);
+    }
+
+    58%,
+    100% {
+        transform: translateY(1px);
+    }
+}
+
+@keyframes blog-artwork-steam {
+    0%,
+    45% {
+        opacity: 0.2;
+        transform: translateY(1px);
+    }
+
+    54%,
+    100% {
+        opacity: 0.5;
+        transform: translateY(-2px);
+    }
+}
+
+.blog-card-sprite[data-artwork-motion-state="playing"] .blog-artwork-motion {
+    animation-play-state: running;
 }
 
 .blog-card-content {
@@ -508,6 +671,11 @@ body.dark .blog-post-full {
             var(--blog-shadow-card-hover, 0 5px 14px rgba(42, 42, 42, 0.12));
     }
 
+    .blog-card--sprite:hover,
+    .blog-card--sprite:focus-within {
+        transform: none;
+    }
+
     .blog-card:hover .blog-card-image {
         filter: saturate(0.9) contrast(1.04);
         transform: scale(1.01);
@@ -522,7 +690,8 @@ body.dark .blog-post-full {
 }
 
 .read-more-button:not(:disabled):active,
-.category-btn:not(:disabled):active {
+.category-btn:not(:disabled):active,
+.blog-artwork-toggle:not(:disabled):active {
     transform: translateY(0);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.3),
@@ -907,6 +1076,20 @@ body.dark .outline-toggle:hover {
         font-size: 2rem;
     }
 
+    .blog-header-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+    }
+
+    .blog-header-row h1,
+    .blog-artwork-toggle {
+        grid-column: 1;
+    }
+
+    .blog-artwork-toggle {
+        justify-self: center;
+    }
+
     .blog-posts-list {
         gap: 12px;
     }
@@ -934,8 +1117,13 @@ body.dark .outline-toggle:hover {
     .blog-card-image,
     .category-btn,
     .read-more-button,
-    .blog-card .post-title a {
+    .blog-card .post-title a,
+    .blog-artwork-toggle {
         transition: none;
+    }
+
+    .blog-card-sprite .blog-artwork-motion {
+        animation: none !important;
     }
 
     .blog-card:hover,
@@ -943,7 +1131,9 @@ body.dark .outline-toggle:hover {
     .category-btn:hover,
     .category-btn:active,
     .read-more-button:hover,
-    .read-more-button:active {
+    .read-more-button:active,
+    .blog-artwork-toggle:hover,
+    .blog-artwork-toggle:active {
         transform: none;
     }
 }

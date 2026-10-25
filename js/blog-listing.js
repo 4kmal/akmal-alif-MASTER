@@ -4,6 +4,12 @@ import {
   formatPublishedDate,
   getPostCategory,
 } from './blog-data.js';
+import {
+  initBlogArtworkMotion,
+  renderBlogFilterIcon,
+  renderBlogSprite,
+  resolveBlogThumbnail,
+} from './blog-artwork.js';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -35,11 +41,19 @@ function renderCategories(container, categories) {
   const uniqueCategories = normaliseCategories(categories);
 
   container.innerHTML = [
-    '<button type="button" class="category-btn active" data-category="all" aria-pressed="true">All</button>',
+    `<button type="button" class="category-btn active" data-category="all" aria-pressed="true">${renderBlogFilterIcon('all')}<span>All</span></button>`,
     ...uniqueCategories.map((category) => (
-      `<button type="button" class="category-btn" data-category="${escapeHtml(category.slug)}" aria-pressed="false">${escapeHtml(category.name)}</button>`
+      `<button type="button" class="category-btn" data-category="${escapeHtml(category.slug)}" aria-pressed="false">${renderBlogFilterIcon(category.slug)}<span>${escapeHtml(category.name)}</span></button>`
     )),
   ].join('');
+}
+
+function renderResolvedThumbnail(thumbnail) {
+  if (thumbnail.type === 'sprite') {
+    return renderBlogSprite(thumbnail.artwork);
+  }
+
+  return `<img src="${escapeHtml(thumbnail.src)}" alt="${escapeHtml(thumbnail.alt)}" class="blog-card-image">`;
 }
 
 function renderPosts(container, posts) {
@@ -54,13 +68,13 @@ function renderPosts(container, posts) {
     const categoryName = String(category?.name ?? 'Uncategorized').trim() || 'Uncategorized';
     const postSlug = String(post?.slug ?? '').trim();
     const postHref = `/blog/${encodeURIComponent(postSlug)}`;
-    const imageUrl = post?.cover_image_url || '/blog/blogpic/pic3.jpg';
-    const imageAlt = post?.cover_image_alt || post?.title || 'Blog post';
+    const thumbnail = resolveBlogThumbnail(post);
+    const artworkClass = thumbnail.type === 'sprite' ? ' blog-card--sprite' : '';
 
     return `
-      <article class="blog-card" data-category="${escapeHtml(categorySlug)}" data-blog-state="ready">
+      <article class="blog-card${artworkClass}" data-category="${escapeHtml(categorySlug)}" data-blog-state="ready">
         <div class="blog-card-image-wrapper">
-          <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageAlt)}" class="blog-card-image">
+          ${renderResolvedThumbnail(thumbnail)}
         </div>
         <div class="blog-card-content">
           <h2 class="post-title"><a href="${postHref}">${escapeHtml(post.title)}</a></h2>
@@ -89,6 +103,7 @@ function deriveCategories(posts) {
 }
 
 function emitRendered(state) {
+  initBlogArtworkMotion();
   document.dispatchEvent(new CustomEvent('blog:rendered', {
     detail: { state },
   }));
