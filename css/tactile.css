@@ -51,6 +51,11 @@ body {
   transition: background-color var(--portfolio-motion), color var(--portfolio-motion);
 }
 
+html.dark body {
+  background: var(--portfolio-page) !important;
+  color: var(--portfolio-text);
+}
+
 body::before {
   position: fixed;
   inset: 0;
@@ -409,13 +414,27 @@ body.dark #headerDarkToggle .theme-icon {
   padding: 20px;
 }
 
+.typing-effect .dynamic-text li.active-text-item {
+  color: var(--portfolio-accent-ink) !important;
+  background: var(--portfolio-accent);
+  border-radius: 4px;
+}
+
+html.dark .typing-effect .dynamic-text li.active-text-item,
+body.dark .typing-effect .dynamic-text li.active-text-item {
+  color: var(--portfolio-accent) !important;
+  background: transparent;
+}
+
 .tracklist-panel,
 .clock-widget-panel {
+  box-sizing: border-box !important;
   position: sticky;
   top: calc(var(--portfolio-header-clearance) + 16px);
   align-self: start;
   height: fit-content;
   max-height: calc(100vh - var(--portfolio-header-clearance) - 32px);
+  margin: 0 !important;
   overflow: auto;
   color: var(--portfolio-text) !important;
   background-color: var(--portfolio-surface) !important;
@@ -427,12 +446,12 @@ body.dark #headerDarkToggle .theme-icon {
 
 .tracklist-panel {
   width: 240px;
-  padding: 16px;
+  padding: 16px !important;
 }
 
 .clock-widget-panel {
   width: 280px;
-  padding: 20px;
+  padding: 20px !important;
 }
 
 .tracklist-panel .section-title {
@@ -660,7 +679,7 @@ body.dark #headerDarkToggle .theme-icon {
     width: 100%;
     max-width: 800px;
     max-height: none;
-    padding: 16px;
+    padding: 16px !important;
   }
 
   .clock-widget-panel .profile-card-container {
