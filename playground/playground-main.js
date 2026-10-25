@@ -11,19 +11,19 @@ class Creative3DPlaygroundController {
         this.tools = {
             1: {
                 id: 'awge-01',
-                link: "https://dwvo2npct47gg.cloudfront.net/videos/monsterew-cropped.mp4",
-                gif: "https://dwvo2npct47gg.cloudfront.net/gifs/wrong.gif",
+                link: "/media/videos/monsterew-cropped.mp4",
+                gif: "/media/gifs/wrong.gif",
                 title: "Thronglets",
                 desc: "Small bugs inside Cyberspace",
-                url: "https://dwvo2npct47gg.cloudfront.net/videos/monsterew-cropped.mp4"
+                url: "/media/videos/monsterew-cropped.mp4"
             },
             2: {
                 id: 'awge-02',
-                link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-1-compressed.mp4",
-                gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-1.gif",
+                link: "/media/videos/rocky-1-compressed.mp4",
+                gif: "/media/gifs/rocky-1.gif",
                 title: "Blackhole",
                 desc: "three.js, webgl",
-                url: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-1-compressed.mp4"
+                url: "/media/videos/rocky-1-compressed.mp4"
             },
             3: {
                 id: 'playground-3',
@@ -35,16 +35,16 @@ class Creative3DPlaygroundController {
             },
             4: {
                 id: 'awge-04',
-                link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-concert.mp4",
-                gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-concert.gif",
+                link: "/media/videos/rocky-concert.mp4",
+                gif: "/media/gifs/rocky-concert.gif",
                 title: "Kanye's Stem Player",
                 desc: "Stem Player that seperates different tracks",
-                url: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-concert.mp4"
+                url: "/media/videos/rocky-concert.mp4"
             },
             5: {
                 id: 'awge-05',
                 link: "https://embed.vevo.com?isrc=USSM21701029&autoplay=true",
-                gif: "https://dwvo2npct47gg.cloudfront.net/gifs/feels.gif",
+                gif: "/media/gifs/feels.gif",
                 isVevo: true,
                 title: "Beatbot Player",
                 desc: "Beatbot, Beatbot, Beatbot",
@@ -52,27 +52,27 @@ class Creative3DPlaygroundController {
             },
             6: {
                 id: 'awge-06',
-                link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-music.mp4",
-                gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-music.gif",
+                link: "/media/videos/rocky-music.mp4",
+                gif: "/media/gifs/rocky-music.gif",
                 title: "Video Game 1",
                 desc: "Description",
-                url: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-music.mp4"
+                url: "/media/videos/rocky-music.mp4"
             },
             7: {
                 id: 'awge-07',
-                link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-home.mp4",
-                gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-home.gif",
+                link: "/media/videos/rocky-home.mp4",
+                gif: "/media/gifs/rocky-home.gif",
                 title: "Playground 7",
                 desc: "Taman Permainan 7",
-                url: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-home.mp4"
+                url: "/media/videos/rocky-home.mp4"
             },
             8: {
                 id: 'awge-08',
-                link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-jail.mp4",
+                link: "/media/videos/rocky-jail.mp4",
                 gif: "../assets/picture/awge/gallery_54.png",
                 title: "Playground 8",
                 desc: "Taman Permainan 8",
-                url: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-jail.mp4"
+                url: "/media/videos/rocky-jail.mp4"
             }
         };
         

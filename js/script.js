@@ -596,12 +596,6 @@ function setupEmptyLinkPopups() {
 
         e.preventDefault();
         
-        // Track empty link click
-        if (window.analytics) {
-            const linkText = link.querySelector('span')?.textContent || 'unknown';
-            window.analytics.trackNavigation('empty_link_' + linkText.toLowerCase());
-        }
-
         let tooltip = link.querySelector('.empty-popup');
         if (!tooltip) {
             tooltip = document.createElement('div');

@@ -198,11 +198,6 @@ class ContactChatController {
         this.messages.push(userMessage);
         this.renderMessage(userMessage);
         
-        // Track contact form message event
-        if (window.analytics) {
-            window.analytics.trackContactForm('message_sent');
-        }
-        
         // Clear input and update UI
         this.inputValue = '';
         this.chatInput.value = '';

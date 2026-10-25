@@ -356,19 +356,6 @@ class PersistentMusicPlayer {
         try {
             await this.audio.play();
             this.isPlaying = true;
-            
-            // Track music play event
-            if (window.analytics && this.currentTrack) {
-                const track = this.tracks.find(t => t.id === this.currentTrack);
-                window.analytics.trackMusicEvent('play', track ? track.name : 'unknown');
-            }
-            
-            // Track music player performance
-            if (window.speedInsights && this.currentTrack) {
-                const playLatency = performance.now() - this.playStartTime;
-                window.speedInsights.trackCustomMetric('music_play_latency', playLatency, 
-                    playLatency < 100 ? 'good' : playLatency < 300 ? 'needs-improvement' : 'poor');
-            }
         } catch (error) {
             console.warn('Music playback failed:', {
                 track: this.getCurrentTrack()?.name,
@@ -390,12 +377,6 @@ class PersistentMusicPlayer {
         this.isPlaying = false;
         this.updateUI();
         this.saveState();
-        
-        // Track music pause event
-        if (window.analytics && this.currentTrack) {
-            const track = this.tracks.find(t => t.id === this.currentTrack);
-            window.analytics.trackMusicEvent('pause', track ? track.name : 'unknown');
-        }
     }
 
     playNext() {
@@ -404,13 +385,7 @@ class PersistentMusicPlayer {
         const currentIndex = this.tracks.findIndex(t => t.id === this.currentTrack);
         const nextTrackIndex = (currentIndex + 1) % this.tracks.length;
         const nextTrackId = this.tracks[nextTrackIndex].id;
-        
-        // Track next track event
-        if (window.analytics) {
-            const nextTrack = this.tracks[nextTrackIndex];
-            window.analytics.trackMusicEvent('next_track', nextTrack ? nextTrack.name : 'unknown');
-        }
-        
+
         this.loadTrack(nextTrackId, this.isPlaying || true);
     }
 
@@ -420,12 +395,6 @@ class PersistentMusicPlayer {
         const currentIndex = this.tracks.findIndex(t => t.id === this.currentTrack);
         const prevTrackIndex = (currentIndex - 1 + this.tracks.length) % this.tracks.length;
         const prevTrackId = this.tracks[prevTrackIndex].id;
-
-        // Track previous track event
-        if (window.analytics) {
-            const prevTrack = this.tracks[prevTrackIndex];
-            window.analytics.trackMusicEvent('previous_track', prevTrack ? prevTrack.name : 'unknown');
-        }
 
         this.loadTrack(prevTrackId, this.isPlaying || this.tracks[prevTrackIndex].id !== this.currentTrack);
     }

@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
-import { resolve } from 'path';
-import { readdirSync, statSync, cpSync, existsSync } from 'fs';
+import { relative, resolve } from 'path';
+import { readdirSync, statSync, cpSync, existsSync, mkdirSync } from 'fs';
 
 // Function to recursively find all HTML files
 function findHtmlFiles(dir, basePath = '') {
@@ -37,12 +37,51 @@ function findHtmlFiles(dir, basePath = '') {
 // Get all HTML entry points
 const htmlEntries = findHtmlFiles(resolve(__dirname, '.'));
 
+const excludedStaticAssets = new Set([
+  'assets/video/brandon.mp4',
+  'assets/video/zopo (@aesopcash).mp4',
+  'blog/blogpic/thumb1.mp4',
+]);
+
+function copyStaticDirectory(sourceDir, targetDir = sourceDir) {
+  const sourcePath = resolve(__dirname, sourceDir);
+  const targetPath = resolve(__dirname, 'dist', targetDir);
+
+  if (!existsSync(sourcePath)) return;
+
+  mkdirSync(targetPath, { recursive: true });
+
+  for (const entry of readdirSync(sourcePath)) {
+    const sourceEntryPath = resolve(sourcePath, entry);
+    const targetEntryPath = resolve(targetPath, entry);
+    const projectPath = relative(__dirname, sourceEntryPath).replaceAll('\\', '/');
+
+    if (excludedStaticAssets.has(projectPath)) continue;
+
+    if (statSync(sourceEntryPath).isDirectory()) {
+      copyStaticDirectory(projectPath, `${targetDir}/${entry}`);
+    } else {
+      cpSync(sourceEntryPath, targetEntryPath);
+    }
+  }
+}
+
 export default defineConfig({
   root: '.',
   publicDir: false, // We're serving static files directly
   server: {
     port: 3000,
     open: true, // Auto-open browser
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+      '/media': {
+        target: 'http://localhost:8787',
+        changeOrigin: true,
+      },
+    },
     watch: {
       // Watch all files for changes
       usePolling: true, // Better compatibility on Windows
@@ -79,11 +118,17 @@ export default defineConfig({
       closeBundle() {
         // Copy directories with static files that are not bundled by Vite
         // (plain <script src> tags, dynamically loaded assets, partial images)
-        const staticDirs = ['js', 'icon', 'lagu', 'album cover', 'assets', 'blog/blogpic'];
+        const staticDirs = [
+          'js',
+          'icon',
+          'lagu',
+          'album cover',
+          'assets',
+          'blog/blogpic',
+          'contoh/awge-website',
+        ];
         for (const dir of staticDirs) {
-          if (existsSync(dir)) {
-            cpSync(dir, `dist/${dir}`, { recursive: true });
-          }
+          copyStaticDirectory(dir);
         }
       },
     },

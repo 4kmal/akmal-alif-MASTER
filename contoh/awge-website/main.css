@@ -16,12 +16,12 @@
 
 @font-face {
 	font-family: 'varsity';
-	src: url('https://dwvo2npct47gg.cloudfront.net/fonts/varsity.ttf');
+	src: url('/media/fonts/varsity.ttf');
 }
 
 @font-face {
 	font-family: 'press-start';
-	src: url('../awge-media/fonts/press-start.ttf');
+	src: url('/assets/fonts/press-start.ttf');
 }
 
 @keyframes blinker {
@@ -747,7 +747,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 body {
 	margin: 0;
 	overflow: hidden;
-	cursor: url('https://dwvo2npct47gg.cloudfront.net/images/cursor.png') 11 32, auto;
+	cursor: url('/media/images/cursor.png') 11 32, auto;
 }
 
 
@@ -768,7 +768,7 @@ body {
 .awge-tube-border {
 	width: 100%;
 	height: 100%;
-	background-image: url('https://dwvo2npct47gg.cloudfront.net/images/border-streched.png');
+	background-image: url('/media/images/border-streched.png');
 	background-size: 100% 100%;
 	position: absolute;
 	z-index: 10;
@@ -790,7 +790,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 screen and (max-height: 480px) and (orientation: landscape) {
 	.awge-tube-border-mobile {
 		display: inherit;
-		background-image: url('https://dwvo2npct47gg.cloudfront.net/images/border-compressed.png');
+		background-image: url('/media/images/border-compressed.png');
 	}
 }
 
@@ -1118,7 +1118,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 	height: 100vh;
 	width: 100vw;
 	z-index: -1;
-	background-image: url('https://dwvo2npct47gg.cloudfront.net/gifs/asap.gif');
+	background-image: url('/media/gifs/asap.gif');
 	background-size: cover;
 }
 
@@ -1398,7 +1398,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 */
 
 .home-content {
-	background-image: url('https://dwvo2npct47gg.cloudfront.net/gifs/home-background.gif');
+	background-image: url('/media/gifs/home-background.gif');
 	background-size: cover;
 	display: flex;
 	flex-direction: column;
@@ -1878,7 +1878,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 }
 
 .about-background {
-	background-image: url('https://dwvo2npct47gg.cloudfront.net/gifs/carti.gif');
+	background-image: url('/media/gifs/carti.gif');
 	background-size: cover;
 	width: 100vw;
 	height: 100vh;
@@ -2383,7 +2383,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 
 .shop-content {
 	background: #D35144;
-	background-image: url('https://dwvo2npct47gg.cloudfront.net/gifs/asap.gif');
+	background-image: url('/media/gifs/asap.gif');
 	background-size: cover;
 	display: flex;
 	flex-direction: column;
@@ -3154,7 +3154,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 	flex-direction: column;
 	height: 100vh;
 	width: 100vw;
-	cursor: url(https://dwvo2npct47gg.cloudfront.net/images/cursor-white.png) 2 27, auto;
+	cursor: url(/media/images/cursor-white.png) 2 27, auto;
 }
 
 @media screen and (max-width: 480px) and (orientation: portrait),
@@ -3454,7 +3454,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 }
 
 .pictures-content {
-	background-image: url('https://dwvo2npct47gg.cloudfront.net/gifs/home-background.gif');
+	background-image: url('/media/gifs/home-background.gif');
 	background-size: cover;
 	width: 100%;
 	height: 100%;
@@ -3617,7 +3617,7 @@ screen and (max-height: 480px) and (orientation: landscape) {
 .media-container {
 	width: 100%;
 	height: 100%;
-	cursor: url(https://dwvo2npct47gg.cloudfront.net/images/cursor-white.png) 2 27, auto;
+	cursor: url(/media/images/cursor-white.png) 2 27, auto;
 }
 
 .media-option {

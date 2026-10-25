@@ -11,7 +11,7 @@
 @font-face {
     font-family: 'varsity';
     src: url('../assets/fonts/varsity.ttf') format('truetype'),
-         url('https://dwvo2npct47gg.cloudfront.net/fonts/varsity.ttf') format('truetype');
+         url('/media/fonts/varsity.ttf') format('truetype');
     font-display: swap;
 }
 

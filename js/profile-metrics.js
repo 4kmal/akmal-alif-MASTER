@@ -1,5 +1,3 @@
-import { supabase } from './supabase-client.js';
-
 const metricFormat = new Intl.NumberFormat('en', {
   notation: 'compact',
   maximumFractionDigits: 1,
@@ -17,14 +15,15 @@ function updateMetricElements(metrics) {
 }
 
 async function readMetrics() {
-  const { data, error } = await supabase
-    .from('profile_metrics')
-    .select('profile_views, post_impressions')
-    .eq('id', true)
-    .single();
+  const response = await fetch('/api/profile-metrics', {
+    headers: { Accept: 'application/json' },
+  });
 
-  if (error) throw error;
-  return data;
+  if (!response.ok) {
+    throw new Error(`Profile metrics request failed (${response.status})`);
+  }
+
+  return response.json();
 }
 
 async function trackVisitOncePerSession() {
@@ -34,15 +33,25 @@ async function trackVisitOncePerSession() {
     return readMetrics();
   }
 
-  const { data, error } = await supabase.rpc('track_profile_visit', {
-    page_path: window.location.pathname || '/',
-    referrer: document.referrer || null,
-    user_agent: navigator.userAgent || null,
+  const response = await fetch('/api/profile-metrics', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      page_path: window.location.pathname || '/',
+      referrer: document.referrer || null,
+      user_agent: navigator.userAgent || null,
+    }),
   });
 
-  if (error) throw error;
+  if (!response.ok) {
+    throw new Error(`Profile metrics request failed (${response.status})`);
+  }
+
   sessionStorage.setItem(sessionKey, 'true');
-  return data;
+  return response.json();
 }
 
 async function initProfileMetrics() {

@@ -300,17 +300,17 @@ function preloader() {
     var img10 = new Image();
     var img11 = new Image();
 
-    img1.src = "https://dwvo2npct47gg.cloudfront.net/gifs/question-block.gif";
-    img2.src = "https://dwvo2npct47gg.cloudfront.net/gifs/cellphone.gif";
-    img3.src = "https://dwvo2npct47gg.cloudfront.net/gifs/home-background.gif";
-    img4.src = "https://dwvo2npct47gg.cloudfront.net/gifs/shirts_1.gif";
-    img5.src = "https://dwvo2npct47gg.cloudfront.net/gifs/shirts_2.gif";
-    img6.src = "https://dwvo2npct47gg.cloudfront.net/gifs/hats_1.gif";
-    img7.src = "https://dwvo2npct47gg.cloudfront.net/gifs/hats_2.gif";
-    img8.src = "https://dwvo2npct47gg.cloudfront.net/gifs/hats_3.gif";
-    img9.src = "https://dwvo2npct47gg.cloudfront.net/gifs/asap.gif";
-    img10.src = "https://dwvo2npct47gg.cloudfront.net/gifs/carti.gif";
-    img10.src = "https://dwvo2npct47gg.cloudfront.net/gifs/green-shoe.gif";
+    img1.src = "/media/gifs/question-block.gif";
+    img2.src = "/media/gifs/cellphone.gif";
+    img3.src = "/media/gifs/home-background.gif";
+    img4.src = "/media/gifs/shirts_1.gif";
+    img5.src = "/media/gifs/shirts_2.gif";
+    img6.src = "/media/gifs/hats_1.gif";
+    img7.src = "/media/gifs/hats_2.gif";
+    img8.src = "/media/gifs/hats_3.gif";
+    img9.src = "/media/gifs/asap.gif";
+    img10.src = "/media/gifs/carti.gif";
+    img10.src = "/media/gifs/green-shoe.gif";
 }
 
 function notify(message) {
@@ -849,51 +849,51 @@ http://patorjk.com/software/taag/#p=display&f=Varsity&t=Videos%0A
 
 var videos = {
     1: {
-        link: "https://dwvo2npct47gg.cloudfront.net/videos/monsterew-cropped.mp4",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/wrong.gif",
+        link: "/media/videos/monsterew-cropped.mp4",
+        gif: "/media/gifs/wrong.gif",
         title: "AWGE 01",
         desc: "AWGE 01 DESCRIPTION"
     },
     2: {
-        link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-1-compressed.mp4",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-1.gif",
+        link: "/media/videos/rocky-1-compressed.mp4",
+        gif: "/media/gifs/rocky-1.gif",
         title: "AWGE 02",
         desc: "AWGE 02 DESCRIPTION"
     },
     3: {
-        link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-2.mov",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-2.gif",
+        link: "/media/videos/rocky-2.mov",
+        gif: "/media/gifs/rocky-2.gif",
         title: "AWGE 03",
         desc: "AWGE 03 DESCRIPTION"
     },
     4: {
-        link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-concert.mp4",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-concert.gif",
+        link: "/media/videos/rocky-concert.mp4",
+        gif: "/media/gifs/rocky-concert.gif",
         title: "AWGE 04",
         desc: "AWGE 04 DESCRIPTION",
     },
     5: {
         link: "https://embed.vevo.com?isrc=USSM21701029&autoplay=true",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/feels.gif",
+        gif: "/media/gifs/feels.gif",
         isVevo: true,
         title: "AWGE 05",
         desc: "AWGE 05 DESCRIPTION"
     },
     6: {
-        link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-music.mp4",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-music.gif",
+        link: "/media/videos/rocky-music.mp4",
+        gif: "/media/gifs/rocky-music.gif",
         title: "AWGE 06",
         desc: "AWGE 06 DESCRIPTION"
     },
     7: {
-        link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-home.mp4",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-home.gif",
+        link: "/media/videos/rocky-home.mp4",
+        gif: "/media/gifs/rocky-home.gif",
         title: "AWGE 07",
         desc: "AWGE 07 DESCRIPTION"
     },
     8: {
-        link: "https://dwvo2npct47gg.cloudfront.net/videos/rocky-jail.mp4",
-        gif: "https://dwvo2npct47gg.cloudfront.net/gifs/rocky-jail.gif",
+        link: "/media/videos/rocky-jail.mp4",
+        gif: "/media/gifs/rocky-jail.gif",
         title: "AWGE 08",
         desc: "AWGE 08 DESCRIPTION"
     }
@@ -1032,7 +1032,7 @@ function openFullscreenVideo(id, override) {
             setTimeout(function() {
                 $(".videos-content").prepend('\
             <div onclick="closeFullscreenVideo()" class="videos-fullscreen-container">\
-                <video id="videos-fullscreen-video" onclick="closeFullscreenVideo()" class="videos-fullscreen-video animate-turn-on" autoplay loop poster="https://dwvo2npct47gg.cloudfront.net/gifs/video-loading.gif">\
+                <video id="videos-fullscreen-video" onclick="closeFullscreenVideo()" class="videos-fullscreen-video animate-turn-on" autoplay loop poster="/media/gifs/video-loading.gif">\
                     <source src="' + videos[id].link + '" type="video/mp4">\
                     Your browser does not support the video tag.\
                 </video>\
@@ -1071,13 +1071,13 @@ var shop = {
     shirts: {
         1: {
             name: "ROLLING LOUD SHIRT",
-            image: "https://dwvo2npct47gg.cloudfront.net/gifs/shirts_1.gif",
+            image: "/media/gifs/shirts_1.gif",
             price: "80",
             sizes: ['S', 'M', 'L', 'XL']
         },
         2: {
             name: "AWGE OR NOTHING SHIRT",
-            image: "https://dwvo2npct47gg.cloudfront.net/gifs/shirts_2.gif",
+            image: "/media/gifs/shirts_2.gif",
             price: "80",
             sizes: ['S', 'M', 'L', 'XL']
         },
@@ -1085,17 +1085,17 @@ var shop = {
     hats: {
         1: {
             name: "Blue AWGE Hat",
-            image: "https://dwvo2npct47gg.cloudfront.net/gifs/hats_1.gif",
+            image: "/media/gifs/hats_1.gif",
             price: "60"
         },
         2: {
             name: "Green AWGE Hat",
-            image: "https://dwvo2npct47gg.cloudfront.net/gifs/hats_2.gif",
+            image: "/media/gifs/hats_2.gif",
             price: "60"
         },
         3: {
             name: "Red AWGE Hat",
-            image: "https://dwvo2npct47gg.cloudfront.net/gifs/hats_3.gif",
+            image: "/media/gifs/hats_3.gif",
             price: "60"
         }
     }
@@ -1597,7 +1597,7 @@ function loadModel(name) {
         materials.preload();
         var objLoader = new THREE.OBJLoader();
         objLoader.setMaterials(materials);
-        objLoader.setPath('https://dwvo2npct47gg.cloudfront.net/models/');
+        objLoader.setPath('/media/models/');
         objLoader.load(name + '.obj', function(objectOBJ) {
             hideModelLoading(loadingID);
             setTimeout(function() {

@@ -1,42 +1,25 @@
-import { supabase } from './supabase-client.js';
+async function requestJson(path) {
+  const response = await fetch(path, {
+    headers: { Accept: 'application/json' },
+  });
 
-const publishedPostFilter = 'slug,title,excerpt,cover_image_url,cover_image_alt,read_minutes,published_at,meta_title,meta_description,canonical_path,content_html,blog_categories(slug,name,color_class,sort_order)';
+  if (!response.ok) {
+    throw new Error(`Blog request failed (${response.status})`);
+  }
+
+  return response.json();
+}
 
 export async function fetchBlogCategories() {
-  const { data, error } = await supabase
-    .from('blog_categories')
-    .select('slug,name,color_class,sort_order')
-    .eq('is_active', true)
-    .order('sort_order', { ascending: true })
-    .order('name', { ascending: true });
-
-  if (error) throw error;
-  return data ?? [];
+  return (await requestJson('/api/blog/categories')) ?? [];
 }
 
 export async function fetchPublishedBlogPosts() {
-  const { data, error } = await supabase
-    .from('blog_posts')
-    .select(publishedPostFilter)
-    .eq('status', 'published')
-    .lte('published_at', new Date().toISOString())
-    .order('published_at', { ascending: false });
-
-  if (error) throw error;
-  return data ?? [];
+  return (await requestJson('/api/blog/posts')) ?? [];
 }
 
 export async function fetchPublishedBlogPost(slug) {
-  const { data, error } = await supabase
-    .from('blog_posts')
-    .select(publishedPostFilter)
-    .eq('slug', slug)
-    .eq('status', 'published')
-    .lte('published_at', new Date().toISOString())
-    .maybeSingle();
-
-  if (error) throw error;
-  return data;
+  return requestJson(`/api/blog/posts/${encodeURIComponent(slug)}`);
 }
 
 export function formatPublishedDate(value) {

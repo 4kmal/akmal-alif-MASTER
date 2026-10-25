@@ -71,12 +71,8 @@ class PlaygroundHomeController {
                 this.resetCardPreview(card);
             });
             
-            // Add click tracking
             if (button) {
-                button.addEventListener('click', (e) => {
-                    const toolName = card.getAttribute('data-tool');
-                    this.trackToolLaunch(toolName);
-                    
+                button.addEventListener('click', () => {
                     // Visual feedback
                     button.style.transform = 'scale(0.95)';
                     setTimeout(() => {
@@ -184,15 +180,6 @@ class PlaygroundHomeController {
         }
     }
     
-    trackToolLaunch(toolName) {
-        // Simple analytics tracking
-        console.log(`Tool launched: ${toolName}`);
-        
-        // Store in localStorage for simple usage tracking
-        const launches = JSON.parse(localStorage.getItem('playground_launches') || '{}');
-        launches[toolName] = (launches[toolName] || 0) + 1;
-        localStorage.setItem('playground_launches', JSON.stringify(launches));
-    }
 }
 
 // Initialize Playground Home when DOM is ready

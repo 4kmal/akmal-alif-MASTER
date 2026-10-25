@@ -19,7 +19,7 @@ body.contact-page {
     padding: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
-    cursor: url('https://dwvo2npct47gg.cloudfront.net/images/cursor.png') 11 32, auto;
+    cursor: url('/media/images/cursor.png') 11 32, auto;
 }
 
 /* Dark mode support for contact page */
