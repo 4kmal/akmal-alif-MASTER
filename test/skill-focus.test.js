@@ -113,6 +113,7 @@ test('renders the weighted focus radar once and exposes its text equivalent', ()
   assert.ok([...labelNodes].every((node) => Number(node.getAttribute('x')) > 0 && Number(node.getAttribute('x')) < 240));
   assert.match(clockPartial, /<polygon class="skill-focus-radar-area" data-radar-area/);
   assert.match(clockPartial, /<polygon class="skill-focus-radar-outline" data-radar-outline/);
+  assert.match(clockPartial, /<div class="profile-context">/);
   assert.match(clockPartial, /aria-labelledby="skill-focus-radar-title"/);
   assert.match(clockPartial, /aria-describedby="skill-focus-radar-description skill-focus-radar-summary"/);
   assert.match(clockPartial, /id="skill-focus-radar-summary" data-skill-focus-summary/);
