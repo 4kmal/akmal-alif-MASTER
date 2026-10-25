@@ -6,8 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  buildConsoleChunks,
   buildImportSql,
   convertDirectory,
+  DEFAULT_CONSOLE_CHUNK_BYTES,
   normalizeTimestamptz,
   parseSqlInserts,
   rewriteCloudFrontUrls,
@@ -67,10 +69,27 @@ test('single-line SQL preserves CRLF values with SQLite char concatenation', () 
   assert.match(result.sql, /char\(13\) \|\| char\(10\)/);
 });
 
+test('console chunks stay on statement boundaries and reject oversized statements', () => {
+  const tableStatements = new Map([
+    ['blog_posts', [{ columns: ['content_html'], rows: [['article; <p>line\nvalue</p>']] }]],
+  ]);
+  const result = buildConsoleChunks(tableStatements, { maxBytes: 4096 });
+  assert.equal(result.chunks.length, 1);
+  assert.equal(Buffer.byteLength(result.chunks[0]) <= 4096, true);
+  assert.equal(/[\r\n]/.test(result.chunks[0]), false);
+  assert.match(result.chunks[0], /^BEGIN; .*; COMMIT;$/);
+  assert.throws(
+    () => buildConsoleChunks(tableStatements, { maxBytes: 20 }),
+    /exceeds 20 byte console chunk limit/,
+  );
+  assert.equal(DEFAULT_CONSOLE_CHUNK_BYTES, 40 * 1024);
+});
+
 test('converter emits ordered import SQL that executes against the real migration', async () => {
   const inputDir = await mkdtemp(path.join(os.tmpdir(), 'supabase-export-'));
   const outputPath = path.join(inputDir, 'private.sql');
   const consoleOutputPath = path.join(inputDir, 'd1-import-console.sql');
+  const chunksDir = path.join(inputDir, 'd1-console');
   try {
     await writeFile(path.join(inputDir, 'blog_categories_rows.sql'), String.raw`
       INSERT INTO public.blog_categories (id, slug, name, description, color_class, sort_order, is_active, created_at, updated_at)
@@ -87,7 +106,7 @@ test('converter emits ordered import SQL that executes against the real migratio
          cover_image_alt, category_id, status, featured, read_minutes, meta_title,
          meta_description, canonical_path, published_at, created_by, updated_by, created_at, updated_at)
       VALUES ('post-1', 'hello', 'Hello', NULL, 'Excerpt', '<p>Bob''s
-article C:\tmp</p>', NULL,
+ article; C:\tmp</p>', NULL,
         'https://d111111abcdef8.cloudfront.net/images/cover.jpg', 'Cover', 'cat-1', 'published', false, 3,
         NULL, NULL, '/blog/hello', '2025-01-01 00:00:00+00:00', NULL, NULL, '2025-01-01 00:00:00+00:00', '2025-01-01 00:00:00+00:00');
     `);
@@ -121,11 +140,21 @@ article C:\tmp</p>', NULL,
     assert.ok(result.sql.indexOf('INSERT INTO blog_posts') < result.sql.indexOf('INSERT INTO blog_post_tags'));
     assert.ok(result.sql.indexOf('INSERT OR REPLACE INTO profile_metrics') > result.sql.indexOf('INSERT INTO profile_page_events'));
 
-    const consoleResult = await convertDirectory(inputDir, consoleOutputPath, { singleLine: true });
+    const consoleResult = await convertDirectory(inputDir, consoleOutputPath, {
+      singleLine: true,
+      chunksDir,
+      chunkBytes: 700,
+    });
     assert.equal(consoleResult.manifest.single_line, true);
     assert.equal(/[\r\n]/.test(consoleResult.sql), false);
     assert.match(consoleResult.sql, /char\(10\)/);
     assert.match(consoleResult.sql, /\/\* blog_admins: no rows in export \*\//);
+    assert.ok(consoleResult.chunks.length > 1);
+    assert.equal(consoleResult.manifest.console_chunks.length, consoleResult.chunks.length);
+    for (const chunk of consoleResult.chunks) {
+      assert.equal(chunk.bytes <= 700, true);
+      assert.equal(/[\r\n]/.test(await readFile(path.join(chunksDir, chunk.file), 'utf8')), false);
+    }
 
     const database = new DatabaseSync(':memory:');
     try {
@@ -140,7 +169,7 @@ article C:\tmp</p>', NULL,
         post_impressions: 11,
       });
       const post = database.prepare('SELECT content_html, cover_image_url FROM blog_posts WHERE slug = ?').get('hello');
-      assert.equal(post.content_html, "<p>Bob's\narticle C:\\tmp</p>");
+      assert.equal(post.content_html, "<p>Bob's\n article; C:\\tmp</p>");
       assert.equal(post.cover_image_url, '/media/images/cover.jpg');
     } finally {
       database.close();
@@ -151,7 +180,7 @@ article C:\tmp</p>', NULL,
       consoleDatabase.exec(migrationSql);
       consoleDatabase.exec(consoleResult.sql);
       const consolePost = consoleDatabase.prepare('SELECT content_html, cover_image_url FROM blog_posts WHERE slug = ?').get('hello');
-      assert.equal(consolePost.content_html, "<p>Bob's\narticle C:\\tmp</p>");
+      assert.equal(consolePost.content_html, "<p>Bob's\n article; C:\\tmp</p>");
       assert.equal(consolePost.cover_image_url, '/media/images/cover.jpg');
       assert.deepEqual({ ...consoleDatabase.prepare('SELECT profile_views, post_impressions FROM profile_metrics WHERE id = 1').get() }, {
         profile_views: 7,
@@ -160,6 +189,25 @@ article C:\tmp</p>', NULL,
       assert.deepEqual(consoleDatabase.prepare('PRAGMA foreign_key_check').all(), []);
     } finally {
       consoleDatabase.close();
+    }
+
+    const chunkDatabase = new DatabaseSync(':memory:');
+    try {
+      chunkDatabase.exec(migrationSql);
+      for (const chunk of consoleResult.chunks) {
+        chunkDatabase.exec(await readFile(path.join(chunksDir, chunk.file), 'utf8'));
+      }
+      const chunkPost = chunkDatabase.prepare('SELECT content_html, cover_image_url FROM blog_posts WHERE slug = ?').get('hello');
+      assert.equal(chunkPost.content_html, "<p>Bob's\n article; C:\\tmp</p>");
+      assert.equal(chunkPost.cover_image_url, '/media/images/cover.jpg');
+      assert.deepEqual({ ...chunkDatabase.prepare('SELECT profile_views, post_impressions FROM profile_metrics WHERE id = 1').get() }, {
+        profile_views: 7,
+        post_impressions: 11,
+      });
+      assert.deepEqual(chunkDatabase.prepare('PRAGMA foreign_key_check').all(), []);
+      assert.deepEqual({ ...chunkDatabase.prepare('PRAGMA integrity_check').get() }, { integrity_check: 'ok' });
+    } finally {
+      chunkDatabase.close();
     }
   } finally {
     await rm(inputDir, { recursive: true, force: true });
