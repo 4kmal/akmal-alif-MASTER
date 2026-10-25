@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { renderSkillFocusRadar, SKILL_FOCUS_DATA } from '../js/skill-focus.js';
+
+const clockPartial = readFileSync(new URL('../partials/bento/bento-clock.html', import.meta.url), 'utf8');
 
 class FakeNode {
   constructor(name, ownerDocument = null) {
@@ -78,8 +81,6 @@ function makeRadarScope() {
       : new FakeNode(attribute.replace('data-', ''), document);
     if (node !== parent) parent.appendChild(node);
     node.setAttribute(attribute, '');
-    if (attribute === 'data-radar-area') node.setAttribute('class', 'skill-focus-radar-area');
-    if (attribute === 'data-radar-outline') node.setAttribute('class', 'skill-focus-radar-outline');
   });
 
   header.appendChild(svg);
@@ -107,8 +108,14 @@ test('renders the weighted focus radar once and exposes its text equivalent', ()
   assert.equal(svg.querySelector('[data-radar-rings]').children.length, 3);
   assert.equal(svg.querySelector('[data-radar-labels]').children.length, 6);
   assert.equal(svg.querySelector('[data-radar-nodes]').children.length, 6);
-  assert.equal(svg.querySelector('[data-radar-area]').getAttribute('class'), 'skill-focus-radar-area');
-  assert.equal(svg.querySelector('[data-radar-outline]').getAttribute('class'), 'skill-focus-radar-outline');
+  const labelNodes = svg.querySelector('[data-radar-labels]').children;
+  assert.ok([...labelNodes].every((node) => node.getAttribute('text-anchor') === 'middle'));
+  assert.ok([...labelNodes].every((node) => Number(node.getAttribute('x')) > 0 && Number(node.getAttribute('x')) < 240));
+  assert.match(clockPartial, /<polygon class="skill-focus-radar-area" data-radar-area/);
+  assert.match(clockPartial, /<polygon class="skill-focus-radar-outline" data-radar-outline/);
+  assert.match(clockPartial, /aria-labelledby="skill-focus-radar-title"/);
+  assert.match(clockPartial, /aria-describedby="skill-focus-radar-description skill-focus-radar-summary"/);
+  assert.match(clockPartial, /id="skill-focus-radar-summary" data-skill-focus-summary/);
   assert.equal(
     scope.querySelector('[data-skill-focus-summary]').textContent,
     'Current research and project focus: AI/ML is highest; Software engineering and Robotics are high; Systems/cloud, Cybersecurity, and UI/UX are moderate.'

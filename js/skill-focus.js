@@ -151,15 +151,14 @@ export function renderSkillFocusRadar(scope = typeof document === 'undefined' ? 
         const angle = -Math.PI / 2 + (Math.PI * 2 * index) / SKILL_FOCUS_DATA.length;
         const point = getRadarPoint(index, LABEL_RADIUS);
         const horizontalDirection = Math.cos(angle);
-        const textAnchor = horizontalDirection > 0.25 ? 'start' : horizontalDirection < -0.25 ? 'end' : 'middle';
-        const x = point.x + (textAnchor === 'start' ? 3 : textAnchor === 'end' ? -3 : 0);
+        const x = point.x + (horizontalDirection > 0.25 ? 14 : horizontalDirection < -0.25 ? -14 : 0);
         const lines = getLabelLines(label);
         const text = createSvgElement(ownerDocument, 'text', {
             x: x.toFixed(2),
             y: point.y.toFixed(2),
             class: 'skill-focus-radar-label',
             'data-radar-label': label,
-            'text-anchor': textAnchor
+            'text-anchor': 'middle'
         });
 
         lines.forEach((line, lineIndex) => {
