@@ -5,16 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Akmal Alif</title>
   <link rel="icon" href="./icon/ig.ico" type="image/x-icon">
+  <script src="./js/theme.js"></script>
   <link rel="stylesheet" href="./assets/fonts/web-fonts.css">
-  <script>
-    (() => {
-      const savedTheme = localStorage.getItem('theme') || localStorage.getItem('darkMode');
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const isDark = savedTheme === null ? prefersDark : savedTheme === 'dark' || savedTheme === 'true';
-      document.documentElement.classList.toggle('dark', isDark);
-    })();
-  </script>
   <link rel="stylesheet" href="./css/styles.css">
+  <link rel="stylesheet" href="./css/tactile.css">
   
   <script type="module" src="./js/profile-metrics.js"></script>
 </head>

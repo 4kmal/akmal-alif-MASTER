@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-labelledby="pixel-sun-title">
+  <title id="pixel-sun-title">Light theme</title>
+  <path fill="currentColor" d="M6 0h4v2H6zM6 14h4v2H6zM0 6h2v4H0zM14 6h2v4h-2zM2.22 1.22l1.42-1.42 2.83 2.83-1.42 1.42zM9.53 12.36l1.42-1.42 2.83 2.83-1.42 1.42zM1.22 13.78l2.83-2.83 1.42 1.42-2.83 2.83zM10.95 2.63l2.83-2.83 1.42 1.42-2.83 2.83zM5 5h6v6H5z"/>
+</svg>

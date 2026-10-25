@@ -499,39 +499,18 @@ window.addEventListener('resize', () => {
         updateCoverflowFn();
     }
     
-    // Handle session persistence for tracklist panel between viewport changes
+    // Keep the drawer in sync with the shared 1280px rail breakpoint.
     const tracklistPanel = document.getElementById('tracklist-column');
     const swipeOverlay = document.getElementById('swipe-overlay');
-    const isDesktop = window.innerWidth > 768;
+    const isDesktop = window.innerWidth > 1279;
     
     if (tracklistPanel && swipeOverlay) {
-        if (isDesktop) {
-            debugLog('📱➡️🖥️ Viewport changed to desktop - ensuring tracklist visibility');
-            
-            // Reset all mobile-specific states and styles
+        if (typeof window.syncMobileTracklistViewport === 'function') {
+            window.syncMobileTracklistViewport();
+        } else if (isDesktop) {
             tracklistPanel.classList.remove('is-open');
+            tracklistPanel.hidden = false;
             swipeOverlay.classList.remove('is-active');
-            
-            // Clear inline styles that might override CSS media queries
-            tracklistPanel.style.display = '';
-            tracklistPanel.style.transform = '';
-            tracklistPanel.style.left = '';
-            tracklistPanel.style.top = '';
-            tracklistPanel.style.width = '';
-            tracklistPanel.style.height = '';
-            
-            // Reset body styles
-            document.body.style.overflow = '';
-            document.body.classList.remove('mobile-menu-open');
-            
-            debugLog('✅ Desktop tracklist reset complete');
-        } else {
-            debugLog('🖥️➡️📱 Viewport changed to mobile');
-            // Ensure mobile tracklist starts closed
-            tracklistPanel.classList.remove('is-open');
-            swipeOverlay.classList.remove('is-active');
-            tracklistPanel.style.display = 'none'; // Hide by default on mobile
-            document.body.style.overflow = '';
         }
     }
 });
@@ -558,31 +537,23 @@ const handleResizeLinks = debounce(() => { updateLinksScrollableState(); }, 250)
 window.addEventListener('resize', handleResizeLinks);
 
 // -------- Dark Mode --------
-const darkToggle = document.getElementById('darkToggle');
-const body = document.body;
 function applyDarkMode(isDark) {
     const enabled = Boolean(isDark);
-    document.documentElement.classList.toggle('dark', enabled);
-    if (body) body.classList.toggle('dark', enabled);
-    localStorage.setItem('theme', enabled ? 'dark' : 'light');
-    localStorage.setItem('darkMode', String(enabled));
-    updateLinksScrollableState(); // Call this after class change
+    if (window.PortfolioTheme) {
+        window.PortfolioTheme.apply(enabled ? 'dark' : 'light', true);
+    } else {
+        document.documentElement.classList.toggle('dark', enabled);
+        document.body.classList.toggle('dark', enabled);
+    }
+    updateLinksScrollableState();
 }
 
 function setupDarkModeToggles() {
-    const toggles = document.querySelectorAll('.dark-mode-toggle');
-    // Default to dark mode if no preference is saved (first visit)
-    const darkModeSetting = localStorage.getItem('darkMode');
-    const savedDarkMode = darkModeSetting === null ? true : darkModeSetting === 'true';
-    
-    applyDarkMode(savedDarkMode);
-
-    toggles.forEach(toggle => {
-        toggle.addEventListener('click', (event) => {
-            event.stopPropagation();
-            applyDarkMode(!document.body.classList.contains('dark'));
-        });
-    });
+    if (window.PortfolioTheme) {
+        window.PortfolioTheme.syncBody();
+        window.PortfolioTheme.syncControls();
+    }
+    updateLinksScrollableState();
 }
 
 // -------- Empty Link Popup (Single Popup Logic) --------
@@ -698,7 +669,7 @@ function initNewDynamicTextAnimation() {
 }
 
 // -------- Blog Outline/Table of Contents Generator --------
-// ... existing code ...
+// Blog scripts provide the outline generator on article pages.
 
 // Call the function when the DOM is ready
 document.addEventListener('DOMContentLoaded', initNewDynamicTextAnimation);
@@ -713,16 +684,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         // Load the header first as it's critical for navigation
         await loadHtmlPartial('partials/site-header.html', 'site-header-placeholder', () => {
-            // Now that the header is loaded, initialize its dark mode toggle
-            // and other header-specific functionalities.
-            const headerDarkToggle = document.getElementById('headerDarkToggle');
-            if (headerDarkToggle) {
-                headerDarkToggle.addEventListener('click', (event) => {
-                    event.stopPropagation(); // Prevent card from getting click
-                    applyDarkMode(!document.body.classList.contains('dark'));
-                });
-            }
-            
             // Initialize the mobile menu functionality
             if (typeof initializeNewMobileMenu === 'function') {
                 initializeNewMobileMenu();
@@ -832,10 +793,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }, 2000);
 
-        // Apply saved dark mode state on load (default to dark mode if no preference)
-        const darkModeSetting = localStorage.getItem('darkMode');
-        const savedDarkMode = darkModeSetting === null ? true : darkModeSetting === 'true';
-        applyDarkMode(savedDarkMode);
+        // The head initializer owns the first paint; sync controls after partials mount.
+        if (window.PortfolioTheme) window.PortfolioTheme.init();
+        else setupDarkModeToggles();
 
     } catch (error) {
         console.error('Error during DOMContentLoaded initialization sequence:', error);

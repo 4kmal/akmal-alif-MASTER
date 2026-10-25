@@ -1,14 +1,14 @@
 <header class="site-header">
   <div class="header-container">
     <div class="header-left">
-      <div class="mobile-menu-button">
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
-      <div class="mobile-tracklist-button">
+      <button class="mobile-menu-button" type="button" aria-expanded="false" aria-controls="mobileMenuDropdown" aria-label="Open menu">
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
+      </button>
+      <button class="mobile-tracklist-button" type="button" aria-expanded="false" aria-controls="tracklist-column" aria-label="Open tracklist">
         <img src="./icon/track.gif" alt="Tracklist">
-      </div>
+      </button>
       <a href="./" class="logo-section-link">
         <div class="logo-section">
           <img src="./icon/ig.ico" alt="Logo" class="header-logo">
@@ -38,18 +38,19 @@
 
     <div class="header-right">
       
-      <div class="dark-mode-toggle" id="headerDarkToggle">
-        <div class="toggle-switch">
-          <span class="sun">☀️</span>
-          <span class="moon">🌙</span>
-          <div class="slider"></div>
-        </div>
-      </div>
+      <button class="dark-mode-toggle" id="headerDarkToggle" type="button" aria-label="Use dark theme" aria-pressed="false">
+        <span class="toggle-switch" aria-hidden="true">
+          <img class="theme-icon theme-icon-sun" src="./assets/ui/pixel-sun.svg" alt="">
+          <img class="theme-icon theme-icon-moon" src="./assets/ui/pixel-moon.svg" alt="">
+          <span class="slider"></span>
+        </span>
+        <span class="sr-only">Toggle color theme</span>
+      </button>
     </div>
   </div>
 
   <!-- Mobile Menu Dropdown (positioned relative to header) -->
-  <div class="mobile-menu-dropdown">
+  <div class="mobile-menu-dropdown" id="mobileMenuDropdown" aria-hidden="true" hidden inert>
     <div class="mobile-menu-content" id="mobileMenuContent">
       <nav class="mobile-nav-grid">
         
@@ -63,13 +64,13 @@
 
         <!-- About Nested Dropdown -->
         <div class="mobile-menu-item mobile-nested-dropdown">
-          <button class="mobile-menu-trigger">
+          <button class="mobile-menu-trigger" type="button" aria-expanded="false" aria-controls="mobileAboutContent">
             <span>About</span>
             <svg class="dropdown-arrow" width="16" height="16" viewBox="0 0 24 24">
               <path d="m6 9 6 6 6-6"/>
             </svg>
           </button>
-          <div class="mobile-nested-content">
+          <div class="mobile-nested-content" id="mobileAboutContent" aria-hidden="true" hidden inert>
             <a href="#" class="mobile-submenu-link">𓁏</a>
             <a href="#" class="mobile-submenu-link">
               <img src="./icon/cam.gif" alt="Special Link" style="height: 20px; width: auto;">
