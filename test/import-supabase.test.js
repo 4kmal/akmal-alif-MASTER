@@ -77,7 +77,8 @@ test('console chunks stay on statement boundaries and reject oversized statement
   assert.equal(result.chunks.length, 1);
   assert.equal(Buffer.byteLength(result.chunks[0]) <= 4096, true);
   assert.equal(/[\r\n]/.test(result.chunks[0]), false);
-  assert.match(result.chunks[0], /^BEGIN; .*; COMMIT;$/);
+  assert.equal(/\b(?:BEGIN|COMMIT);/.test(result.chunks[0]), false);
+  assert.match(result.chunks[0], /^.*;$/);
   assert.throws(
     () => buildConsoleChunks(tableStatements, { maxBytes: 20 }),
     /exceeds 20 byte console chunk limit/,
@@ -134,6 +135,7 @@ test('converter emits ordered import SQL that executes against the real migratio
       profile_metrics: 1,
     });
     assert.equal(result.replacements, 1);
+    assert.equal(/\b(?:BEGIN|COMMIT);/.test(result.sql), false);
     assert.match(result.sql, /-- blog_admins: no rows in export/);
     assert.ok(result.sql.indexOf('INSERT INTO blog_categories') < result.sql.indexOf('INSERT INTO blog_tags'));
     assert.ok(result.sql.indexOf('INSERT INTO blog_tags') < result.sql.indexOf('INSERT INTO blog_posts'));
@@ -147,13 +149,16 @@ test('converter emits ordered import SQL that executes against the real migratio
     });
     assert.equal(consoleResult.manifest.single_line, true);
     assert.equal(/[\r\n]/.test(consoleResult.sql), false);
+    assert.equal(/\b(?:BEGIN|COMMIT);/.test(consoleResult.sql), false);
     assert.match(consoleResult.sql, /char\(10\)/);
     assert.match(consoleResult.sql, /\/\* blog_admins: no rows in export \*\//);
     assert.ok(consoleResult.chunks.length > 1);
     assert.equal(consoleResult.manifest.console_chunks.length, consoleResult.chunks.length);
     for (const chunk of consoleResult.chunks) {
       assert.equal(chunk.bytes <= 700, true);
-      assert.equal(/[\r\n]/.test(await readFile(path.join(chunksDir, chunk.file), 'utf8')), false);
+      const chunkSql = await readFile(path.join(chunksDir, chunk.file), 'utf8');
+      assert.equal(/[\r\n]/.test(chunkSql), false);
+      assert.equal(/\b(?:BEGIN|COMMIT);/.test(chunkSql), false);
     }
 
     const database = new DatabaseSync(':memory:');
