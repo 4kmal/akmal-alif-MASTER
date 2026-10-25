@@ -634,56 +634,81 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 }
 
 .clock-widget-panel .bento-profile-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.clock-widget-panel .profile-avatar-wrapper {
-  position: relative;
-  width: 60px;
-  height: 60px;
-  margin-bottom: 8px;
-}
-
-.clock-widget-panel .profile-avatar {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: 1px solid var(--portfolio-border-strong);
-  border-radius: 16px;
-  object-fit: cover;
-}
-
-.clock-widget-panel .verified-badge {
-  position: absolute;
-  right: -5px;
-  bottom: -5px;
   display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  color: var(--portfolio-accent-ink);
-  background: var(--portfolio-accent);
-  border: 2px solid var(--portfolio-surface);
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 700;
+  gap: 10px;
+  min-width: 0;
 }
 
-.clock-widget-panel .profile-name,
-.clock-widget-panel .profile-handle,
+.clock-widget-panel .profile-focus-title,
 .clock-widget-panel .profile-bio,
 .clock-widget-panel .profile-location {
   margin: 0;
 }
 
-.clock-widget-panel .profile-name {
+.clock-widget-panel .profile-focus-title {
   color: var(--portfolio-text);
-  font-size: 1.1rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
-.clock-widget-panel .profile-handle,
+.clock-widget-panel .skill-focus-radar {
+  width: 100%;
+  min-width: 0;
+}
+
+.clock-widget-panel .skill-focus-radar-svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.clock-widget-panel .skill-focus-radar-axis,
+.clock-widget-panel .skill-focus-radar-ring {
+  fill: none;
+  stroke: var(--portfolio-border-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.clock-widget-panel .skill-focus-radar-axis {
+  opacity: 0.65;
+}
+
+.clock-widget-panel .skill-focus-radar-ring {
+  opacity: 0.75;
+}
+
+.clock-widget-panel .skill-focus-radar-area {
+  fill: var(--portfolio-accent);
+  fill-opacity: 0.14;
+  stroke: none;
+}
+
+.clock-widget-panel .skill-focus-radar-outline {
+  fill: none;
+  stroke: var(--portfolio-accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.clock-widget-panel .skill-focus-radar-node {
+  fill: var(--portfolio-accent);
+  shape-rendering: crispEdges;
+}
+
+.clock-widget-panel .skill-focus-radar-label {
+  fill: var(--portfolio-text-muted);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
 .clock-widget-panel .profile-location,
 .clock-widget-panel .stat-label {
   color: var(--portfolio-text-muted);
@@ -742,6 +767,18 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   font-size: 0.75rem;
 }
 
+.clock-skeleton .skeleton-focus-radar {
+  display: block;
+  position: relative;
+  z-index: 1;
+  width: min(100%, 180px);
+  aspect-ratio: 1;
+  margin: 0 auto 18px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+}
+
 /* Drawer and compact profile breakpoint */
 @media (max-width: 1279px) {
   .home-content-wrapper {
@@ -771,25 +808,37 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 
   .clock-widget-panel .profile-card-container {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    column-gap: 16px;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-areas:
+      'focus bio'
+      'focus location'
+      'focus stats'
+      'status status';
+    column-gap: 20px;
+    row-gap: 8px;
     align-items: center;
   }
 
   .clock-widget-panel .bento-profile-header {
-    grid-column: 1 / 2;
-    grid-row: 1 / span 2;
+    grid-area: focus;
   }
 
   .clock-widget-panel .profile-bio,
   .clock-widget-panel .profile-location {
-    grid-column: 2 / 3;
+    grid-column: 2;
+  }
+
+  .clock-widget-panel .profile-bio {
+    grid-area: bio;
+  }
+
+  .clock-widget-panel .profile-location {
+    grid-area: location;
   }
 
   .clock-widget-panel .profile-stats {
-    grid-column: 3 / 4;
-    grid-row: 1 / span 3;
-    min-width: 190px;
+    grid-area: stats;
+    min-width: 0;
     padding: 0 0 0 16px;
     margin: 0;
     border-top: 0;
@@ -797,7 +846,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   }
 
   .clock-widget-panel .profile-metrics-status {
-    grid-column: 2 / 4;
+    grid-area: status;
   }
 
   .main-content-column {
@@ -882,11 +931,23 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
     margin: 0 !important;
   }
 
+  .main-content-column .card {
+    padding: 16px;
+  }
+
+  .tracklist-panel {
+    right: 10px;
+    left: 10px;
+    width: auto;
+  }
+}
+
+@media (max-width: 599px) {
   .clock-widget-panel .profile-card-container {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      'identity'
+      'focus'
       'bio'
       'location'
       'stats'
@@ -896,35 +957,13 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   }
 
   .clock-widget-panel .bento-profile-header {
-    display: grid;
-    grid-area: identity;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    column-gap: 12px;
-    row-gap: 2px;
-    align-items: center;
+    grid-area: focus;
+    gap: 8px;
   }
 
-  .clock-widget-panel .profile-avatar-wrapper {
-    grid-row: 1 / span 2;
-    width: 48px;
-    height: 48px;
-    margin: 0;
-  }
-
-  .clock-widget-panel .profile-name,
-  .clock-widget-panel .profile-handle {
-    grid-column: 2;
-  }
-
-  .clock-widget-panel .profile-name {
+  .clock-widget-panel .profile-focus-title {
     font-size: 1rem;
     line-height: 1.15;
-  }
-
-  .clock-widget-panel .profile-handle {
-    font-size: 0.78rem;
-    line-height: 1.1;
   }
 
   .clock-widget-panel .profile-bio {
@@ -963,16 +1002,6 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   .clock-widget-panel .profile-metrics-status {
     grid-area: status;
     grid-column: auto;
-  }
-
-  .main-content-column .card {
-    padding: 16px;
-  }
-
-  .tracklist-panel {
-    right: 10px;
-    left: 10px;
-    width: auto;
   }
 }
 

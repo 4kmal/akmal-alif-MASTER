@@ -1,14 +1,20 @@
-<aside id="clock-widget-panel" class="clock-widget-panel" aria-labelledby="profile-card-name">
-  <!-- Profile Card (Replaces Clock Widget) -->
+<aside id="clock-widget-panel" class="clock-widget-panel" aria-labelledby="profile-focus-title">
   <div class="profile-card-container">
-      <div class="bento-profile-header">
-          <div class="profile-avatar-wrapper">
-              <!-- Using pfp.webp as per existing assets -->
-              <img src="./assets/picture/pfp.webp" alt="Akmal Alif" class="profile-avatar">
-              <span class="verified-badge">✓</span>
+      <div class="bento-profile-header" data-skill-focus>
+          <h2 class="profile-focus-title" id="profile-focus-title">Current focus</h2>
+          <div class="skill-focus-radar">
+              <svg class="skill-focus-radar-svg" data-skill-focus-radar viewBox="0 0 240 240" role="img" aria-labelledby="skill-focus-radar-title skill-focus-radar-description">
+                  <title id="skill-focus-radar-title">Current focus radar</title>
+                  <desc id="skill-focus-radar-description">The chart shows relative research and project focus across six areas. A text equivalent lists every area below.</desc>
+                  <g data-radar-axes aria-hidden="true"></g>
+                  <g data-radar-rings aria-hidden="true"></g>
+                  <polygon data-radar-area aria-hidden="true"></polygon>
+                  <polygon data-radar-outline aria-hidden="true"></polygon>
+                  <g data-radar-nodes aria-hidden="true"></g>
+                  <g data-radar-labels aria-hidden="true"></g>
+              </svg>
+              <p class="sr-only" data-skill-focus-summary></p>
           </div>
-          <h2 class="profile-name" id="profile-card-name">Akmal Alif</h2>
-          <p class="profile-handle">exe0x0</p>
       </div>
       
       <div class="profile-bio">

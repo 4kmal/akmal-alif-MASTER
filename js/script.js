@@ -695,7 +695,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadHtmlPartial('partials/music-player-section.html', 'music-player-section-placeholder'),
             loadHtmlPartial('partials/vinyl-section.html', 'vinyl-section-placeholder'),
             loadHtmlPartial('partials/bento/bento-tracklist.html', 'tracklist-panel-placeholder'),
-            loadHtmlPartial('partials/bento/bento-clock.html', 'clock-widget-placeholder')
+            loadHtmlPartial('partials/bento/bento-clock.html', 'clock-widget-placeholder', () => {
+                window.SkillFocusRadar?.render(document.getElementById('clock-widget-placeholder'));
+            })
         ]);
         document.dispatchEvent(new CustomEvent('profile-metrics:targets-ready'));
 
