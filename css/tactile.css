@@ -853,8 +853,10 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
     left: 16px;
     z-index: 80;
     width: min(280px, calc(100vw - 32px));
-    height: auto;
-    max-height: none;
+    height: calc(100vh - var(--portfolio-header-clearance) - 32px);
+    height: calc(100dvh - var(--portfolio-header-clearance) - 32px);
+    max-height: calc(100vh - var(--portfolio-header-clearance) - 32px);
+    max-height: calc(100dvh - var(--portfolio-header-clearance) - 32px);
     padding: 16px;
     overflow: auto;
     border-radius: var(--portfolio-radius-panel) !important;
