@@ -57,6 +57,7 @@ function copyStaticDirectory(sourceDir, targetDir = sourceDir) {
     const projectPath = relative(__dirname, sourceEntryPath).replaceAll('\\', '/');
 
     if (excludedStaticAssets.has(projectPath)) continue;
+    if (entry.endsWith('.html')) continue;
 
     if (statSync(sourceEntryPath).isDirectory()) {
       copyStaticDirectory(projectPath, `${targetDir}/${entry}`);
@@ -125,6 +126,8 @@ export default defineConfig({
           'album cover',
           'assets',
           'blog/blogpic',
+          'contact',
+          'playground',
           'contoh/awge-website',
         ];
         for (const dir of staticDirs) {

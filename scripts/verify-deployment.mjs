@@ -294,7 +294,7 @@ function requestOnce(target, {
         const captured = await consumeBody(response, maxCaptureBytes);
         resolve({
           status: response.statusCode ?? null,
-          headers: Object.fromEntries(response.headers.entries()),
+          headers: response.headers,
           ...captured,
         });
       } catch (error) {
