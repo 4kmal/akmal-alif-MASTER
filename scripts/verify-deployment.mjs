@@ -296,11 +296,14 @@ function requestOnce(target, {
           status: response.statusCode ?? null,
           headers: response.headers,
           ...captured,
+          bodyBytes: captured.totalBytes,
         });
       } catch (error) {
         reject(error);
       }
     });
+    const deadline = setTimeout(() => request.destroy(new Error('request deadline exceeded')), timeoutMs);
+    request.once('close', () => clearTimeout(deadline));
     request.setTimeout(timeoutMs, () => request.destroy(new Error('request timeout')));
     request.once('error', reject);
     if (body != null) {
@@ -592,6 +595,11 @@ async function checkApis(baseUrl, expected, options, checks) {
 }
 
 async function checkMedia(baseUrl, manifest, options, checks) {
+  const expectedTypeFor = (object) => ({
+    '.ttf': 'font/ttf',
+    '.obj': 'application/octet-stream',
+    '.mov': 'video/quicktime',
+  }[path.extname(object.key).toLowerCase()] ?? object.contentType?.toLowerCase() ?? null);
   const objects = manifest.objects;
   const headResults = await runPool(objects, async (object) => {
     const response = await requestWithRetry(
@@ -606,7 +614,7 @@ async function checkMedia(baseUrl, manifest, options, checks) {
     );
     const contentLength = responseHeader(response, 'content-length');
     const contentType = responseHeader(response, 'content-type')?.toLowerCase() ?? null;
-    const expectedType = object.contentType?.toLowerCase() ?? null;
+    const expectedType = expectedTypeFor(object);
     const ok = response.status === 200
       && contentLength === String(object.bytes)
       && (!expectedType || contentType === expectedType);
@@ -624,7 +632,7 @@ async function checkMedia(baseUrl, manifest, options, checks) {
       ...responseDetails(result.response, 200),
       expectedBytes: object.bytes ?? null,
       actualContentLength: result.contentLength ?? null,
-      expectedContentType: object.contentType ?? null,
+      expectedContentType: expectedTypeFor(object),
       actualContentType: result.contentType ?? null,
     });
   }
@@ -662,7 +670,7 @@ async function checkMedia(baseUrl, manifest, options, checks) {
       headers: { Range: 'bytes=' + size + '-' },
       maxCaptureBytes: 0,
     });
-    const type = object.contentType?.toLowerCase() ?? null;
+    const type = expectedTypeFor(object);
     const headOk = head.status === 200
       && responseHeader(head, 'content-length') === String(size)
       && (!type || responseHeader(head, 'content-type')?.toLowerCase() === type);
@@ -702,7 +710,8 @@ async function checkStatic(baseUrl, expected, options, checks) {
     ['blogs', '/blogs'],
     ['contact', '/contact'],
     ['playground', '/playground'],
-    ['examples', '/contoh'],
+    ['example-pictures', '/contoh/awge-website/pictures.html'],
+    ['example-videos', '/contoh/awge-website/videos.html'],
     ...expected.posts.map((post) => ['blog.' + post.slug, '/blog/' + encodeURIComponent(post.slug)]),
   ];
   const staticResults = await runPool(staticPaths, async ([name, pathname]) => {
