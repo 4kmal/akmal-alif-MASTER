@@ -3,9 +3,19 @@
   const drawerOpenEvent = 'portfolio:drawer-open';
 
   function focusable(container) {
-    return Array.from(container.querySelectorAll(
+    const elements = container.matches?.('[tabindex]:not([tabindex="-1"])')
+      ? [container]
+      : [];
+
+    elements.push(...container.querySelectorAll(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )).filter((element) => !element.hidden && !element.closest('[hidden]'));
+    ));
+
+    return elements.filter((element) => (
+      !element.hidden &&
+      !element.closest('[hidden]') &&
+      !element.closest('[inert]')
+    ));
   }
 
   function setInert(element, value) {
@@ -141,7 +151,7 @@
 
       if (event.key === 'Escape') {
         event.preventDefault();
-        closePanel();
+        closePanel(true, trigger);
         return;
       }
 

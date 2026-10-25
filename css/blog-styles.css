@@ -404,10 +404,6 @@ body.dark .blog-post-full {
     transition: color 160ms ease;
 }
 
-.blog-card .post-title a:hover {
-    color: var(--blog-accent, #fbda29);
-}
-
 .blog-card .post-meta {
     display: flex;
     align-items: center;
