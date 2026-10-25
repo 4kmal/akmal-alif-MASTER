@@ -6,6 +6,12 @@
   "account_id": "73138007ecb740aea99f9c99bb2a2705",
   "workers_dev": true,
   "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "www.akmalalif.com",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
