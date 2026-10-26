@@ -1048,7 +1048,11 @@ function dayKey(timestamp) {
 
 function addMonths(timestamp, count) {
   const date = new Date(timestamp);
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
   date.setUTCMonth(date.getUTCMonth() + count);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
   return date.getTime();
 }
 
@@ -2258,15 +2262,26 @@ function summarizeDaily(rows) {
   let events = 0;
   let legacySessions = 0;
   let hasSessionSketch = false;
+  let legacySessionRows = false;
   let hasWebsiteSessionSketch = false;
   let legacyWebsiteSessions = 0;
+  let legacyWebsiteSessionRows = false;
   let hasWebsiteVisitors = false;
   let hasShortlinkVisitors = false;
+  let legacyWebsiteVisitorRows = false;
+  let legacyShortlinkVisitorRows = false;
   let activeMs = 0;
   for (const row of rows) {
     events += row.event_count;
     legacySessions += row.session_count;
     activeMs += row.active_ms;
+    if (!row.has_visitor_sketch && row.event_count > 0) {
+      if (row.source === 'sink') {
+        legacyShortlinkVisitorRows = true;
+      } else {
+        legacyWebsiteVisitorRows = true;
+      }
+    }
     if (row.has_visitor_sketch && sketchHasValues(row.sketch)) {
       if (row.source === 'sink') {
         hasShortlinkVisitors = true;
@@ -2274,6 +2289,12 @@ function summarizeDaily(rows) {
       } else {
         hasWebsiteVisitors = true;
         mergeVisitorSketch(websiteVisitorSketch, row.sketch);
+      }
+    }
+    if (!row.has_session_sketch && row.session_count > 0) {
+      legacySessionRows = true;
+      if (row.source !== 'sink' && row.source !== 'legacy_page_event') {
+        legacyWebsiteSessionRows = true;
       }
     }
     if (row.has_session_sketch && sketchHasValues(row.session_sketch)) {
@@ -2287,22 +2308,50 @@ function summarizeDaily(rows) {
       legacyWebsiteSessions += row.session_count;
     }
   }
+  const sessionCoverage = hasSessionSketch
+    ? (legacySessionRows ? 'partial' : 'complete')
+    : (legacySessions > 0 ? 'legacy' : 'unavailable');
+  const websiteSessionCoverage = hasWebsiteSessionSketch
+    ? (legacyWebsiteSessionRows ? 'partial' : 'complete')
+    : (legacyWebsiteSessions > 0 ? 'legacy' : 'unavailable');
+  const websiteVisitorCoverage = hasWebsiteVisitors
+    ? (legacyWebsiteVisitorRows ? 'partial' : 'complete')
+    : (legacyWebsiteVisitorRows ? 'legacy' : 'unavailable');
+  const shortlinkVisitorCoverage = hasShortlinkVisitors
+    ? (legacyShortlinkVisitorRows ? 'partial' : 'complete')
+    : (legacyShortlinkVisitorRows ? 'legacy' : 'unavailable');
+  const sessions = sessionCoverage === 'complete'
+    ? Math.round(estimateVisitorSketch(sessionSketch))
+    : sessionCoverage === 'legacy' ? legacySessions : null;
+  const websiteSessions = websiteSessionCoverage === 'complete'
+    ? Math.round(estimateVisitorSketch(websiteSessionSketch))
+    : websiteSessionCoverage === 'legacy' ? legacyWebsiteSessions : null;
+  const websiteVisitors = websiteVisitorCoverage === 'complete'
+    ? Math.round(estimateVisitorSketch(websiteVisitorSketch))
+    : null;
+  const shortlinkVisitors = shortlinkVisitorCoverage === 'complete'
+    ? Math.round(estimateVisitorSketch(shortlinkVisitorSketch))
+    : null;
   return {
     events,
-    sessions: hasSessionSketch ? Math.round(estimateVisitorSketch(sessionSketch)) : legacySessions,
-    website_sessions: hasWebsiteSessionSketch ? Math.round(estimateVisitorSketch(websiteSessionSketch)) : legacyWebsiteSessions,
+    sessions,
+    website_sessions: websiteSessions,
     active_ms: activeMs,
-    unique_visitors: hasWebsiteVisitors ? Math.round(estimateVisitorSketch(websiteVisitorSketch)) : null,
-    shortlink_unique_visitors: hasShortlinkVisitors
-      ? Math.round(estimateVisitorSketch(shortlinkVisitorSketch))
-      : null,
+    unique_visitors: websiteVisitors,
+    shortlink_unique_visitors: shortlinkVisitors,
+    identity_coverage: {
+      sessions: sessionCoverage,
+      website_sessions: websiteSessionCoverage,
+      website_visitors: websiteVisitorCoverage,
+      shortlink_visitors: shortlinkVisitorCoverage,
+    },
     visitor_estimates: {
       website: {
-        unique_visitors: hasWebsiteVisitors ? Math.round(estimateVisitorSketch(websiteVisitorSketch)) : null,
+        unique_visitors: websiteVisitors,
         method: 'Browser identifier',
       },
       shortlinks: {
-        unique_visitors: hasShortlinkVisitors ? Math.round(estimateVisitorSketch(shortlinkVisitorSketch)) : null,
+        unique_visitors: shortlinkVisitors,
         method: 'IP estimate',
       },
     },
@@ -2312,6 +2361,7 @@ function summarizeDaily(rows) {
 function dailySummaryBuckets(rows, eventRows = []) {
   const eventByDay = new Map();
   for (const row of eventRows) {
+    if (row.source === 'sink') continue;
     const bucket = eventByDay.get(row.day) ?? { page_views: 0, article_completions: 0 };
     if (row.dimension_value === 'page_view') bucket.page_views += row.event_count;
     if (row.dimension_value === 'article_complete') bucket.article_completions += row.event_count;
@@ -2329,12 +2379,22 @@ function dailySummaryBuckets(rows, eventRows = []) {
       shortlink_visitor_sketch: createVisitorSketch(),
       has_visitor_sketch: false,
       has_shortlink_visitor_sketch: false,
+      legacy_visitor_rows: false,
+      legacy_shortlink_visitor_rows: false,
       session_sketch: createVisitorSketch(),
       session_count: 0,
       has_session_sketch: false,
+      legacy_session_rows: false,
     };
     bucket.events += row.event_count;
     bucket.active_ms += row.active_ms;
+    if (!row.has_visitor_sketch && row.event_count > 0) {
+      if (row.source === 'sink') {
+        bucket.legacy_shortlink_visitor_rows = true;
+      } else {
+        bucket.legacy_visitor_rows = true;
+      }
+    }
     if (row.has_visitor_sketch && sketchHasValues(row.sketch)) {
       if (row.source === 'sink') {
         bucket.has_shortlink_visitor_sketch = true;
@@ -2345,6 +2405,9 @@ function dailySummaryBuckets(rows, eventRows = []) {
       }
     }
     bucket.session_count += row.session_count;
+    if (!row.has_session_sketch && row.session_count > 0) {
+      bucket.legacy_session_rows = true;
+    }
     if (row.has_session_sketch && sketchHasValues(row.session_sketch)) {
       bucket.has_session_sketch = true;
       mergeVisitorSketch(bucket.session_sketch, row.session_sketch);
@@ -2353,36 +2416,50 @@ function dailySummaryBuckets(rows, eventRows = []) {
   }
   return [...buckets.values()]
     .sort((left, right) => left.day.localeCompare(right.day))
-    .map((bucket) => ({
-      day: bucket.day,
-      events: bucket.events,
-      page_views: eventByDay.get(bucket.day)?.page_views ?? 0,
-      article_completions: eventByDay.get(bucket.day)?.article_completions ?? 0,
-      active_ms: bucket.active_ms,
-      unique_visitors: bucket.has_visitor_sketch
+    .map((bucket) => {
+      const websiteVisitorCoverage = bucket.has_visitor_sketch
+        ? (bucket.legacy_visitor_rows ? 'partial' : 'complete')
+        : (bucket.legacy_visitor_rows ? 'legacy' : 'unavailable');
+      const shortlinkVisitorCoverage = bucket.has_shortlink_visitor_sketch
+        ? (bucket.legacy_shortlink_visitor_rows ? 'partial' : 'complete')
+        : (bucket.legacy_shortlink_visitor_rows ? 'legacy' : 'unavailable');
+      const sessionCoverage = bucket.has_session_sketch
+        ? (bucket.legacy_session_rows ? 'partial' : 'complete')
+        : (bucket.session_count > 0 ? 'legacy' : 'unavailable');
+      const websiteVisitors = websiteVisitorCoverage === 'complete'
         ? Math.round(estimateVisitorSketch(bucket.visitor_sketch))
-        : null,
-      shortlink_unique_visitors: bucket.has_shortlink_visitor_sketch
+        : null;
+      const shortlinkVisitors = shortlinkVisitorCoverage === 'complete'
         ? Math.round(estimateVisitorSketch(bucket.shortlink_visitor_sketch))
-        : null,
-      visitor_estimates: {
-        website: {
-          unique_visitors: bucket.has_visitor_sketch
-            ? Math.round(estimateVisitorSketch(bucket.visitor_sketch))
-            : null,
-          method: 'Browser identifier',
+        : null;
+      return {
+        day: bucket.day,
+        events: bucket.events,
+        page_views: eventByDay.get(bucket.day)?.page_views ?? 0,
+        article_completions: eventByDay.get(bucket.day)?.article_completions ?? 0,
+        active_ms: bucket.active_ms,
+        unique_visitors: websiteVisitors,
+        shortlink_unique_visitors: shortlinkVisitors,
+        identity_coverage: {
+          sessions: sessionCoverage,
+          website_visitors: websiteVisitorCoverage,
+          shortlink_visitors: shortlinkVisitorCoverage,
         },
-        shortlinks: {
-          unique_visitors: bucket.has_shortlink_visitor_sketch
-            ? Math.round(estimateVisitorSketch(bucket.shortlink_visitor_sketch))
-            : null,
-          method: 'IP estimate',
+        visitor_estimates: {
+          website: {
+            unique_visitors: websiteVisitors,
+            method: 'Browser identifier',
+          },
+          shortlinks: {
+            unique_visitors: shortlinkVisitors,
+            method: 'IP estimate',
+          },
         },
-      },
-      sessions: bucket.has_session_sketch
-        ? Math.round(estimateVisitorSketch(bucket.session_sketch))
-        : bucket.session_count,
-    }));
+        sessions: sessionCoverage === 'complete'
+          ? Math.round(estimateVisitorSketch(bucket.session_sketch))
+          : sessionCoverage === 'legacy' ? bucket.session_count : null,
+      };
+    });
 }
 
 function goalsFromDaily(eventRows, denominatorSessions, goalRows = []) {
@@ -2391,6 +2468,8 @@ function goalsFromDaily(eventRows, denominatorSessions, goalRows = []) {
     const matching = specificGoalRows.length
       ? specificGoalRows
       : eventRows.filter((row) => (
+        !definition.websiteOnly || row.source !== 'sink'
+      ) && (
         definition.source
           ? row.source === definition.source
           : definition.types?.has(row.dimension_value)
@@ -2400,12 +2479,22 @@ function goalsFromDaily(eventRows, denominatorSessions, goalRows = []) {
     const shortlinkVisitorSketch = createVisitorSketch();
     let hasWebsiteVisitors = false;
     let hasShortlinkVisitors = false;
+    let legacyWebsiteVisitorRows = false;
+    let legacyShortlinkVisitorRows = false;
     const sessionSketch = createVisitorSketch();
     let fallbackSessions = 0;
     let hasSessionSketch = false;
+    let legacySessionRows = false;
     let eventCount = 0;
     for (const row of matching) {
       eventCount += row.event_count;
+      if (!row.has_visitor_sketch && row.event_count > 0) {
+        if (row.source === 'sink') {
+          legacyShortlinkVisitorRows = true;
+        } else {
+          legacyWebsiteVisitorRows = true;
+        }
+      }
       if (row.has_visitor_sketch && sketchHasValues(row.sketch)) {
         if (row.source === 'sink') {
           hasShortlinkVisitors = true;
@@ -2416,26 +2505,50 @@ function goalsFromDaily(eventRows, denominatorSessions, goalRows = []) {
         }
       }
       fallbackSessions += row.session_count;
+      if (!row.has_session_sketch && row.session_count > 0) {
+        legacySessionRows = true;
+      }
       if (row.has_session_sketch && sketchHasValues(row.session_sketch)) {
         hasSessionSketch = true;
         mergeVisitorSketch(sessionSketch, row.session_sketch);
       }
     }
-    const sessions = hasSessionSketch
+    const sessionCoverage = hasSessionSketch
+      ? (legacySessionRows ? 'partial' : 'complete')
+      : (fallbackSessions > 0 ? 'legacy' : 'unavailable');
+    const sessions = matching.length === 0
+      ? 0
+      : sessionCoverage === 'complete'
       ? Math.round(estimateVisitorSketch(sessionSketch))
-      : fallbackSessions;
+      : sessionCoverage === 'legacy' ? fallbackSessions : null;
     const conversions = targetUnavailable ? null : (definition.sessionConversion ? sessions : eventCount);
-    const websiteVisitors = hasWebsiteVisitors
+    const websiteVisitorCoverage = hasWebsiteVisitors
+      ? (legacyWebsiteVisitorRows ? 'partial' : 'complete')
+      : (legacyWebsiteVisitorRows ? 'legacy' : 'unavailable');
+    const shortlinkVisitorCoverage = hasShortlinkVisitors
+      ? (legacyShortlinkVisitorRows ? 'partial' : 'complete')
+      : (legacyShortlinkVisitorRows ? 'legacy' : 'unavailable');
+    const websiteVisitors = websiteVisitorCoverage === 'complete'
       ? Math.round(estimateVisitorSketch(websiteVisitorSketch))
       : null;
-    const shortlinkVisitors = hasShortlinkVisitors
+    const shortlinkVisitors = shortlinkVisitorCoverage === 'complete'
       ? Math.round(estimateVisitorSketch(shortlinkVisitorSketch))
       : null;
+    const visitorMethod = websiteVisitors != null && shortlinkVisitors != null
+      ? 'Mixed sources; estimates are not combined'
+      : (websiteVisitorCoverage === 'partial' || shortlinkVisitorCoverage === 'partial'
+        ? 'Mixed rollups; estimates are incomplete'
+        : (shortlinkVisitors != null || definition.source === 'sink' ? 'IP estimate' : 'Browser identifier'));
     return {
       id: definition.id,
       label: definition.label,
       conversions,
       sessions: targetUnavailable ? null : sessions,
+      identity_coverage: {
+        sessions: sessionCoverage,
+        website_visitors: websiteVisitorCoverage,
+        shortlink_visitors: shortlinkVisitorCoverage,
+      },
       unique_visitors: websiteVisitors != null && shortlinkVisitors != null
         ? null
         : (websiteVisitors ?? shortlinkVisitors),
@@ -2449,9 +2562,7 @@ function goalsFromDaily(eventRows, denominatorSessions, goalRows = []) {
           method: 'IP estimate',
         },
       },
-      visitor_method: websiteVisitors != null && shortlinkVisitors != null
-        ? 'Mixed sources; estimates are not combined'
-        : (shortlinkVisitors != null || definition.source === 'sink' ? 'IP estimate' : 'Browser identifier'),
+      visitor_method: visitorMethod,
       denominator_sessions: definition.source === 'sink' ? null : denominatorSessions,
       denominator_clicks: definition.source === 'sink' ? eventCount : null,
       denominator_label: definition.source === 'sink' ? 'shortlink_clicks' : 'website_sessions',
@@ -2468,10 +2579,10 @@ function summaryFromDaily(allRows, eventRows, goalRows = []) {
   return {
     ...summary,
     page_views: eventRows
-      .filter((row) => row.dimension_value === 'page_view')
+      .filter((row) => row.source !== 'sink' && row.dimension_value === 'page_view')
       .reduce((sum, row) => sum + row.event_count, 0),
     article_completions: eventRows
-      .filter((row) => row.dimension_value === 'article_complete')
+      .filter((row) => row.source !== 'sink' && row.dimension_value === 'article_complete')
       .reduce((sum, row) => sum + row.event_count, 0),
     goals: goalsFromDaily(eventRows, summary.website_sessions ?? summary.sessions, goalRows),
     daily: dailySummaryBuckets(allRows, eventRows),
@@ -2486,6 +2597,7 @@ function comparisonFromDaily(summary) {
     unique_visitors: summary.unique_visitors,
     shortlink_unique_visitors: summary.shortlink_unique_visitors,
     visitor_estimates: summary.visitor_estimates,
+    identity_coverage: summary.identity_coverage,
     sessions: summary.sessions,
     goals: summary.goals,
   };
@@ -3091,7 +3203,17 @@ async function cachedHistoricalReport(route, db, range, env, now, url) {
     });
   } catch (error) {
     if (!existing) throw error;
-    return withCacheMeta(existing.value, {
+    const staleValue = {
+      ...existing.value,
+      meta: {
+        ...(existing.value.meta ?? {}),
+        coverage: {
+          ...(existing.value.meta?.coverage ?? {}),
+          stale: true,
+        },
+      },
+    };
+    return withCacheMeta(staleValue, {
       status: 'stale',
       stale: true,
       generated_at: cacheDate(existing.generatedAt),
@@ -3156,6 +3278,7 @@ async function reportData(route, db, range, env, now, url) {
         truncated: availableFrom > range.from,
         available_from: new Date(availableFrom).toISOString(),
         prior_available: Boolean(priorSummary),
+        identity_coverage: summary.identity_coverage,
       },
     });
     if (route === 'overview') {
@@ -3385,12 +3508,10 @@ export async function handleAnalyticsRequest(request, env = {}, ctx = null) {
 function stableSourceId(data) {
   const campaign = normalizeCampaign(data.campaign);
   const sourceIdentity = [
+    data.idempotency_key,
     data.request_id,
     data.trace_id,
     data.delivery_id,
-    data.occurred_at,
-    data.timestamp,
-    data.created_at,
   ].map((value) => cleanText(value, 256)).find(Boolean);
   if (!sourceIdentity) {
     return 'sink:' + randomIdentifier();
@@ -3552,14 +3673,19 @@ function dailyParams(bucket, updatedAt) {
   ];
 }
 
-async function pruneAndRollup(db, now) {
-  const rawCutoff = now - RAW_RETENTION_MS;
-  const summaryStartMs = addMonths(now, -SUMMARY_RETENTION_MONTHS);
-  const summaryCutoff = dayKey(addMonths(now, -SUMMARY_RETENTION_MONTHS));
-  const rollupFrom = dayKey(rawCutoff);
+function nextDayKey(day) {
+  const date = new Date(`${day}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
 
+function dayStartTimestamp(day) {
+  return Date.parse(`${day}T00:00:00.000+08:00`);
+}
+
+async function aggregateRawDay(db, from, to) {
   const aggregates = new Map();
-  let cursorAt = summaryStartMs;
+  let cursorAt = from;
   let cursorId = '';
   while (true) {
     const result = await db.prepare([
@@ -3570,7 +3696,7 @@ async function pruneAndRollup(db, now) {
       '  AND (event_at > ? OR (event_at = ? AND event_id > ?))',
       'ORDER BY event_at ASC, event_id ASC',
       'LIMIT ' + MAINTENANCE_BATCH_SIZE,
-    ].join('\n')).bind(summaryStartMs, now, cursorAt, cursorAt, cursorId).all();
+    ].join('\n')).bind(from, to, cursorAt, cursorAt, cursorId).all();
     const rows = rowsFromResult(result).map(parseStoredRow);
     if (!rows.length) break;
     dailyAggregate(rows, aggregates);
@@ -3579,14 +3705,13 @@ async function pruneAndRollup(db, now) {
     cursorAt = last.event_at;
     cursorId = last.event_id;
   }
+  return [...aggregates.values()];
+}
 
-  const dailyCleanup = [
-    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day < ?').bind(summaryCutoff),
-    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day >= ?').bind(rollupFrom),
-  ];
-  const dailyCleanupResults = await executeBatch(db, dailyCleanup);
-  const aggregateRows = [...aggregates.values()];
-  const updatedAt = now;
+async function replaceDailyDay(db, day, aggregateRows, updatedAt) {
+  await executeBatch(db, [
+    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day = ?').bind(day),
+  ]);
   const insertSql = [
     'INSERT INTO portfolio_analytics_daily (',
     '  day, dimension, dimension_value, source, event_count, session_count,',
@@ -3597,6 +3722,36 @@ async function pruneAndRollup(db, now) {
     const statements = aggregateRows.slice(index, index + 100)
       .map((bucket) => db.prepare(insertSql).bind(...dailyParams(bucket, updatedAt)));
     await executeBatch(db, statements);
+  }
+}
+
+async function pruneAndRollup(db, now) {
+  const rawCutoff = now - RAW_RETENTION_MS;
+  const summaryStartMs = addMonths(now, -SUMMARY_RETENTION_MONTHS);
+  const summaryCutoff = dayKey(addMonths(now, -SUMMARY_RETENTION_MONTHS));
+  const rollupFrom = dayKey(rawCutoff);
+
+  const dailyCleanup = [
+    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day < ?').bind(summaryCutoff),
+    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day >= ?').bind(rollupFrom),
+  ];
+  const dailyCleanupResults = await executeBatch(db, dailyCleanup);
+  const retainedDaysResult = await db.prepare([
+    'SELECT DISTINCT day FROM portfolio_analytics_daily',
+    'WHERE day >= ? AND day < ?',
+  ].join('\n')).bind(summaryCutoff, rollupFrom).all();
+  const retainedDays = new Set(rowsFromResult(retainedDaysResult).map((row) => row.day));
+  let dailyRows = 0;
+  for (let day = summaryCutoff; day <= dayKey(now); day = nextDayKey(day)) {
+    if (day < rollupFrom && retainedDays.has(day)) continue;
+    const dayStart = dayStartTimestamp(day);
+    const nextDayStart = dayStartTimestamp(nextDayKey(day));
+    const from = Math.max(summaryStartMs, dayStart);
+    const to = Math.min(now, nextDayStart - 1);
+    if (!Number.isFinite(dayStart) || !Number.isFinite(nextDayStart) || to < from) continue;
+    const aggregateRows = await aggregateRawDay(db, from, to);
+    await replaceDailyDay(db, day, aggregateRows, now);
+    dailyRows += aggregateRows.length;
   }
 
   const rawCleanup = await executeBatch(db, [
@@ -3619,7 +3774,7 @@ async function pruneAndRollup(db, now) {
   return {
     raw_pruned: resultChanges(rawCleanup[0]),
     daily_pruned: resultChanges(dailyCleanupResults[0]) + resultChanges(dailyCleanupResults[1]),
-    daily_rows: aggregateRows.length,
+    daily_rows: dailyRows,
     rollup_from: new Date(summaryStartMs).toISOString(),
     rollup_to: new Date(now).toISOString(),
     raw_detail_cutoff: new Date(rawCutoff).toISOString(),
@@ -3708,37 +3863,30 @@ export async function importLegacyHistory(env = {}) {
     };
   }
 
-  let rows;
-  try {
-    rows = rowsFromResult(await legacyDb.prepare([
-      'SELECT id, page_path, referrer, user_agent, created_at',
-      'FROM profile_page_events',
-      'ORDER BY id ASC',
-    ].join('\n')).all());
-  } catch {
-    return {
-      imported: 0,
-      deduped: 0,
-      unavailable: true,
-      reason: 'Legacy profile events are unavailable',
-    };
-  }
-
   const now = nowMs(env);
-  const events = rows.map((row) => legacyEvent(row, now)).filter(Boolean);
   let imported = 0;
   let deduped = 0;
-  for (let index = 0; index < events.length; index += 100) {
-    const chunk = events.slice(index, index + 100);
+  let cursorId = null;
+  while (true) {
+    const query = cursorId === null
+      ? [
+          'SELECT id, page_path, referrer, user_agent, created_at',
+          'FROM profile_page_events',
+          'ORDER BY id ASC',
+          'LIMIT ' + MAINTENANCE_BATCH_SIZE,
+        ].join('\n')
+      : [
+          'SELECT id, page_path, referrer, user_agent, created_at',
+          'FROM profile_page_events',
+          'WHERE id > ?',
+          'ORDER BY id ASC',
+          'LIMIT ' + MAINTENANCE_BATCH_SIZE,
+        ].join('\n');
+    let rows;
     try {
-      const results = await executeBatch(destination, insertStatements(destination, chunk));
-      for (const result of results) {
-        if (resultChanges(result) > 0) {
-          imported += 1;
-        } else {
-          deduped += 1;
-        }
-      }
+      rows = rowsFromResult(await (cursorId === null
+        ? legacyDb.prepare(query).all()
+        : legacyDb.prepare(query).bind(cursorId).all()));
     } catch {
       if (imported > 0) {
         invalidateHistoricalCache(env);
@@ -3750,6 +3898,35 @@ export async function importLegacyHistory(env = {}) {
         reason: 'Legacy history import failed',
       };
     }
+
+    if (!rows.length) break;
+    const events = rows.map((row) => legacyEvent(row, now)).filter(Boolean);
+    for (let index = 0; index < events.length; index += 100) {
+      const chunk = events.slice(index, index + 100);
+      try {
+        const results = await executeBatch(destination, insertStatements(destination, chunk));
+        for (const result of results) {
+          if (resultChanges(result) > 0) {
+            imported += 1;
+          } else {
+            deduped += 1;
+          }
+        }
+      } catch {
+        if (imported > 0) {
+          invalidateHistoricalCache(env);
+        }
+        return {
+          imported,
+          deduped,
+          unavailable: true,
+          reason: 'Legacy history import failed',
+        };
+      }
+    }
+    const last = rows.at(-1);
+    if (last?.id == null || rows.length < MAINTENANCE_BATCH_SIZE) break;
+    cursorId = last.id;
   }
 
   if (imported > 0) {
@@ -3771,6 +3948,7 @@ export {
   RAW_RETENTION_MS,
   SESSION_IDLE_MS,
   ACTIVE_WINDOW_MS,
+  addMonths,
   dayKey,
   normalizePath,
 };

@@ -1,3 +1,6 @@
+import { parseDate } from '@internationalized/date'
+import { date2unix } from './time'
+
 export const REPORT_RANGES = ['24h', '7d', '30d', '90d', 'custom'] as const
 
 export type ReportRange = typeof REPORT_RANGES[number]
@@ -35,7 +38,15 @@ export function queryValue(value: unknown): string {
 function isoBoundary(value: string, endOfDay: boolean): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value))
     return null
-  return `${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`
+  try {
+    const calendarDate = parseDate(value)
+    const seconds = date2unix(calendarDate, endOfDay ? 'end' : 'start')
+    const milliseconds = seconds * 1000 + (endOfDay ? 999 : 0)
+    return new Date(milliseconds).toISOString()
+  }
+  catch {
+    return null
+  }
 }
 
 export function buildReportRangeParams(options: ReportRangeQuery): URLSearchParams {

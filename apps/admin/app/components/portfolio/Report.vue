@@ -120,6 +120,13 @@ interface BackendReport {
       }
       workers?: Record<string, unknown>
     }
+    cache?: {
+      status?: string
+      stale?: boolean
+      generated_at?: string | null
+      cache_age_ms?: number | null
+      ttl_ms?: number | null
+    }
     query_range?: {
       preset?: string
       from?: string
@@ -329,7 +336,7 @@ function sourceStateFor(response: BackendReport, report: ReportName): SourceStat
   const coverage = response.meta?.coverage
   if (coverage?.unavailable)
     return 'unavailable'
-  if (coverage?.stale)
+  if (coverage?.stale || response.meta?.cache?.stale)
     return 'stale'
   if (response.meta?.detail === 'daily_rollup')
     return 'partial'

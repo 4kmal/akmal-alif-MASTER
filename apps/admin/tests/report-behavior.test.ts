@@ -16,7 +16,7 @@ describe('portfolio report helpers', () => {
       to: '2026-10-07',
     })
 
-    expect(params.toString()).toBe('range=custom&from=2026-10-01T00%3A00%3A00.000Z&to=2026-10-07T23%3A59%3A59.999Z')
+    expect(params.toString()).toBe('range=custom&from=2026-09-30T16%3A00%3A00.000Z&to=2026-10-07T15%3A59%3A59.999Z')
   })
 
   it('keeps legacy aggregate goal aliases out of the explicit goal set', () => {

@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   ACTIVE_WINDOW_MS,
   EVENT_TYPES,
+  addMonths,
   estimateVisitorSketch,
   addVisitorToSketch,
   createVisitorSketch,
@@ -145,6 +146,10 @@ function insertAnalyticsEvent(database, {
     userAgent,
     isBot,
   );
+}
+
+function encodeSketch(sketch) {
+  return Array.from(sketch, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
 test('schema creates prefixed raw, daily, and state tables', () => {
@@ -968,6 +973,7 @@ test('historical reports use bounded TTLs, invalidate on accepted writes, and se
     assert.equal(stale.status, 200);
     assert.equal(staleResult.meta.cache.status, 'stale');
     assert.equal(staleResult.meta.cache.stale, true);
+    assert.equal(staleResult.meta.coverage.stale, true);
     assert.equal(staleResult.data.events, 3);
     assert.equal(staleResult.meta.cache.generated_at, new Date(now + 1_500).toISOString());
     assert.equal(staleResult.meta.cache.cache_age_ms, 2_000);
@@ -1224,12 +1230,28 @@ test('Sink events feed shortlink goals and remain source-labelled', async () => 
     assert.equal(firstRow.visitor_key.startsWith('sink-ip-v1:'), true);
     assert.equal(firstRow.session_key, null);
 
-    const retryPayload = { slug: 'docs', target: '/docs', occurred_at: '2026-10-26T10:00:00.000Z' };
+    const retryPayload = {
+      slug: 'docs',
+      target: '/docs',
+      request_id: 'sink-delivery-1',
+      occurred_at: '2026-10-26T10:00:00.000Z',
+    };
     const retry = await recordShortlinkEvent(retryPayload, env);
     const retryAgain = await recordShortlinkEvent(retryPayload, env);
     assert.equal(retry.accepted, 1);
     assert.equal(retryAgain.deduped, 1);
     assert.equal(retryAgain.event_id, retry.event_id);
+
+    const independentPayload = {
+      slug: 'same-second',
+      target: '/same-second',
+      occurred_at: '2026-10-26T10:00:00.000Z',
+    };
+    const independent = await recordShortlinkEvent(independentPayload, env);
+    const independentAgain = await recordShortlinkEvent(independentPayload, env);
+    assert.equal(independent.accepted, 1);
+    assert.equal(independentAgain.accepted, 1);
+    assert.notEqual(independentAgain.event_id, independent.event_id);
 
     const anonymous = await recordShortlinkEvent({ slug: 'anon', target: '/s/anon' }, env);
     const anonymousAgain = await recordShortlinkEvent({ slug: 'anon', target: '/s/anon' }, env);
@@ -1246,7 +1268,7 @@ test('Sink events feed shortlink goals and remain source-labelled', async () => 
     );
     const result = await response.json();
     assert.equal(result.data.shortlink_campaigns.find((campaign) => campaign.slug === 'cv')?.slug, 'cv');
-    assert.equal(result.data.goals.find((goal) => goal.id === 'shortlink_campaigns').conversions, 4);
+    assert.equal(result.data.goals.find((goal) => goal.id === 'shortlink_campaigns').conversions, 6);
     assert.equal(result.data.shortlink_campaigns.find((campaign) => campaign.slug === 'cv')?.visitor_method, 'IP estimate');
     assert.equal(result.meta.detail, 'raw_90_day_events');
     const overviewResponse = await handleAnalyticsRequest(
@@ -1281,7 +1303,15 @@ test('legacy import is idempotent, explicitly labelled, and excluded from new co
   ].join('\n')).run(7, '/legacy', null, 'legacy browser', '2026-10-25T10:00:00.000Z');
 
   try {
-    const env = environment(d1, { PORTFOLIO_DB: new SQLiteD1(legacyDatabase) });
+    const boundedLegacyDb = {
+      prepare(sql) {
+        if (sql.includes('FROM profile_page_events')) {
+          assert.match(sql, /LIMIT \d+/);
+        }
+        return new SQLiteD1(legacyDatabase).prepare(sql);
+      },
+    };
+    const env = environment(d1, { PORTFOLIO_DB: boundedLegacyDb });
     const first = await importLegacyHistory(env);
     const second = await importLegacyHistory(env);
     assert.equal(first.imported, 1);
@@ -1296,6 +1326,79 @@ test('legacy import is idempotent, explicitly labelled, and excluded from new co
   } finally {
     database.close();
     legacyDatabase.close();
+  }
+});
+
+test('daily rollup fallback excludes Sink events from website goals', async () => {
+  const { database, d1 } = createDatabase();
+  const day = 24 * 60 * 60 * 1000;
+  const eventAt = now - (101 * day);
+  try {
+    database.prepare([
+      'INSERT INTO portfolio_analytics_events (',
+      'event_id, event_type, path, shortlink_slug, source, event_at, received_at, is_bot',
+      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ].join('\n')).run(
+      'daily-sink-outbound',
+      'outbound_click',
+      '/s/cv',
+      'cv',
+      'sink',
+      eventAt,
+      eventAt,
+      0,
+    );
+    const env = environment(d1);
+    await runAnalyticsMaintenance(env);
+    const from = new Date(eventAt).toISOString();
+    const to = new Date(eventAt + (60 * 60 * 1000)).toISOString();
+    const response = await handleAnalyticsRequest(
+      new Request(`https://www.akmalalif.com/api/portfolio/conversions?range=custom&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+      env,
+    );
+    const result = await response.json();
+    const outbound = result.data.goals.find((goal) => goal.id === 'outbound');
+    const shortlinks = result.data.goals.find((goal) => goal.id === 'shortlink_campaigns');
+    assert.equal(response.status, 200);
+    assert.equal(outbound.conversions, 0);
+    assert.equal(shortlinks.conversions, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('daily reports mark mixed HLL and legacy identity rows partial', async () => {
+  const { database, d1 } = createDatabase();
+  const day = 24 * 60 * 60 * 1000;
+  const firstDay = new Date(now - (101 * day)).toISOString().slice(0, 10);
+  const secondDay = new Date(now - (100 * day)).toISOString().slice(0, 10);
+  const sketch = createVisitorSketch();
+  addVisitorToSketch(sketch, 'visitor-sketch');
+  const encoded = encodeSketch(sketch);
+  try {
+    const insert = database.prepare([
+      'INSERT INTO portfolio_analytics_daily (',
+      'day, dimension, dimension_value, source, event_count, session_count,',
+      'session_hll, active_ms, visitor_hll, first_event_at, last_event_at, updated_at',
+      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ].join('\n'));
+    insert.run(firstDay, 'all', 'all', 'portfolio', 1, 1, '', 0, '', now, now, now);
+    insert.run(secondDay, 'all', 'all', 'portfolio', 1, 1, encoded, 0, encoded, now, now, now);
+    const env = environment(d1);
+    const from = `${firstDay}T00:00:00.000Z`;
+    const to = `${secondDay}T23:59:59.999Z`;
+    const response = await handleAnalyticsRequest(
+      new Request(`https://www.akmalalif.com/api/portfolio/overview?range=custom&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+      env,
+    );
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(result.data.sessions, null);
+    assert.equal(result.data.unique_visitors, null);
+    assert.equal(result.data.identity_coverage.sessions, 'partial');
+    assert.equal(result.data.identity_coverage.website_visitors, 'partial');
+  } finally {
+    database.close();
   }
 });
 
@@ -1329,6 +1432,37 @@ test('maintenance recomputes mergeable daily sketches and prunes raw detail idem
     const again = await runAnalyticsMaintenance(env);
     assert.equal(again.daily_rows < result.daily_rows, true);
     assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_daily').get().count, dailyCount);
+  } finally {
+    database.close();
+  }
+});
+
+test('maintenance reads raw events in bounded calendar-day windows', async () => {
+  const { database, d1 } = createDatabase();
+  let widestWindow = 0;
+  try {
+    insertAnalyticsEvent(database, {
+      id: 'bounded-maintenance-event',
+      type: 'page_view',
+      path: '/',
+      eventAt: now,
+    });
+    const originalPrepare = d1.prepare.bind(d1);
+    d1.prepare = (sql) => {
+      const statement = originalPrepare(sql);
+      if (sql.includes('FROM portfolio_analytics_events') && sql.includes('LIMIT')) {
+        const originalBind = statement.bind.bind(statement);
+        statement.bind = (...params) => {
+          if (Number.isFinite(params[0]) && Number.isFinite(params[1])) {
+            widestWindow = Math.max(widestWindow, params[1] - params[0]);
+          }
+          return originalBind(...params);
+        };
+      }
+      return statement;
+    };
+    await runAnalyticsMaintenance(environment(d1));
+    assert.equal(widestWindow <= (24 * 60 * 60 * 1000), true);
   } finally {
     database.close();
   }
@@ -1452,4 +1586,10 @@ test('visitor sketches merge without exposing identifiers', () => {
     first[index] = Math.max(first[index], second[index]);
   }
   assert.equal(estimateVisitorSketch(first) >= estimate, true);
+});
+
+test('retention month arithmetic clamps calendar month ends', () => {
+  const timestamp = Date.parse('2026-10-31T10:00:00.000Z');
+  assert.equal(new Date(addMonths(timestamp, -13)).toISOString(), '2025-09-30T10:00:00.000Z');
+  assert.equal(new Date(addMonths(Date.parse('2026-01-31T10:00:00.000Z'), 1)).toISOString(), '2026-02-28T10:00:00.000Z');
 });
