@@ -21,6 +21,7 @@ function setPublicImageCors(event: H3Event) {
   if (!pathname.startsWith('/_assets/images/'))
     return
 
+  setHeader(event, 'Vary', 'Origin')
   const requestOrigin = normalizeOrigin(getHeader(event, 'origin') || '')
   if (!requestOrigin)
     return
@@ -31,7 +32,6 @@ function setPublicImageCors(event: H3Event) {
     return
 
   setHeader(event, 'Access-Control-Allow-Origin', allowedOrigin)
-  setHeader(event, 'Vary', 'Origin')
 }
 
 function validateImageKey(event: H3Event, key: string): { slug: string, filename: string } {
