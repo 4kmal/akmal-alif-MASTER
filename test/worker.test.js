@@ -299,6 +299,27 @@ test('blog APIs return only active categories and currently published post field
   assert.match(posts.headers.get('Cache-Control'), /no-store/);
 });
 
+test('public blog settings expose only cached cover motion and fail static on storage errors', async (t) => {
+  const { database, d1 } = createDatabase();
+  t.after(() => database.close());
+  const env = environment(d1, new FakeAssets({}));
+
+  const initial = await workerFetch(request('/api/blog/settings'), env);
+  assert.equal(initial.status, 200);
+  assert.equal(initial.headers.get('Cache-Control'), 'public, max-age=60');
+  assert.deepEqual(await initial.json(), { artwork_motion: 'once' });
+
+  database.prepare("UPDATE blog_settings SET value = 'off' WHERE key = 'artwork_motion'").run();
+  const changed = await workerFetch(request('/api/blog/settings'), env);
+  assert.deepEqual(await changed.json(), { artwork_motion: 'off' });
+
+  const mutation = await workerFetch(request('/api/blog/settings', { method: 'POST' }), env);
+  assert.equal(mutation.status, 405);
+  const unavailable = await workerFetch(request('/api/blog/settings'), { ASSETS: env.ASSETS });
+  assert.equal(unavailable.status, 503);
+  assert.equal(unavailable.headers.get('Cache-Control'), 'no-store');
+});
+
 test('profile metrics preserve RPC normalization, blog prefix behavior, and atomic batches', async (t) => {
   const { database, d1 } = createDatabase();
   t.after(() => database.close());

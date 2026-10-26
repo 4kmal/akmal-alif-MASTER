@@ -639,8 +639,7 @@ async function handleBlogSettings(request, env) {
       motion = 'off';
     }
   } catch {
-    // Older databases default to the existing once-per-session behavior until
-    // the additive studio migration is applied.
+    return errorResponse(503, 'Blog settings unavailable');
   }
   return jsonResponse({ artwork_motion: motion }, 200, { 'Cache-Control': 'public, max-age=60' });
 }

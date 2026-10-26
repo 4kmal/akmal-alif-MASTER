@@ -210,7 +210,6 @@ async function readPublicMotionSetting(fetchRef) {
 
   const response = await fetchRef('/api/blog/settings', {
     headers: { Accept: 'application/json' },
-    cache: 'no-store',
   });
 
   if (!response?.ok) throw new Error(`Blog settings request failed (${response?.status ?? 'unknown'})`);

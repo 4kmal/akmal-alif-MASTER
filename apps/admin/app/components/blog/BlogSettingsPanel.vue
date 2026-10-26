@@ -56,7 +56,7 @@ onMounted(load)
         </p><h1>Site settings</h1><p
           class="blog-page-intro"
         >
-          Keep the public reading experience intentional. Reduced motion preferences always take precedence over this setting.
+          Choose how blog covers move. Visitors’ reduced-motion preferences always take precedence.
         </p>
       </div>
       <div class="blog-page-actions">
@@ -95,21 +95,21 @@ onMounted(load)
             class="blog-eyebrow"
           >
             Public artwork
-          </p><h2>Artwork motion</h2>
+          </p><h2>Blog cover animations</h2>
         </div><Settings2 :size="22" aria-hidden="true" />
       </div><p
         class="blog-panel__note"
       >
-        This controls the decorative artwork motion on the public portfolio. A network failure leaves the artwork static, and the browser’s reduced-motion preference wins.
+        Each cover can animate for up to four seconds per page visit. Filtering and tab changes cannot restart it. Failed configuration reads keep covers static.
       </p><div
-        class="blog-setting-options" role="radiogroup" aria-label="Artwork motion"
+        class="blog-setting-options" role="radiogroup" aria-label="Blog cover animations"
       >
         <button
           type="button" class="blog-setting-option" :class="{ 'is-selected': settings.artwork_motion === 'once' }" role="radio" :aria-checked="settings.artwork_motion === 'once'" @click="setMotion('once')"
         >
           <span
             class="blog-setting-option__icon"
-          ><PlayCircle :size="22" /></span><span><strong>Play once</strong><small>Allow a single entrance motion when the public page loads.</small></span><Check
+          ><PlayCircle :size="22" /></span><span><strong>Animate once</strong><small>Play each visible cover for up to four seconds.</small></span><Check
             v-if="settings.artwork_motion === 'once'" class="
               blog-setting-option__check
             " :size="18"
@@ -119,7 +119,7 @@ onMounted(load)
         >
           <span
             class="blog-setting-option__icon"
-          ><CircleOff :size="22" /></span><span><strong>Keep still</strong><small>Render artwork without an entrance motion for every visitor.</small></span><Check
+          ><CircleOff :size="22" /></span><span><strong>Static</strong><small>Keep all blog covers still.</small></span><Check
             v-if="settings.artwork_motion === 'off'" class="
               blog-setting-option__check
             " :size="18"
