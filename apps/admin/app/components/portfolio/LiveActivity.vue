@@ -3,12 +3,15 @@
 import type { ActivityEvent, ActivityFilters, ActivitySnapshot } from './live-activity-helpers'
 import { useDocumentVisibility, useOnline } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { getTimeZone } from '@/utils/time'
 import {
   ACTIVITY_EVENT_TYPES,
+  activitySourceState,
   createActivityPoller,
   filterActivityEvents,
   mergeActivityEvents,
   normalizeActivitySnapshot,
+  normalizeCountryCode,
   parseActivityFilters,
   sameActivityFilters,
   selectReplayEvents,
@@ -53,7 +56,7 @@ const lastSuccessfulRefresh = ref<string | null>(null)
 const visibility = useDocumentVisibility()
 const online = useOnline()
 const prefersReducedMotion = ref(false)
-const displayedIds = ref(new Set<string>())
+const replayedIds = ref(new Set<string>())
 const replayQueue = ref<ActivityEvent[]>([])
 const knownIds = new Set<string>()
 let replayTimer: ReturnType<typeof setTimeout> | null = null
@@ -66,8 +69,8 @@ function isAbortError(value: unknown): boolean {
   return value instanceof DOMException && value.name === 'AbortError'
 }
 
-function setDisplayed(id: string) {
-  const next = new Set([...displayedIds.value, id])
+function markReplayed(id: string) {
+  const next = new Set([...replayedIds.value, id])
   while (next.size > 500) {
     const first = next.values().next().value
     if (first)
@@ -75,7 +78,7 @@ function setDisplayed(id: string) {
     else
       break
   }
-  displayedIds.value = next
+  replayedIds.value = next
 }
 
 function stopReplay() {
@@ -88,7 +91,7 @@ function stopReplay() {
 function flushReplay() {
   stopReplay()
   while (replayQueue.value.length)
-    setDisplayed(replayQueue.value.shift()!.id)
+    markReplayed(replayQueue.value.shift()!.id)
 }
 
 function replayNext() {
@@ -101,7 +104,7 @@ function replayNext() {
   const event = replayQueue.value.shift()
   if (!event)
     return
-  setDisplayed(event.id)
+  markReplayed(event.id)
   if (replayQueue.value.length)
     replayTimer = setTimeout(replayNext, 420)
 }
@@ -117,7 +120,8 @@ function startReplay() {
 
 function queueReplay(events: readonly ActivityEvent[]) {
   const queued = new Set(replayQueue.value.map(event => event.id))
-  for (const event of selectReplayEvents(events, displayedIds.value, 20)) {
+  const filtered = filterActivityEvents(events, filters)
+  for (const event of selectReplayEvents(filtered, replayedIds.value, 20)) {
     if (!queued.has(event.id)) {
       replayQueue.value.push(event)
       queued.add(event.id)
@@ -130,7 +134,7 @@ function queueReplay(events: readonly ActivityEvent[]) {
 
 function applySuccess(value: unknown) {
   const next = normalizeActivitySnapshot(value)
-  const merged = mergeActivityEvents(snapshot.value.events, next.events, 100)
+  const merged = mergeActivityEvents(snapshot.value.events, next.events, 100, next.asOf)
   const newEvents = merged.added.filter(event => !knownIds.has(event.id))
   for (const event of next.events)
     knownIds.add(event.id)
@@ -166,9 +170,9 @@ const poller = createActivityPoller<unknown>({
 })
 
 const filteredEvents = computed(() => filterActivityEvents(snapshot.value.events, filters))
-const displayedEvents = computed(() => filteredEvents.value.filter(event => displayedIds.value.has(event.id)))
+const displayedEvents = computed(() => filteredEvents.value)
 const replaying = computed(() => replayQueue.value.length > 0)
-const sourceState = computed<'estimated' | 'stale'>(() => stale.value ? 'stale' : 'estimated')
+const sourceState = computed(() => activitySourceState(error.value, lastSuccessfulRefresh.value))
 const statusLabel = computed(() => {
   if (paused.value)
     return 'Paused'
@@ -177,7 +181,7 @@ const statusLabel = computed(() => {
   if (visibility.value !== 'visible')
     return 'Waiting for visibility'
   if (stale.value)
-    return 'Showing last successful refresh'
+    return lastSuccessfulRefresh.value ? 'Showing last successful refresh' : 'Realtime source unavailable'
   return 'Polling every 10 seconds'
 })
 
@@ -185,8 +189,7 @@ const chartBuckets = computed(() => {
   const buckets = new Map<string, number>()
   for (const event of filteredEvents.value) {
     const date = new Date(event.timestamp)
-    date.setSeconds(0, 0)
-    const key = date.toISOString()
+    const key = new Date(Math.floor(date.getTime() / 60_000) * 60_000).toISOString()
     buckets.set(key, (buckets.get(key) ?? 0) + 1)
   }
   return [...buckets.entries()]
@@ -206,15 +209,14 @@ const chartSummary = computed(() => {
 const countryRows = computed(() => {
   const counts = new Map<string, number>()
   for (const event of filteredEvents.value) {
-    if (event.country)
-      counts.set(event.country, (counts.get(event.country) ?? 0) + 1)
+    const countryCode = normalizeCountryCode(event.countryCode)
+    if (countryCode)
+      counts.set(countryCode, (counts.get(countryCode) ?? 0) + 1)
   }
   return [...counts.entries()]
-    .map(([country, count]) => ({ country, count }))
-    .sort((left, right) => right.count - left.count || left.country.localeCompare(right.country))
-    .slice(0, 12)
+    .map(([countryCode, count]) => ({ countryCode, count }))
+    .sort((left, right) => right.count - left.count || left.countryCode.localeCompare(right.countryCode))
 })
-const countryMax = computed(() => Math.max(countryRows.value[0]?.count ?? 1, 1))
 
 function queryMatchesFilters(query: Record<string, unknown>) {
   return sameActivityFilters(filters, parseActivityFilters(query))
@@ -264,7 +266,17 @@ function formatTime(timestamp: string) {
   const date = new Date(timestamp)
   return Number.isNaN(date.valueOf())
     ? timestamp
-    : new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date)
+    : new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: getTimeZone(),
+      }).format(date)
+}
+
+function resetReplay() {
+  stopReplay()
+  replayQueue.value = []
 }
 
 function formatLastRefresh(timestamp: string | null) {
@@ -283,6 +295,7 @@ watch(() => route.query, (query) => {
   applyingRoute = true
   Object.assign(filters, parseActivityFilters(query as Record<string, unknown>))
   applyingRoute = false
+  resetReplay()
   poller.invalidate()
   void poller.refresh()
 }, { deep: true })
@@ -293,6 +306,7 @@ watch(filters, () => {
   const query = serializeActivityFilters(filters)
   if (!routeQueryMatches(route.query as Record<string, unknown>, query))
     void router.replace({ path: '/admin/activity', query })
+  resetReplay()
   poller.invalidate()
   void poller.refresh()
 }, { deep: true })
@@ -402,7 +416,7 @@ onBeforeUnmount(() => {
     <div v-if="error" class="portfolio-state portfolio-state--error" role="alert">
       <strong>Realtime refresh failed</strong>
       <span>{{ error }}</span>
-      <span>Showing the last successful values while the source recovers.</span>
+      <span>{{ lastSuccessfulRefresh ? 'Showing the last successful values while the source recovers.' : 'No successful realtime values are available yet.' }}</span>
     </div>
 
     <div class="portfolio-live-activity__grid">
@@ -455,33 +469,7 @@ onBeforeUnmount(() => {
           </div>
           <span class="portfolio-panel__note">Country only; no inferred coordinates</span>
         </div>
-        <svg
-          v-if="countryRows.length"
-          class="portfolio-live-activity__country-map"
-          viewBox="0 0 480 220"
-          role="img"
-          aria-labelledby="portfolio-live-country-map-title portfolio-live-country-map-description"
-        >
-          <title id="portfolio-live-country-map-title">Trusted country activity</title>
-          <desc id="portfolio-live-country-map-description">A coarse country bar map based only on trusted country fields.</desc>
-          <g v-for="(row, index) in countryRows" :key="row.country">
-            <text :x="8" :y="22 + index * 16" font-size="11" fill="currentColor">{{ row.country }}</text>
-            <rect :x="112" :y="12 + index * 16" :width="(row.count / countryMax) * 340" height="10" rx="2" fill="currentColor" fill-opacity="0.65" />
-            <text :x="464" :y="22 + index * 16" text-anchor="end" font-size="11" fill="currentColor">{{ row.count }}</text>
-          </g>
-        </svg>
-        <p v-else class="portfolio-state" role="status">
-          Trusted country fields are not included in this realtime snapshot. The event table remains available below.
-        </p>
-        <div v-if="countryRows.length" class="portfolio-table-wrap">
-          <table class="portfolio-table portfolio-live-activity__country-table">
-            <caption class="sr-only">Trusted country activity table</caption>
-            <thead><tr><th scope="col">Country</th><th scope="col">Events</th></tr></thead>
-            <tbody>
-              <tr v-for="row in countryRows" :key="row.country"><th scope="row">{{ row.country }}</th><td>{{ row.count }}</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <CountryActivityMap :rows="countryRows" />
       </section>
     </div>
 
@@ -491,7 +479,7 @@ onBeforeUnmount(() => {
           <p class="portfolio-eyebrow">Bounded replay</p>
           <h2 id="portfolio-live-events-heading">Timestamped event stream</h2>
         </div>
-        <span class="portfolio-panel__note">{{ displayedEvents.length }} of {{ filteredEvents.length }} shown</span>
+        <span class="portfolio-panel__note">{{ displayedEvents.length }} bounded records</span>
       </div>
       <div class="portfolio-table-wrap">
         <table class="portfolio-table portfolio-live-activity__table">

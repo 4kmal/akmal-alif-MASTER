@@ -31,7 +31,8 @@ export interface ActivityEvent {
   source: string
   shortlinkSlug: string | null
   campaign: Record<string, string> | null
-  country: string | null
+  countryCode: string | null
+  region: string | null
 }
 
 export interface VisitorEstimate {
@@ -70,6 +71,11 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+export function normalizeCountryCode(value: unknown): string | null {
+  const candidate = text(value)?.toUpperCase()
+  return candidate && /^[A-Z]{2}$/.test(candidate) ? candidate : null
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -106,7 +112,8 @@ function eventFromRecord(value: unknown): ActivityEvent | null {
     source: text(source.source) ?? 'unknown',
     shortlinkSlug: text(source.shortlink_slug),
     campaign: campaignValue(source.campaign),
-    country: text(source.country) ?? text(source.country_code),
+    countryCode: normalizeCountryCode(source.country_code) ?? normalizeCountryCode(source.country),
+    region: text(source.region),
   }
 }
 
@@ -141,10 +148,27 @@ export function sortActivityEvents(events: readonly ActivityEvent[]): ActivityEv
   ))
 }
 
+export function pruneActivityEvents(
+  events: readonly ActivityEvent[],
+  asOf: string | null,
+  retentionMs = 5 * 60 * 1000,
+): ActivityEvent[] {
+  const end = asOf ? Date.parse(asOf) : Number.NaN
+  if (Number.isNaN(end))
+    return sortActivityEvents(events)
+
+  const start = end - Math.max(0, retentionMs)
+  return sortActivityEvents(events).filter((event) => {
+    const timestamp = Date.parse(event.timestamp)
+    return !Number.isNaN(timestamp) && timestamp >= start && timestamp <= end
+  })
+}
+
 export function mergeActivityEvents(
   current: readonly ActivityEvent[],
   incoming: readonly ActivityEvent[],
   limit = 100,
+  asOf: string | null = null,
 ): { events: ActivityEvent[], added: ActivityEvent[] } {
   const known = new Set(current.map(event => event.id))
   const merged = new Map(current.map(event => [event.id, event]))
@@ -157,12 +181,21 @@ export function mergeActivityEvents(
     merged.set(event.id, event)
   }
 
-  const events = sortActivityEvents([...merged.values()]).slice(0, Math.max(0, limit))
+  const events = pruneActivityEvents([...merged.values()], asOf).slice(0, Math.max(0, limit))
   const retainedIds = new Set(events.map(event => event.id))
   return {
     events,
-    added: sortActivityEvents(added).filter(event => retainedIds.has(event.id)),
+    added: pruneActivityEvents(added, asOf).filter(event => retainedIds.has(event.id)),
   }
+}
+
+export function activitySourceState(
+  error: string,
+  lastSuccessfulRefresh: string | null,
+): 'estimated' | 'stale' | 'unavailable' {
+  if (error && !lastSuccessfulRefresh)
+    return 'unavailable'
+  return error ? 'stale' : 'estimated'
 }
 
 export function filterActivityEvents(
