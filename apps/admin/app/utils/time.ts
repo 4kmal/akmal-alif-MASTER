@@ -1,6 +1,8 @@
 import type { DateValue } from '@internationalized/date'
 import type { AnalysisDatePreset, RealtimeWindow } from '@/utils/dashboard-query'
-import { fromAbsolute, getLocalTimeZone, now, startOfMonth, startOfWeek, toCalendarDate } from '@internationalized/date'
+import { fromAbsolute, now, startOfMonth, startOfWeek, toCalendarDate, toZoned } from '@internationalized/date'
+
+export const REPORTING_TIME_ZONE = 'Asia/Kuala_Lumpur'
 
 const REALTIME_DURATIONS: Record<Exclude<RealtimeWindow, 'today'>, { minutes?: number, hours?: number }> = {
   'last-5m': { minutes: 5 },
@@ -13,10 +15,7 @@ const REALTIME_DURATIONS: Record<Exclude<RealtimeWindow, 'today'>, { minutes?: n
 }
 
 export function getTimeZone() {
-  if (typeof Intl === 'undefined')
-    return 'Etc/UTC'
-
-  return new Intl.DateTimeFormat().resolvedOptions().timeZone
+  return REPORTING_TIME_ZONE
 }
 
 export function getLocale() {
@@ -27,26 +26,42 @@ export function getLocale() {
 }
 
 export function shortDate(unix = 0, locale?: string) {
-  return new Intl.DateTimeFormat(locale, { dateStyle: 'short' }).format(unix * 1000)
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeZone: getTimeZone() }).format(unix * 1000)
 }
 
 export function longDate(unix = 0, locale?: string) {
-  return new Intl.DateTimeFormat(locale, { dateStyle: 'long' }).format(unix * 1000)
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: getTimeZone() }).format(unix * 1000)
 }
 
 export function shortTime(unix = 0, locale?: string) {
-  return new Intl.DateTimeFormat(locale, { timeStyle: 'short' }).format(unix * 1000)
+  return new Intl.DateTimeFormat(locale, { timeStyle: 'short', timeZone: getTimeZone() }).format(unix * 1000)
+}
+
+function calendarDateInReportingZone(dateValue: DateValue | Date) {
+  if (dateValue instanceof Date)
+    return toCalendarDate(fromAbsolute(dateValue.getTime(), getTimeZone()))
+
+  return toCalendarDate(toZoned(dateValue, getTimeZone()))
+}
+
+function calendarDateToUnix(dateValue: ReturnType<typeof toCalendarDate>, type: 'start' | 'end') {
+  const dayStart = toZoned(dateValue, getTimeZone()).toDate().getTime()
+  if (type === 'start')
+    return Math.floor(dayStart / 1000)
+
+  const nextDayStart = toZoned(dateValue.add({ days: 1 }), getTimeZone()).toDate().getTime()
+  return Math.floor(nextDayStart / 1000) - 1
 }
 
 export function date2unix(dateValue: DateValue | Date, type?: 'start' | 'end') {
-  const date = dateValue instanceof Date ? dateValue : dateValue.toDate(getTimeZone())
-  if (type === 'start')
-    return Math.floor(date.setHours(0, 0, 0) / 1000)
+  if (!type) {
+    if (dateValue instanceof Date)
+      return Math.floor(dateValue.getTime() / 1000)
 
-  if (type === 'end')
-    return Math.floor(date.setHours(23, 59, 59) / 1000)
+    return Math.floor(toZoned(dateValue, getTimeZone()).toDate().getTime() / 1000)
+  }
 
-  return Math.floor(date.getTime() / 1000)
+  return calendarDateToUnix(calendarDateInReportingZone(dateValue), type)
 }
 
 export function unix2date(unix: number) {
@@ -54,16 +69,16 @@ export function unix2date(unix: number) {
 }
 
 export function getWeekdayNames(style: 'long' | 'short' | 'narrow' = 'short', locale?: string) {
-  const formatter = new Intl.DateTimeFormat(locale, { weekday: style })
+  const formatter = new Intl.DateTimeFormat(locale, { weekday: style, timeZone: getTimeZone() })
   // 2024-01-01 is Monday
   return Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(2024, 0, 1 + i)
+    const date = new Date(Date.UTC(2024, 0, 1 + i, 12))
     return formatter.format(date)
   })
 }
 
 export function computeDateRange(name: AnalysisDatePreset | string, locale?: string): [number, number] {
-  const tz = getLocalTimeZone()
+  const tz = getTimeZone()
   const currentTime = now(tz)
 
   const presets: Record<AnalysisDatePreset, () => [number, number]> = {
@@ -80,7 +95,7 @@ export function computeDateRange(name: AnalysisDatePreset | string, locale?: str
 }
 
 export function computeRealtimeRange(name: RealtimeWindow): [number, number] {
-  const currentTime = now(getLocalTimeZone())
+  const currentTime = now(getTimeZone())
   const endAt = date2unix(currentTime)
 
   if (name === 'today')

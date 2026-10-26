@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DateRange, DateValue } from 'reka-ui'
-import { getLocalTimeZone } from '@internationalized/date'
 import { useMediaQuery } from '@vueuse/core'
+import { getTimeZone } from '@/utils/time'
 
 defineProps<{
   range?: DateRange
@@ -13,7 +13,7 @@ const emit = defineEmits<{
 
 const open = defineModel<boolean>('open', { default: false })
 const showTwoMonths = useMediaQuery('(min-width: 768px)')
-const timeZone = getLocalTimeZone()
+const timeZone = getTimeZone()
 
 function isDateDisabled(value: DateValue) {
   return value.toDate(timeZone) > new Date()

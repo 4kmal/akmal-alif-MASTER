@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DateRange, DateValue } from 'reka-ui'
-import { getLocalTimeZone } from '@internationalized/date'
 import { useMediaQuery } from '@vueuse/core'
+import { getTimeZone } from '@/utils/time'
 
 const emit = defineEmits<{
   select: [range: [number, number]]
@@ -11,7 +11,7 @@ const open = defineModel<boolean>('open', { default: false })
 const isDesktop = useMediaQuery('(min-width: 640px)')
 const customDate = ref<DateValue | undefined>()
 const customDateRange = ref<DateRange | undefined>()
-const tz = getLocalTimeZone()
+const tz = getTimeZone()
 
 function updateCustomDate(customDateValue: DateValue) {
   emit('select', [date2unix(customDateValue, 'start'), date2unix(customDateValue, 'end')])
