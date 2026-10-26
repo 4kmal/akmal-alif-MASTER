@@ -20,7 +20,7 @@ describe('/api/upload/image', () => {
 
       const data = await response.json() as { url: string, key: string }
       key = data.key
-      expect(data.url).toBe(`/admin/_assets/${data.key}`)
+      expect(data.url).toBe(`/_assets/${data.key}`)
       expect(data.key).toMatch(new RegExp(`^images/${slug}/[a-z0-9]+\\.png$`))
 
       const assetResponse = await fetch(data.url)

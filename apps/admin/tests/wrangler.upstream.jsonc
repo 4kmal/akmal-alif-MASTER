@@ -27,9 +27,11 @@
   "vars": {
     "SITE_TOKEN": "test-site-token",
     "PORTFOLIO_GATEWAY_TOKEN": "test-gateway-token",
+    "ALLOW_LOCAL_ANALYTICS": "true",
+    "ANALYTICS_ID_SECRET": "upstream-test-analytics-secret",
     "ALLOW_LOCAL_ADMIN": "false",
     "ADMIN_EMAIL": "owner@example.test",
-    "PORTFOLIO_ADMIN_ORIGIN": "https://www.example.test",
+    "PORTFOLIO_ADMIN_ORIGIN": "http://localhost",
     "SHORTLINK_ORIGIN": "https://go.example.test",
     "CF_ACCESS_TEAM_DOMAIN": "",
     "CF_ACCESS_AUD": "",

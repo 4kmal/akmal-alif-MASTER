@@ -11,11 +11,11 @@ describe('/api/verify', () => {
     const data = await response.json() as VerifyResponse
     expect(data).toMatchObject({
       name: 'Akmal Alif / Admin',
-      url: 'https://www.example.test',
+      url: 'http://localhost',
       authMethod: 'site-token',
       userID: 'root',
       userEmail: 'owner@example.test',
-      accessEnabled: true,
+      accessEnabled: false,
     })
   })
 
