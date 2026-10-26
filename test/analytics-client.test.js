@@ -423,6 +423,41 @@ test('heartbeat pauses while hidden and resumes after a visible focused interval
   client.destroy();
 });
 
+test('archive article cards do not start reader progress tracking', async () => {
+  const card = new FakeElement('article', {
+    className: 'blog-card',
+    top: 0,
+    height: 2_000,
+    scrollHeight: 2_000,
+  });
+  const page = makePage({ pathname: '/blogs', article: card });
+  const clock = makeClock();
+  const fetcher = makeFetch();
+  const client = createAnalyticsClient({
+    windowRef: page.windowRef,
+    documentRef: page.documentRef,
+    navigatorRef: page.navigatorRef,
+    fetchImpl: fetcher.fetchImpl,
+    now: clock.now,
+    setTimeoutImpl: clock.setTimeoutImpl,
+    clearTimeoutImpl: clock.clearTimeoutImpl,
+    requestAnimationFrameImpl: (callback) => {
+      callback();
+      return 1;
+    },
+    forceEnabled: true,
+  });
+  await flushClient(client, clock);
+  card.setTop(-1_500);
+  page.windowRef.dispatchEvent({ type: 'scroll' });
+  clock.advance(30_000);
+  await flushClient(client, clock);
+  const events = fetcher.calls.flatMap((call) => payloadFrom(call).events);
+  assert.equal(events.some((event) => event.type === 'article_progress'), false);
+  assert.equal(events.some((event) => event.type === 'article_complete'), false);
+  client.destroy();
+});
+
 test('article thresholds fire once and completion uses cumulative visible reading before ninety percent', async () => {
   const article = new FakeElement('article', {
     className: 'blog-content',
@@ -430,6 +465,7 @@ test('article thresholds fire once and completion uses cumulative visible readin
     height: 2_000,
     scrollHeight: 2_000,
   });
+  article.setAttribute('data-blog-content', '');
   const page = makePage({ pathname: '/blog/example', article });
   const clock = makeClock();
   const fetcher = makeFetch();

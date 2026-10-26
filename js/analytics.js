@@ -533,7 +533,14 @@ export function createAnalyticsClient(options = {}) {
 
   function findArticle() {
     if (!documentRef || typeof documentRef.querySelector !== 'function') return null;
-    return documentRef.querySelector('[data-blog-content], article.blog-content, article');
+    const pathname = String(documentRef.location?.pathname || '');
+    if (!/^\/blog\/[^/]+\/?$/.test(pathname)) return null;
+    const content = documentRef.querySelector('[data-blog-content]');
+    if (!content || String(content.tagName || '').toLowerCase() !== 'article') return null;
+    const isReader = typeof content.matches === 'function'
+      ? content.matches('article.blog-content')
+      : content.classList?.contains('blog-content');
+    return isReader ? content : null;
   }
 
   function evaluateArticleProgress() {
