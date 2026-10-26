@@ -100,3 +100,24 @@ test('public analytics has a separate, bounded canonical-origin gateway', async 
   assert.equal((await handleAnalyticsGateway(new Request(`${origin}/api/events`), backend)).status, 405);
   assert.equal(forwarded.length, 1);
 });
+
+test('service calls forward only the credentials required by each boundary', async () => {
+  const forwarded = [];
+  const backend = { ...env, ADMIN: { fetch: async (request) => { forwarded.push(request); return Response.json({ ok: true }); } } };
+  const token = await jwt();
+  const cookie = `CF_Authorization=${token}; other-private-cookie=private; __Host-portfolio-visitor=visitor-signature; __Host-portfolio-session=session-signature`;
+
+  const adminResponse = await handleAdminGateway(new Request(`${origin}/admin`, { headers: { Cookie: cookie } }), backend, options);
+  assert.equal(adminResponse.status, 200);
+  assert.equal(forwarded[0].headers.get('Cookie'), null);
+  assert.equal(forwarded[0].headers.get('Cf-Access-Jwt-Assertion'), token);
+
+  const eventResponse = await handleAnalyticsGateway(new Request(`${origin}/api/events`, {
+    method: 'POST',
+    headers: { Origin: origin, 'Content-Type': 'application/json', Cookie: cookie, 'Cf-Access-Jwt-Assertion': token },
+    body: '{"events":[]}',
+  }), backend);
+  assert.equal(eventResponse.status, 200);
+  assert.equal(forwarded[1].headers.get('Cookie'), '__Host-portfolio-visitor=visitor-signature; __Host-portfolio-session=session-signature');
+  assert.equal(forwarded[1].headers.get('Cf-Access-Jwt-Assertion'), null);
+});

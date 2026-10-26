@@ -79,11 +79,11 @@ export function isAdminPath(pathname) {
   return pathname === '/admin' || pathname.startsWith('/admin/') || pathname === '/api/admin' || pathname.startsWith('/api/admin/');
 }
 
-function trustedHeaders(request, env) {
+function trustedHeaders(request, env, analytics = false) {
   const headers = new Headers(request.headers);
   for (const name of [...headers.keys()]) {
     const lower = name.toLowerCase();
-    if (lower.startsWith('x-portfolio-') || lower.startsWith('x-forwarded-') || lower === 'authorization'
+    if (lower.startsWith('x-portfolio-') || lower.startsWith('x-forwarded-') || lower === 'authorization' || lower === 'cookie'
       || ['host', 'forwarded', 'x-real-ip', 'true-client-ip', 'x-original-url', 'x-original-host', 'x-rewrite-url', 'x-http-method-override'].includes(lower)
       || (lower.startsWith('cf-') && lower !== 'cf-access-jwt-assertion')) headers.delete(name);
   }
@@ -91,6 +91,14 @@ function trustedHeaders(request, env) {
   headers.set('x-portfolio-gateway', env.PORTFOLIO_GATEWAY_TOKEN);
   headers.set('x-forwarded-proto', origin.protocol.slice(0, -1));
   headers.set('x-forwarded-host', origin.host);
+  if (analytics) {
+    const cookies = (request.headers.get('Cookie') || '').split(';').map((part) => part.trim())
+      .filter((part) => /^__Host-portfolio-(visitor|session)=/.test(part));
+    if (cookies.length) headers.set('Cookie', cookies.join('; '));
+  } else {
+    const assertion = tokenFromRequest(request);
+    if (assertion) headers.set('Cf-Access-Jwt-Assertion', assertion);
+  }
   return headers;
 }
 
@@ -153,7 +161,7 @@ export async function handleAnalyticsGateway(request, env) {
   for (const chunk of chunks) { bodyBytes.set(chunk, offset); offset += chunk.byteLength; }
   const body = new TextDecoder().decode(bodyBytes);
   if (env.EVENT_RATE_LIMITER && !(await env.EVENT_RATE_LIMITER.limit({ key: request.headers.get('CF-Connecting-IP') || 'unknown' })).success) return reply(429, 'Too many event batches');
-  const headers = trustedHeaders(request, env);
+  const headers = trustedHeaders(request, env, true);
   headers.delete('Cf-Access-Jwt-Assertion');
   const cf = request.cf || {};
   headers.set('x-portfolio-meta', JSON.stringify({
