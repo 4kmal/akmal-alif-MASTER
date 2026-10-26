@@ -1,4 +1,4 @@
-import { createError, setHeader as h3SetHeader } from 'h3'
+import { createError, getRequestURL as h3GetRequestURL, setHeader as h3SetHeader } from 'h3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('private R2 image assets', () => {
@@ -7,6 +7,7 @@ describe('private R2 image assets', () => {
     vi.stubGlobal('createError', createError)
     vi.stubGlobal('getRouterParam', (event: { params?: Record<string, string> }, name: string) => event.params?.[name])
     vi.stubGlobal('setHeader', h3SetHeader)
+    vi.stubGlobal('getRequestURL', h3GetRequestURL)
     vi.stubGlobal('requireR2Bucket', (env: { R2: unknown }) => env.R2)
     vi.stubGlobal('useAppConfig', () => ({
       slugRegex: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
@@ -32,7 +33,11 @@ describe('private R2 image assets', () => {
     return {
       params: { key },
       context: { cloudflare: { env: { R2 } } },
-      node: { res: { setHeader: vi.fn() } },
+      path: `/_assets/${key}`,
+      node: {
+        req: { url: `/_assets/${key}`, headers: { host: 'go.example.test' } },
+        res: { setHeader: vi.fn() },
+      },
     } as never
   }
 
@@ -44,10 +49,10 @@ describe('private R2 image assets', () => {
     }
     const R2 = { get: vi.fn().mockResolvedValue(object) }
     const serveImageAsset = await loadAssetHandler()
-    const event = eventFor('images/owner/cover.webp', R2) as { node: { res: { setHeader: ReturnType<typeof vi.fn> } } }
+    const event = eventFor('images/owner/abcdefghij.webp', R2) as { node: { res: { setHeader: ReturnType<typeof vi.fn> } } }
 
     await expect(serveImageAsset(event)).resolves.toBe(object.body)
-    expect(R2.get).toHaveBeenCalledWith('images/owner/cover.webp')
+    expect(R2.get).toHaveBeenCalledWith('images/owner/abcdefghij.webp')
     expect(event.node.res.setHeader).toHaveBeenCalledWith('Content-Type', 'image/webp')
     expect(event.node.res.setHeader).toHaveBeenCalledWith('Cache-Control', 'public, max-age=31536000, immutable')
     expect(event.node.res.setHeader).toHaveBeenCalledWith('ETag', '"asset-etag"')

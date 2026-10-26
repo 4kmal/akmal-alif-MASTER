@@ -53,6 +53,7 @@ describe('portfolio analytics H3 adapter', () => {
       expect(request.headers.get('content-type')).toBe('application/json')
       expect(request.headers.get('x-portfolio-gateway')).toBe('gateway-secret')
       expect(request.headers.get('x-portfolio-meta')).toBe('source=portfolio;version=1')
+      expect(request.headers.get('cookie')).toBe('__Host-portfolio-visitor=visitor; __Host-portfolio-session=session')
       await expect(request.json()).resolves.toEqual({ events: [{ type: 'page_view' }] })
 
       return new Response('accepted', {
@@ -73,6 +74,7 @@ describe('portfolio analytics H3 adapter', () => {
         'content-type': 'application/json',
         'x-portfolio-gateway': 'gateway-secret',
         'x-portfolio-meta': 'source=portfolio;version=1',
+        'cookie': '__Host-portfolio-visitor=visitor; __Host-portfolio-session=session',
       },
       body: JSON.stringify({ events: [{ type: 'page_view' }] }),
     })
