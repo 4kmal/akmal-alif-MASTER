@@ -564,6 +564,15 @@ async function handleApi(request, env, url) {
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
 
+  if (url.pathname === '/api/events') {
+    const { handleAnalyticsGateway } = await import('./admin-gateway.js');
+    return handleAnalyticsGateway(request, env);
+  }
+  if (url.pathname === '/admin' || url.pathname.startsWith('/admin/') || url.pathname === '/api/admin' || url.pathname.startsWith('/api/admin/')) {
+    const { handleAdminGateway } = await import('./admin-gateway.js');
+    return handleAdminGateway(request, env);
+  }
+
   if (url.pathname.startsWith('/api/')) {
     return handleApi(request, env, url);
   }
