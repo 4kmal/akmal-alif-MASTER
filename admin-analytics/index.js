@@ -9,6 +9,7 @@ const MAX_EVENTS = 20;
 const MAX_REPORT_ROWS = 50_000;
 const MAX_HISTORY_ROWS = 100;
 const MAINTENANCE_BATCH_SIZE = 1_000;
+const MAX_DAILY_AGGREGATE_BUCKETS = 4_096;
 const MAX_PATH_LENGTH = 512;
 const HLL_REGISTERS = 64;
 const HLL_ALPHA = 0.709;
@@ -45,6 +46,13 @@ class HistoryQueryError extends Error {
     this.code = 'HISTORY_QUERY_INVALID';
     this.status = status;
     this.meta = meta;
+  }
+}
+
+class AnalyticsMaintenanceLimitError extends Error {
+  constructor() {
+    super('Daily analytics rollup exceeded its bounded dimension capacity');
+    this.code = 'MAINTENANCE_LIMIT';
   }
 }
 
@@ -3608,13 +3616,15 @@ function dailyAggregate(rows, aggregates = new Map()) {
     const key = [day, dimension, dimensionValue, source].join('\u0001');
     let bucket = aggregates.get(key);
     if (!bucket) {
+      if (aggregates.size >= MAX_DAILY_AGGREGATE_BUCKETS) {
+        throw new AnalyticsMaintenanceLimitError();
+      }
       bucket = {
         day,
         dimension,
         dimensionValue,
         source,
         eventCount: 0,
-        sessionKeys: new Set(),
         sessionSketch: createVisitorSketch(),
         activeMs: 0,
         sketch: createVisitorSketch(),
@@ -3628,7 +3638,6 @@ function dailyAggregate(rows, aggregates = new Map()) {
     bucket.firstEventAt = Math.min(bucket.firstEventAt, row.event_at);
     bucket.lastEventAt = Math.max(bucket.lastEventAt, row.event_at);
     if (row.session_key) {
-      bucket.sessionKeys.add(row.session_key);
       addVisitorToSketch(bucket.sessionSketch, row.session_key);
     }
     if (row.visitor_key) {
@@ -3663,7 +3672,7 @@ function dailyParams(bucket, updatedAt) {
     bucket.dimensionValue,
     bucket.source,
     bucket.eventCount,
-    bucket.sessionKeys.size,
+    estimateSketch(bucket.sessionSketch) ?? 0,
     encodeVisitorSketch(bucket.sessionSketch),
     bucket.activeMs,
     encodeVisitorSketch(bucket.sketch),
@@ -3708,6 +3717,18 @@ async function aggregateRawDay(db, from, to) {
   return [...aggregates.values()];
 }
 
+async function rawCalendarDays(db, from, to) {
+  const result = await db.prepare([
+    "SELECT DISTINCT strftime('%Y-%m-%d', event_at / 1000, 'unixepoch', '+8 hours') AS day",
+    'FROM portfolio_analytics_events',
+    'WHERE event_at >= ? AND event_at <= ?',
+    'ORDER BY day ASC',
+  ].join('\n')).bind(from, to).all();
+  return rowsFromResult(result)
+    .map((row) => row.day)
+    .filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day));
+}
+
 async function replaceDailyDay(db, day, aggregateRows, updatedAt) {
   await executeBatch(db, [
     db.prepare('DELETE FROM portfolio_analytics_daily WHERE day = ?').bind(day),
@@ -3730,29 +3751,54 @@ async function pruneAndRollup(db, now) {
   const summaryStartMs = addMonths(now, -SUMMARY_RETENTION_MONTHS);
   const summaryCutoff = dayKey(addMonths(now, -SUMMARY_RETENTION_MONTHS));
   const rollupFrom = dayKey(rawCutoff);
-
-  const dailyCleanup = [
-    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day < ?').bind(summaryCutoff),
-    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day >= ?').bind(rollupFrom),
-  ];
-  const dailyCleanupResults = await executeBatch(db, dailyCleanup);
   const retainedDaysResult = await db.prepare([
     'SELECT DISTINCT day FROM portfolio_analytics_daily',
-    'WHERE day >= ? AND day < ?',
-  ].join('\n')).bind(summaryCutoff, rollupFrom).all();
+    'WHERE day >= ? AND day <= ?',
+  ].join('\n')).bind(summaryCutoff, dayKey(now)).all();
   const retainedDays = new Set(rowsFromResult(retainedDaysResult).map((row) => row.day));
+  const rawDays = await rawCalendarDays(db, summaryStartMs, now);
+  const daysToRollup = rawDays.filter((day) => {
+    if (day < summaryCutoff || day > dayKey(now)) {
+      return false;
+    }
+    // The retention boundary may cut through a calendar day. Once that day
+    // has a summary, its pre-cutoff hours are no longer in raw detail, so the
+    // existing summary is the authoritative full-day record.
+    if (day <= rollupFrom && retainedDays.has(day)) {
+      return false;
+    }
+    return true;
+  });
+
+  // Read and validate every touched day before replacing any summary. This
+  // keeps a bounded-dimension failure from deleting a previously complete
+  // rollup or pruning its source detail.
+  for (const day of daysToRollup) {
+    const dayStart = dayStartTimestamp(day);
+    const nextDayStart = dayStartTimestamp(nextDayKey(day));
+    const from = Math.max(summaryStartMs, dayStart);
+    const to = Math.min(now, nextDayStart - 1);
+    if (!Number.isFinite(dayStart) || !Number.isFinite(nextDayStart) || to < from) continue;
+    await aggregateRawDay(db, from, to);
+  }
+
   let dailyRows = 0;
-  for (let day = summaryCutoff; day <= dayKey(now); day = nextDayKey(day)) {
-    if (day < rollupFrom && retainedDays.has(day)) continue;
+  for (const day of daysToRollup) {
     const dayStart = dayStartTimestamp(day);
     const nextDayStart = dayStartTimestamp(nextDayKey(day));
     const from = Math.max(summaryStartMs, dayStart);
     const to = Math.min(now, nextDayStart - 1);
     if (!Number.isFinite(dayStart) || !Number.isFinite(nextDayStart) || to < from) continue;
     const aggregateRows = await aggregateRawDay(db, from, to);
+    if (!aggregateRows.length) continue;
     await replaceDailyDay(db, day, aggregateRows, now);
     dailyRows += aggregateRows.length;
   }
+
+  const dailyCleanup = [
+    db.prepare('DELETE FROM portfolio_analytics_daily WHERE day < ?').bind(summaryCutoff),
+  ];
+  const dailyCleanupResults = await executeBatch(db, dailyCleanup);
 
   const rawCleanup = await executeBatch(db, [
     db.prepare('DELETE FROM portfolio_analytics_events WHERE event_at < ?').bind(rawCutoff),
@@ -3773,7 +3819,7 @@ async function pruneAndRollup(db, now) {
 
   return {
     raw_pruned: resultChanges(rawCleanup[0]),
-    daily_pruned: resultChanges(dailyCleanupResults[0]) + resultChanges(dailyCleanupResults[1]),
+    daily_pruned: resultChanges(dailyCleanupResults[0]),
     daily_rows: dailyRows,
     rollup_from: new Date(summaryStartMs).toISOString(),
     rollup_to: new Date(now).toISOString(),
@@ -3782,12 +3828,19 @@ async function pruneAndRollup(db, now) {
   };
 }
 
+function maintenanceFailure(error) {
+  if (error?.code === 'MAINTENANCE_LIMIT') {
+    return { unavailable: true, reason: error.message, code: error.code };
+  }
+  return { unavailable: true, reason: 'Analytics maintenance failed' };
+}
+
 export async function runAnalyticsMaintenance(env = {}, ctx = null) {
   const db = analyticsDb(env);
   if (!db) {
     return { unavailable: true, reason: 'Analytics database is unavailable' };
   }
-  const task = pruneAndRollup(db, nowMs(env));
+  const task = pruneAndRollup(db, nowMs(env)).catch(maintenanceFailure);
   if (ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil(task.then((result) => {
       if (!result?.unavailable) {
@@ -3801,8 +3854,8 @@ export async function runAnalyticsMaintenance(env = {}, ctx = null) {
     const result = await task;
     invalidateHistoricalCache(env);
     return result;
-  } catch {
-    return { unavailable: true, reason: 'Analytics maintenance failed' };
+  } catch (error) {
+    return maintenanceFailure(error);
   }
 }
 

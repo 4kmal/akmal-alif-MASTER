@@ -14,7 +14,9 @@ import {
   importLegacyHistory,
   ingestEvents,
   recordShortlinkEvent,
+  RAW_RETENTION_MS,
   runAnalyticsMaintenance,
+  dayKey,
 } from '../admin-analytics/index.js';
 
 const schema = readFileSync(new URL('../admin-analytics/schema.sql', import.meta.url), 'utf8');
@@ -1463,6 +1465,86 @@ test('maintenance reads raw events in bounded calendar-day windows', async () =>
     };
     await runAnalyticsMaintenance(environment(d1));
     assert.equal(widestWindow <= (24 * 60 * 60 * 1000), true);
+  } finally {
+    database.close();
+  }
+});
+
+test('maintenance preserves a complete KL boundary day after raw detail is pruned', async () => {
+  const { database, d1 } = createDatabase();
+  const firstNow = Date.parse('2026-10-26T10:00:00.000Z');
+  const secondNow = Date.parse('2026-10-26T12:00:00.000Z');
+  const cutoff = firstNow - RAW_RETENTION_MS;
+  const boundaryDay = dayKey(cutoff);
+  try {
+    insertAnalyticsEvent(database, {
+      id: 'boundary-before-cutoff',
+      type: 'page_view',
+      path: '/boundary-before',
+      eventAt: cutoff - (60 * 60 * 1000),
+    });
+    insertAnalyticsEvent(database, {
+      id: 'boundary-after-cutoff',
+      type: 'page_view',
+      path: '/boundary-after',
+      eventAt: cutoff + (60 * 60 * 1000),
+    });
+
+    const first = await runAnalyticsMaintenance(environment(d1, { ANALYTICS_NOW: firstNow }));
+    assert.equal(first.raw_pruned, 1);
+    assert.equal(database.prepare([
+      "SELECT event_count FROM portfolio_analytics_daily",
+      "WHERE day = ? AND dimension = 'all' AND source = 'portfolio'",
+    ].join('\n')).get(boundaryDay).event_count, 2);
+
+    const second = await runAnalyticsMaintenance(environment(d1, { ANALYTICS_NOW: secondNow }));
+    assert.equal(second.unavailable, undefined);
+    assert.equal(database.prepare([
+      "SELECT event_count FROM portfolio_analytics_daily",
+      "WHERE day = ? AND dimension = 'all' AND source = 'portfolio'",
+    ].join('\n')).get(boundaryDay).event_count, 2);
+  } finally {
+    database.close();
+  }
+});
+
+test('maintenance reports bounded rollup overflow without deleting raw or daily data', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    database.prepare([
+      'INSERT INTO portfolio_analytics_daily (',
+      'day, dimension, dimension_value, source, event_count, session_count,',
+      'session_hll, active_ms, visitor_hll, first_event_at, last_event_at, updated_at',
+      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ].join('\n')).run('2026-10-26', 'all', 'all', 'portfolio', 7, 0, '', 0, '', now, now, now);
+
+    const insert = database.prepare([
+      'INSERT INTO portfolio_analytics_events (',
+      'event_id, event_type, path, source, event_at, received_at, is_bot',
+      ') VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ].join('\n'));
+    database.exec('BEGIN');
+    try {
+      for (let index = 0; index < 4_100; index += 1) {
+        insert.run('rollup-overflow-' + index, 'page_view', '/overflow-' + index, 'portfolio', now, now, 0);
+      }
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+
+    const beforeRaw = database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count;
+    const beforeDaily = database.prepare('SELECT count(*) AS count FROM portfolio_analytics_daily').get().count;
+    const result = await runAnalyticsMaintenance(environment(d1));
+    assert.equal(result.unavailable, true);
+    assert.match(result.reason, /bounded dimension capacity/);
+    assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count, beforeRaw);
+    assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_daily').get().count, beforeDaily);
+    assert.equal(database.prepare([
+      "SELECT event_count FROM portfolio_analytics_daily",
+      "WHERE day = '2026-10-26' AND dimension = 'all' AND source = 'portfolio'",
+    ].join('\n')).get().event_count, 7);
   } finally {
     database.close();
   }
