@@ -21,11 +21,11 @@ const optionalName = z.preprocess(
 const deployEnvSchema = z.object({
   DEPLOY_D1_DATABASE_ID: z.string().trim().min(1),
   DEPLOY_KV_NAMESPACE_ID: z.string().trim().min(1),
-  // Optional Wrangler preview binding; falls back to DEPLOY_KV_NAMESPACE_ID
+  // Optional Wrangler preview binding; omitted unless explicitly configured.
   DEPLOY_KV_PREVIEW_NAMESPACE_ID: optionalName,
   DEPLOY_D1_DATABASE_NAME: defaultName,
   DEPLOY_R2_BUCKET_NAME: optionalName,
-  // Optional Wrangler preview bucket; falls back to DEPLOY_R2_BUCKET_NAME when R2 is enabled
+  // Optional Wrangler preview bucket; omitted unless explicitly configured.
   DEPLOY_R2_PREVIEW_BUCKET_NAME: optionalName,
   DEPLOY_ANALYTICS_DATASET: defaultName,
 })
@@ -75,13 +75,19 @@ const analytics = getBinding(config, 'analytics_engine_datasets', 'ANALYTICS')
 d1.database_id = env.DEPLOY_D1_DATABASE_ID
 d1.database_name = env.DEPLOY_D1_DATABASE_NAME
 kv.id = env.DEPLOY_KV_NAMESPACE_ID
-kv.preview_id = env.DEPLOY_KV_PREVIEW_NAMESPACE_ID ?? env.DEPLOY_KV_NAMESPACE_ID
+if (env.DEPLOY_KV_PREVIEW_NAMESPACE_ID)
+  kv.preview_id = env.DEPLOY_KV_PREVIEW_NAMESPACE_ID
+else
+  delete kv.preview_id
 analytics.dataset = env.DEPLOY_ANALYTICS_DATASET
 
 if (env.DEPLOY_R2_BUCKET_NAME) {
   const r2 = getBinding(config, 'r2_buckets', 'R2')
   r2.bucket_name = env.DEPLOY_R2_BUCKET_NAME
-  r2.preview_bucket_name = env.DEPLOY_R2_PREVIEW_BUCKET_NAME ?? env.DEPLOY_R2_BUCKET_NAME
+  if (env.DEPLOY_R2_PREVIEW_BUCKET_NAME)
+    r2.preview_bucket_name = env.DEPLOY_R2_PREVIEW_BUCKET_NAME
+  else
+    delete r2.preview_bucket_name
 }
 else {
   config.r2_buckets = config.r2_buckets.filter(({ binding }) => binding !== 'R2')

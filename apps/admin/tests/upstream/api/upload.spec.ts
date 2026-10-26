@@ -20,10 +20,10 @@ describe('/api/upload/image', () => {
 
       const data = await response.json() as { url: string, key: string }
       key = data.key
-      expect(data.url).toBe(`/_assets/${data.key}`)
+      expect(data.url).toBe(`https://go.example.test/_assets/${data.key}`)
       expect(data.key).toMatch(new RegExp(`^images/${slug}/[a-z0-9]+\\.png$`))
 
-      const assetResponse = await fetch(data.url)
+      const assetResponse = await fetch(new URL(data.url).pathname)
       expect(assetResponse.status).toBe(200)
       expect(new Uint8Array(await assetResponse.arrayBuffer())).toEqual(TEST_PNG_BYTES)
       expect(assetResponse.headers.get('Content-Type')).toBe('image/png')

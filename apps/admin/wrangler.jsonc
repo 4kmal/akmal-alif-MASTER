@@ -51,7 +51,6 @@
   "kv_namespaces": [
     {
       "binding": "KV",
-      "preview_id": "b810de9ed6d0491c905b088d3f5b4cb7",
       "id": "b810de9ed6d0491c905b088d3f5b4cb7"
     }
   ],
@@ -71,9 +70,6 @@
   "r2_buckets": [
     {
       "binding": "R2",
-      // preview_bucket_name: DEPLOY_R2_PREVIEW_BUCKET_NAME (falls back to DEPLOY_R2_BUCKET_NAME)
-      // omit DEPLOY_R2_BUCKET_NAME to drop R2 from generated deploy config
-      "preview_bucket_name": "akmalalif-admin-data",
       "bucket_name": "akmalalif-admin-data"
     }
   ],

@@ -1,5 +1,6 @@
 import { nanoid, SlugSchema } from '#shared/schemas/link'
 import { IMAGE_ALLOWED_TYPES, IMAGE_MAX_SIZE } from '#shared/utils/image'
+import { getRuntimeString } from '../../utils/runtime-config'
 
 const slugValidator = SlugSchema
 
@@ -62,9 +63,21 @@ export default eventHandler(async (event) => {
     },
   })
 
-  // Keep uploaded images usable from the public shortlink host. The admin
-  // asset route remains available for the dashboard, while OG templates and
-  // preview requests resolve this relative URL against the shortlink origin.
-  const imageUrl = `/_assets/${key}`
+  const shortlinkOrigin = getRuntimeString(event, 'shortlinkOrigin', 'SHORTLINK_ORIGIN')
+  let imageUrlOrigin: URL
+  try {
+    imageUrlOrigin = new URL(shortlinkOrigin)
+    if (!['http:', 'https:'].includes(imageUrlOrigin.protocol) || imageUrlOrigin.username || imageUrlOrigin.password)
+      throw new Error('unsafe origin')
+  }
+  catch {
+    throw createError({ status: 500, statusText: 'SHORTLINK_ORIGIN is not configured' })
+  }
+
+  imageUrlOrigin.pathname = `/_assets/${key}`
+  imageUrlOrigin.search = ''
+  imageUrlOrigin.hash = ''
+
+  const imageUrl = imageUrlOrigin.toString()
   return { url: imageUrl, key }
 })
