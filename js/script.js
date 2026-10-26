@@ -825,14 +825,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.warn("'initVinylCoverflow' function is not defined.");
         }
 
-        if (document.querySelector('.blog-content')) { // Only run blog outline on blog pages
-            if (typeof generateBlogOutline === 'function') {
-                generateBlogOutline();
-            } else {
-                console.warn("'generateBlogOutline' function is not defined.");
-            }
-        }
-        
         if (typeof setupEmptyLinkPopups === 'function') {
             setupEmptyLinkPopups();
         } else {
