@@ -52,7 +52,7 @@
   border: 1px solid var(--border);
   border-radius: 20px;
   background-color: var(--card);
-  background-image: linear-gradient(var(--admin-highlight), transparent 70px);
+  background-image: linear-gradient(var(--admin-highlight), transparent 70px), url('/admin/surface-grain.svg');
   box-shadow: inset 0 1px 0 var(--admin-highlight), var(--admin-shadow);
 }
 
