@@ -1,5 +1,4 @@
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers'
-import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
 
 interface HandledValidationError {
@@ -27,11 +26,13 @@ function isHandledValidationError(error: unknown): error is HandledValidationErr
     && data.stack.includes('validateData')
 }
 
-export default defineConfig(async ({ mode }) => ({
+export default defineConfig(async () => ({
   plugins: [
     cloudflareTest({
       wrangler: {
-        configPath: './wrangler.jsonc',
+        // Keep the worker pool hermetic: the production config contains a
+        // service binding and remote resources that cannot be used in tests.
+        configPath: './tests/wrangler.security.jsonc',
       },
       miniflare: {
         compatibilityDate: '2026-07-15',
@@ -43,10 +44,8 @@ export default defineConfig(async ({ mode }) => ({
     }),
   ],
   test: {
-    env: loadEnv(mode, process.cwd(), ''),
     isolate: false,
     maxWorkers: 1,
-    setupFiles: ['./tests/setup.ts'],
     testTimeout: 10_000,
     onUnhandledError(error) {
       return !isHandledValidationError(error)
