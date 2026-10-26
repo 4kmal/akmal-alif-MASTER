@@ -1398,6 +1398,7 @@ body.blog-page:has(.blog-listing-card) .blog-listing-card::after {
 /* Article outlines live beside the reader on wide screens and above it below the wide breakpoint. */
 body.blog-page:has(.blog-outline-aside) .blog-page-container {
     display: grid;
+    overflow: visible;
     grid-template-columns: 220px minmax(0, 800px);
     gap: 24px;
     align-items: start;
@@ -1432,6 +1433,8 @@ body.blog-page:has(.blog-outline-aside[hidden]) .blog-post-full {
     min-width: 0;
     position: sticky;
     top: calc(var(--portfolio-header-clearance, var(--header-total-clearance-height, 72px)) + 24px);
+    max-height: calc(100dvh - var(--portfolio-header-clearance, var(--header-total-clearance-height, 72px)) - 48px);
+    overflow-y: auto;
 }
 
 .blog-outline-aside[hidden] {
@@ -1536,5 +1539,7 @@ body.blog-page:has(.blog-outline-aside[hidden]) .blog-post-full {
         order: 0;
         width: 100%;
         position: static;
+        max-height: none;
+        overflow: visible;
     }
 }
