@@ -1181,10 +1181,14 @@ function buildInsights(rows, goals) {
   if (topPath) {
     insights.push('Most active path: ' + topPath[0] + ' (' + topPath[1] + ' events).');
   }
-  const pageViews = rows.filter((row) => row.event_type === 'page_view').length;
-  const completions = rows.filter((row) => row.event_type === 'article_complete').length;
-  if (pageViews > 0 && completions > 0) {
-    insights.push('Article completion rate: ' + Math.round((completions / pageViews) * 100) + '%.');
+  const articleRows = rows.filter((row) => String(row.path ?? '').startsWith('/blog/'));
+  const articlePageViews = articleRows.filter((row) => row.event_type === 'page_view').length;
+  const completions = articleRows.filter((row) => row.event_type === 'article_complete').length;
+  if (articlePageViews > 0 && completions > 0) {
+    insights.push(
+      'Article completion rate: ' + Math.round((completions / articlePageViews) * 100) +
+      '% of article page views.',
+    );
   }
   const contactGoal = goals.find((goal) => goal.id === 'career_contact');
   if (contactGoal?.conversions) {
@@ -1664,7 +1668,10 @@ function buildDailyPagePerformance(pathRows, previousPathRows, catalog, previous
 function buildDailyCategoryComparisons(pathRows, previousPathRows, catalog, previousAvailable = false) {
   const group = (rows) => {
     const counts = new Map();
-    for (const row of rows) {
+    for (const row of rows.filter((item) => {
+      const path = String(item.dimension_value ?? '');
+      return path.startsWith('/blog/') || catalogForPath(catalog, path);
+    })) {
       const metadata = catalogForPath(catalog, row.dimension_value);
       const key = metadata?.category_slug ?? 'uncategorized';
       const current = counts.get(key) ?? {

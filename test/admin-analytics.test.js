@@ -500,6 +500,7 @@ test('reports expose deterministic overview, content, conversions, realtime, and
     const env = environment(d1);
     await ingestEvents(request('/internal/events', [
       { id: 'overview-page', type: 'page_view', path: '/' },
+      { id: 'overview-article-view', type: 'page_view', path: '/blog/hello' },
       { id: 'overview-article', type: 'article_complete', path: '/blog/hello', active_ms: 30000 },
       { id: 'overview-contact', type: 'contact_open', path: '/contact' },
       { id: 'overview-contact-interaction', type: 'contact_interaction', path: '/contact', target: '#form' },
@@ -513,8 +514,9 @@ test('reports expose deterministic overview, content, conversions, realtime, and
     assert.equal(overview.meta.timezone, 'Asia/Kuala_Lumpur');
     assert.equal(overview.meta.coverage.has_data, true);
     assert.equal(overview.meta.detail, 'raw_90_day_events');
-    assert.equal(overview.data.events, 4);
-    assert.equal(overview.data.page_views, 1);
+    assert.equal(overview.data.events, 5);
+    assert.equal(overview.data.page_views, 2);
+    assert.equal(overview.data.insights.includes('Article completion rate: 100% of article page views.'), true);
     const contactGoal = overview.data.goals.find((goal) => goal.id === 'career_contact');
     assert.equal(contactGoal.label, 'Contact intent');
     assert.equal(contactGoal.conversions, 1);
@@ -527,7 +529,7 @@ test('reports expose deterministic overview, content, conversions, realtime, and
     );
     assert.deepEqual((await content.json()).data.content[0], {
       path: '/blog/hello',
-      views: 0,
+      views: 1,
       progress_events: 0,
       average_progress: null,
       completions: 1,
@@ -539,7 +541,7 @@ test('reports expose deterministic overview, content, conversions, realtime, and
       env,
     );
     const realtimeData = await realtime.json();
-    assert.equal(realtimeData.data.events.length, 4);
+    assert.equal(realtimeData.data.events.length, 5);
     assert.equal(realtimeData.data.events[0].timestamp, '2026-10-26T10:00:00.000Z');
 
     const performance = await handleAnalyticsRequest(
@@ -1050,6 +1052,14 @@ test('daily history merges sessions across midnight and remains available for pr
     assert.equal(result.data.comparison.unique_visitors, 1);
     assert.equal(result.meta.coverage.prior_detail, 'daily_rollup');
     assert.equal(result.meta.coverage.tracking_started_at, new Date(now - (101 * day)).toISOString());
+
+    const content = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/content?range=90d'),
+      env,
+    );
+    const contentResult = await content.json();
+    assert.equal(content.status, 200);
+    assert.deepEqual(contentResult.data.category_comparisons, []);
   } finally {
     database.close();
   }
