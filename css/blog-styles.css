@@ -287,12 +287,6 @@ body.dark .blog-post-full {
         color: var(--blog-accent-foreground, #2a2a2a);
     }
 
-    .blog-artwork-toggle:not(:disabled):hover {
-        border-color: var(--blog-text, #2a2a2a);
-        color: var(--blog-text, #2a2a2a);
-        box-shadow: var(--blog-shadow-control-hover, 0 4px 10px rgba(42, 42, 42, 0.14));
-        transform: translateY(-1px);
-    }
 }
 
 .blog-header {
@@ -335,32 +329,6 @@ body.dark .blog-post-full {
     grid-column: 2;
     margin: 0;
     text-align: center;
-}
-
-.blog-artwork-toggle {
-    grid-column: 3;
-    justify-self: end;
-    min-block-size: 2.75rem;
-    padding: 0.55rem 0.9rem;
-    border: 1px solid var(--blog-border, rgba(42, 42, 42, 0.16));
-    border-radius: var(--portfolio-radius-nested, 16px);
-    background: var(--blog-surface-muted, #f5f5f5);
-    color: var(--blog-muted, #6b6b6b);
-    box-shadow: var(--blog-shadow-control, 0 2px 6px rgba(42, 42, 42, 0.1));
-    cursor: pointer;
-    font-size: 0.76rem;
-    font-weight: 650;
-    letter-spacing: 0.01em;
-    transition:
-        border-color 160ms ease,
-        box-shadow 160ms ease,
-        color 160ms ease,
-        transform 160ms ease;
-}
-
-.blog-artwork-toggle:disabled {
-    cursor: not-allowed;
-    opacity: 0.72;
 }
 
 .blog-posts-list {
@@ -690,8 +658,7 @@ body.dark .blog-post-full {
 }
 
 .read-more-button:not(:disabled):active,
-.category-btn:not(:disabled):active,
-.blog-artwork-toggle:not(:disabled):active {
+.category-btn:not(:disabled):active {
     transform: translateY(0);
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.3),
@@ -1081,13 +1048,8 @@ body.dark .outline-toggle:hover {
         gap: 10px;
     }
 
-    .blog-header-row h1,
-    .blog-artwork-toggle {
+    .blog-header-row h1 {
         grid-column: 1;
-    }
-
-    .blog-artwork-toggle {
-        justify-self: center;
     }
 
     .blog-posts-list {
@@ -1117,8 +1079,7 @@ body.dark .outline-toggle:hover {
     .blog-card-image,
     .category-btn,
     .read-more-button,
-    .blog-card .post-title a,
-    .blog-artwork-toggle {
+    .blog-card .post-title a {
         transition: none;
     }
 
@@ -1131,9 +1092,7 @@ body.dark .outline-toggle:hover {
     .category-btn:hover,
     .category-btn:active,
     .read-more-button:hover,
-    .read-more-button:active,
-    .blog-artwork-toggle:hover,
-    .blog-artwork-toggle:active {
+    .read-more-button:active {
         transform: none;
     }
 }
@@ -1418,5 +1377,146 @@ body.blog-page:has(.blog-post-full) .blog-post-full {
     body.blog-page:has(.blog-post-full) .blog-page-container {
         padding-right: 8px;
         padding-left: 8px;
+    }
+}
+
+/* The archive keeps its width and rhythm while individual cards carry the tactile material. */
+body.blog-page:has(.blog-listing-card) .blog-listing-card {
+    overflow: visible;
+    isolation: auto;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body.blog-page:has(.blog-listing-card) .blog-listing-card::before,
+body.blog-page:has(.blog-listing-card) .blog-listing-card::after {
+    display: none;
+}
+
+/* Article outlines live beside the reader on wide screens and above it below the wide breakpoint. */
+body.blog-page:has(.blog-outline-aside) .blog-page-container {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 800px);
+    gap: 24px;
+    align-items: start;
+    justify-content: center;
+    width: 100%;
+    max-width: 1100px;
+}
+
+body.blog-page:has(.blog-outline-aside) .blog-post-full {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    max-width: 800px;
+    margin: 0;
+}
+
+body.blog-page:has(.blog-outline-aside[hidden]) .blog-page-container {
+    display: block;
+    max-width: 800px;
+}
+
+body.blog-page:has(.blog-outline-aside[hidden]) .blog-post-full {
+    grid-column: 1;
+    margin-right: auto;
+    margin-left: auto;
+}
+
+.blog-outline-aside {
+    grid-column: 1;
+    grid-row: 1;
+    width: 220px;
+    min-width: 0;
+    position: sticky;
+    top: calc(var(--portfolio-header-clearance, var(--header-total-clearance-height, 72px)) + 24px);
+}
+
+.blog-outline-aside[hidden] {
+    display: none;
+}
+
+.blog-outline-aside .blog-outline {
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--portfolio-border, rgba(42, 42, 42, 0.16));
+    border-radius: var(--portfolio-radius-nested, 16px);
+    background: var(--portfolio-surface-soft, #f5f5f5);
+    box-shadow: none;
+}
+
+.blog-outline-aside .blog-outline summary {
+    min-height: 44px;
+    box-sizing: border-box;
+    padding: 11px 14px;
+    color: var(--portfolio-text, #2a2a2a);
+    cursor: pointer;
+    font-size: 0.84rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    list-style-position: inside;
+}
+
+.blog-outline-aside .outline-list {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0 10px 10px 14px;
+    list-style: none;
+}
+
+.blog-outline-aside .outline-list li {
+    margin: 0;
+}
+
+.blog-outline-aside .outline-list .outline-h3 {
+    padding-left: 14px;
+}
+
+.blog-outline-aside .outline-list .outline-h4 {
+    padding-left: 28px;
+}
+
+.blog-outline-aside .outline-list a {
+    display: block;
+    min-height: 40px;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border-radius: 10px;
+    color: var(--portfolio-text-muted, #666);
+    font-size: 0.9rem;
+    line-height: 1.35;
+    text-decoration: none;
+}
+
+.blog-outline-aside .outline-list a:hover {
+    background: var(--portfolio-surface-muted, #ededed);
+    color: var(--portfolio-text, #2a2a2a);
+}
+
+.blog-outline-aside :is(summary, a):focus-visible {
+    outline: 2px solid var(--portfolio-focus, #a06e00);
+    outline-offset: 3px;
+}
+
+@media (max-width: 1279px) {
+    body.blog-page:has(.blog-outline-aside) .blog-page-container {
+        display: flex;
+        width: 100%;
+        max-width: 800px;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    body.blog-page:has(.blog-outline-aside) .blog-post-full {
+        order: 1;
+    }
+
+    .blog-outline-aside {
+        order: 0;
+        width: 100%;
+        position: static;
     }
 }

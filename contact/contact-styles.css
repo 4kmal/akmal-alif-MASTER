@@ -121,27 +121,50 @@ body.dark .chat-header {
     position: relative;
 }
 
-.avatar-circle {
+.contact-avatar-sprite {
     width: 48px;
     height: 48px;
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-    position: relative;
+    flex: 0 0 48px;
+    overflow: visible;
+    image-rendering: pixelated;
+    shape-rendering: crispEdges;
+    color: var(--contact-text, #2a2a2a);
 }
 
-body.dark .avatar-circle {
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+.contact-avatar-sprite :is(.avatar-pixel-shadow, .avatar-pixel-monitor-frame, .avatar-pixel-head, .avatar-pixel-hair, .avatar-pixel-body, .avatar-pixel-arm, .avatar-pixel-hand, .avatar-pixel-keyboard) {
+    fill: var(--contact-text, #2a2a2a);
 }
 
-.avatar-text {
-    color: white;
-    font-weight: 600;
-    font-size: 18px;
-    letter-spacing: 0.5px;
+.contact-avatar-sprite .avatar-pixel-shadow {
+    opacity: 0.25;
+}
+
+.contact-avatar-sprite :is(.avatar-pixel-monitor-screen, .avatar-pixel-monitor-stand, .avatar-pixel-monitor-base) {
+    fill: var(--contact-surface-muted, #f5f5f5);
+}
+
+.contact-avatar-sprite :is(.avatar-pixel-monitor-glow, .avatar-pixel-cursor) {
+    fill: var(--contact-avatar-accent, #a87900);
+}
+
+.contact-avatar-sprite .avatar-pixel-person {
+    transform-box: fill-box;
+    transform-origin: 17px 31px;
+    animation: contact-avatar-type 4s steps(1, end) 1 both;
+}
+
+.contact-avatar-sprite .avatar-pixel-monitor-glow {
+    animation: contact-avatar-monitor 4s steps(1, end) 1 both;
+}
+
+@keyframes contact-avatar-type {
+    0%, 34%, 100% { transform: translateY(0); }
+    42%, 76% { transform: translateY(1px); }
+}
+
+@keyframes contact-avatar-monitor {
+    0%, 24%, 100% { opacity: 0.5; }
+    28%, 68% { opacity: 1; }
 }
 
 /* Status indicator */
@@ -755,13 +778,10 @@ body.dark .send-btn:disabled {
         padding: 16px 20px;
     }
     
-    .avatar-circle {
+    .contact-avatar-sprite {
         width: 40px;
         height: 40px;
-    }
-    
-    .avatar-text {
-        font-size: 16px;
+        flex-basis: 40px;
     }
     
     .contact-name {
@@ -862,13 +882,10 @@ body.dark .send-btn:disabled {
         gap: 10px;
     }
     
-    .avatar-circle {
+    .contact-avatar-sprite {
         width: 36px;
         height: 36px;
-    }
-    
-    .avatar-text {
-        font-size: 14px;
+        flex-basis: 36px;
     }
     
     .contact-name {
@@ -938,7 +955,9 @@ body.dark .send-btn:disabled {
     .message,
     .typing-dots span,
     .status-dot,
-    .send-btn {
+    .send-btn,
+    .contact-avatar-sprite .avatar-pixel-person,
+    .contact-avatar-sprite .avatar-pixel-monitor-glow {
         animation: none;
         transition: none;
     }
@@ -971,6 +990,7 @@ body.contact-page {
     --contact-flicker: rgba(42, 42, 42, 0.08);
     --contact-vortex-rgb: 70, 88, 150;
     --contact-retro-accent: #00a63c;
+    --contact-avatar-accent: #a87900;
     --contact-retro-surface: #545454;
     background: var(--portfolio-page) !important;
     color: var(--contact-text) !important;
@@ -982,6 +1002,7 @@ body.dark.contact-page {
     --contact-flicker: rgba(255, 255, 255, 0.06);
     --contact-vortex-rgb: 126, 152, 220;
     --contact-retro-accent: #00ff41;
+    --contact-avatar-accent: #f4c152;
     --contact-retro-surface: #171717;
 }
 

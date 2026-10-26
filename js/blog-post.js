@@ -139,7 +139,7 @@ export async function initBlogPost({
       : '<p class="blog-state-message">No content available.</p>';
 
     const headings = getBlogHeadings(content);
-    renderBlogOutline({ container: outline, headings, documentRef });
+    renderBlogOutline({ container: outline, headings, documentRef, windowRef });
     resolveInitialHash(documentRef, windowRef, state);
 
     documentRef.title = post.meta_title || `${post.title || 'Blog Post'} - Akmal Alif`;

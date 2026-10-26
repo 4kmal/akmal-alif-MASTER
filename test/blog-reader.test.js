@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { initBlogPost } from '../js/blog-post.js';
@@ -26,8 +27,11 @@ class FakeElement {
     this.children = [];
     this.parentNode = null;
     this.classList = new FakeClassList();
+    this.dataset = {};
     this.style = {};
     this.hidden = false;
+    this.open = false;
+    this.listeners = new Map();
     this._text = '';
     this._html = '';
     this.focusCount = 0;
@@ -86,6 +90,15 @@ class FakeElement {
   replaceChildren(...children) {
     this.children = [];
     children.forEach((child) => this.appendChild(child));
+  }
+
+  addEventListener(type, listener) {
+    this.listeners.set(type, listener);
+  }
+
+  contains(node) {
+    if (node === this) return true;
+    return this.children.some((child) => child === node || child.contains?.(node));
   }
 
   matches(selector) {
@@ -225,6 +238,78 @@ test('outline stays hidden without sections and renders native details with orde
   assert.equal(container.children[0].children[1].children[0].children.length, 2);
   assert.equal(headings[0].getAttribute('id'), 'first-section');
   assert.equal(headings[0].getAttribute('tabindex'), '-1');
+});
+
+test('outline keeps a manual collapse across responsive rerenders', () => {
+  const documentRef = new FakeDocument();
+  const headings = [new FakeElement('h2', documentRef), new FakeElement('h2', documentRef)];
+  headings[0].textContent = 'Wide first';
+  headings[1].textContent = 'Wide second';
+
+  renderBlogOutline({ container: documentRef.outlineNode, headings, documentRef });
+  const firstDetails = documentRef.outlineNode.children[0];
+  assert.equal(firstDetails.open, true);
+
+  firstDetails.open = false;
+  renderBlogOutline({ container: documentRef.outlineNode, headings, documentRef });
+  assert.equal(documentRef.outlineNode.children[0].open, false);
+
+  let wide = false;
+  let resizeListener;
+  const narrowWindow = {
+    matchMedia: () => ({
+      matches: wide,
+      addEventListener: (_type, listener) => { resizeListener = listener; },
+    }),
+  };
+  const narrowDocument = new FakeDocument();
+  const narrowHeadings = [new FakeElement('h2', narrowDocument), new FakeElement('h2', narrowDocument)];
+  narrowHeadings[0].textContent = 'Narrow first';
+  narrowHeadings[1].textContent = 'Narrow second';
+  renderBlogOutline({
+    container: narrowDocument.outlineNode,
+    headings: narrowHeadings,
+    documentRef: narrowDocument,
+    windowRef: narrowWindow,
+  });
+  assert.equal(narrowDocument.outlineNode.children[0].open, false);
+
+  wide = true;
+  resizeListener({ matches: true });
+  assert.equal(narrowDocument.outlineNode.children[0].open, true);
+
+  const narrowDetails = narrowDocument.outlineNode.children[0];
+  narrowDetails.children[0].listeners.get('click')?.();
+  narrowDetails.open = false;
+  narrowDetails.listeners.get('toggle')?.();
+  wide = true;
+  resizeListener({ matches: true });
+  assert.equal(narrowDetails.open, false);
+  wide = false;
+  resizeListener({ matches: false });
+  assert.equal(narrowDetails.open, false);
+});
+
+test('article shells place the outline aside before the reader and share imports', () => {
+  const shellPaths = [
+    '../blog/article-template.html',
+    '../blog/chaotic-passionate-vs-disciplined.html',
+    '../blog/consciousness-vs-sentience-vs-soul.html',
+    '../blog/context-dependence-of-habit.html',
+    '../blog/hexapod-robots-military.html',
+    '../blog/versatility-humanoid-robots.html',
+    '../blog/work-life-balance-burnout.html',
+  ];
+  const shells = shellPaths.map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'));
+  shells.forEach((shell) => {
+    const asideIndex = shell.indexOf('id="blog-outline-container"');
+    const mainIndex = shell.indexOf('<main class="card blog-post-full"');
+    assert.ok(asideIndex >= 0 && asideIndex < mainIndex);
+    assert.match(shell, /href="\.\.\/css\/blog-styles\.css"/);
+    assert.match(shell, /src="\.\.\/js\/blog-post\.js"/);
+  });
+  const importSet = (shell) => shell.match(/(?:href|src)="\.\.\/(?:assets|css|js)\/[^"?]+/g);
+  shells.slice(1).forEach((shell) => assert.deepEqual(importSet(shell), importSet(shells[0])));
 });
 
 test('repeated initialization ignores stale responses and does not duplicate the outline', async () => {

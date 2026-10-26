@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  BLOG_ARTWORK_STORAGE_KEY,
+  BLOG_ARTWORK_PLAYBACK_BUDGET_MS,
   LEGACY_BLOG_THUMBNAIL,
   createBlogArtworkMotionController,
   disposeBlogArtworkMotion,
   initBlogArtworkMotion,
   renderBlogFilterIcon,
   renderBlogSprite,
+  resetBlogArtworkPlaybackBudgets,
   resolveBlogThumbnail,
 } from '../js/blog-artwork.js';
 
@@ -17,31 +19,31 @@ class FakeClassList {
     this.values = new Set();
   }
 
-  add(value) {
-    this.values.add(value);
+  add(...names) {
+    names.forEach((name) => this.values.add(name));
   }
 
-  remove(value) {
-    this.values.delete(value);
+  remove(...names) {
+    names.forEach((name) => this.values.delete(name));
   }
 
-  contains(value) {
-    return this.values.has(value);
+  contains(name) {
+    return this.values.has(name);
   }
 }
 
 class FakeCard {
-  constructor() {
+  constructor(slug = 'versatility-humanoid-robots') {
     this.hidden = false;
-    this.dataset = { filterState: 'visible' };
+    this.dataset = { filterState: 'visible', blogSlug: slug };
     this.classList = new FakeClassList();
   }
 }
 
 class FakeSprite {
-  constructor(card) {
+  constructor(card, artwork = 'robot-workstation') {
     this.card = card;
-    this.dataset = {};
+    this.dataset = { blogArtwork: artwork };
   }
 
   closest() {
@@ -59,44 +61,15 @@ class FakeRoot {
   }
 }
 
-class FakeToggle {
-  constructor() {
-    this.disabled = false;
-    this.dataset = {};
-    this.attributes = new Map();
-    this.listeners = new Map();
-    this.textContent = '';
-  }
-
-  addEventListener(type, listener) {
-    this.listeners.set(type, listener);
-  }
-
-  removeEventListener(type, listener) {
-    if (this.listeners.get(type) === listener) this.listeners.delete(type);
-  }
-
-  setAttribute(name, value) {
-    this.attributes.set(name, String(value));
-  }
-
-  click() {
-    this.listeners.get('click')?.({ target: this });
-  }
-}
-
 class FakeDocument {
-  constructor(root, toggle) {
+  constructor(root) {
     this.hidden = false;
     this.root = root;
-    this.toggle = toggle;
     this.listeners = new Map();
   }
 
   querySelector(selector) {
-    if (selector === '[data-blog-posts]') return this.root;
-    if (selector === '[data-blog-artwork-toggle]') return this.toggle;
-    return null;
+    return selector === '[data-blog-posts]' ? this.root : null;
   }
 
   addEventListener(type, listener) {
@@ -137,14 +110,13 @@ class FakeIntersectionObserver {
 
   constructor(callback) {
     this.callback = callback;
-    this.observed = new Set();
     this.disconnected = false;
     FakeIntersectionObserver.instances.push(this);
   }
 
-  observe(target) {
-    this.observed.add(target);
-  }
+  observe() {}
+
+  unobserve() {}
 
   disconnect() {
     this.disconnected = true;
@@ -175,25 +147,26 @@ class FakeMutationObserver {
   }
 }
 
-function makeMotionFixture({ paused = null, reducedMotion = false } = {}) {
+function makeMotionFixture({ reducedMotion = false, artwork = 'robot-workstation', reset = true } = {}) {
+  if (reset) resetBlogArtworkPlaybackBudgets();
+  FakeIntersectionObserver.instances = [];
+  FakeMutationObserver.instances = [];
+
+  let now = 0;
   const card = new FakeCard();
-  const sprite = new FakeSprite(card);
+  const sprite = new FakeSprite(card, artwork);
   const root = new FakeRoot([sprite]);
-  const toggle = new FakeToggle();
-  const documentRef = new FakeDocument(root, toggle);
+  const documentRef = new FakeDocument(root);
   const mediaQuery = new FakeMediaQuery(reducedMotion);
-  const writes = new Map();
-  const storage = {
-    getItem: () => paused,
-    setItem: (key, value) => writes.set(key, value),
-  };
   const controller = createBlogArtworkMotionController({
     root,
     documentRef,
     intersectionObserver: FakeIntersectionObserver,
     mutationObserver: FakeMutationObserver,
-    storage,
     mediaQuery,
+    nowRef: () => now,
+    setTimeoutRef: () => 1,
+    clearTimeoutRef: () => {},
   });
 
   return {
@@ -202,10 +175,11 @@ function makeMotionFixture({ paused = null, reducedMotion = false } = {}) {
     documentRef,
     mediaQuery,
     sprite,
-    storage: writes,
-    toggle,
     intersection: FakeIntersectionObserver.instances.at(-1),
     mutations: FakeMutationObserver.instances.at(-1),
+    setNow(value) {
+      now = value;
+    },
   };
 }
 
@@ -265,10 +239,22 @@ test('renders original filter icons only for the known category slugs', () => {
   assert.equal(renderBlogFilterIcon('uncategorized'), '');
 });
 
-test('pauses artwork for viewport, document, filter, reduced-motion, and user state', () => {
+test('starts static until public settings enable one playback sequence', () => {
   const fixture = makeMotionFixture();
 
+  assert.equal(fixture.controller.getState().motionMode, 'pending');
+  fixture.intersection.setVisible(fixture.sprite, true);
   assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'paused');
+
+  fixture.controller.setMotionMode('once');
+  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'playing');
+  assert.equal(fixture.controller.getArtworkBudget(fixture.sprite), BLOG_ARTWORK_PLAYBACK_BUDGET_MS);
+  fixture.controller.dispose();
+});
+
+test('pauses artwork for viewport, document, filter, and reduced motion', () => {
+  const fixture = makeMotionFixture();
+  fixture.controller.setMotionMode('once');
   fixture.intersection.setVisible(fixture.sprite, true);
   assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'playing');
 
@@ -287,96 +273,125 @@ test('pauses artwork for viewport, document, filter, reduced-motion, and user st
   fixture.mutations.refresh();
   assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'playing');
 
-  fixture.toggle.click();
-  assert.equal(fixture.controller.getState().userPaused, true);
+  fixture.mediaQuery.change(true);
   assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'paused');
-  assert.equal(fixture.toggle.textContent, 'Resume animations');
-  assert.equal(fixture.toggle.attributes.get('aria-pressed'), 'true');
-  assert.equal(fixture.storage.get(BLOG_ARTWORK_STORAGE_KEY), 'true');
-
-  fixture.toggle.click();
-  assert.equal(fixture.controller.getState().userPaused, false);
+  fixture.mediaQuery.change(false);
   assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'playing');
-  assert.equal(fixture.toggle.textContent, 'Pause animations');
-  assert.equal(fixture.storage.get(BLOG_ARTWORK_STORAGE_KEY), 'false');
-
   fixture.controller.dispose();
-  assert.equal(fixture.intersection.disconnected, true);
-  assert.equal(fixture.mutations.disconnected, true);
 });
 
-test('disposal pauses artwork and ignores queued observer callbacks', () => {
+test('one four-second budget survives pauses, remounts, and rapid re-entry', () => {
   const fixture = makeMotionFixture();
-
+  fixture.controller.setMotionMode('once');
   fixture.intersection.setVisible(fixture.sprite, true);
-  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'playing');
+  fixture.setNow(2000);
+  fixture.card.hidden = true;
+  fixture.mutations.refresh();
+  assert.equal(fixture.controller.getArtworkBudget(fixture.sprite), 2000);
 
+  fixture.card.hidden = false;
+  fixture.mutations.refresh();
+  fixture.setNow(4000);
+  fixture.controller.refresh();
+  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'paused');
+  assert.equal(fixture.controller.getArtworkBudget(fixture.sprite), 0);
   fixture.controller.dispose();
-  assert.equal(fixture.controller.getState().disposed, true);
-  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'paused');
 
-  fixture.intersection.setVisible(fixture.sprite, true);
-  assert.equal(fixture.controller.getArtworkState(fixture.sprite), 'paused');
+  const remount = makeMotionFixture({ reset: false });
+  remount.controller.setMotionMode('once');
+  remount.intersection.setVisible(remount.sprite, true);
+  assert.equal(remount.controller.getArtworkState(remount.sprite), 'paused');
+  remount.controller.dispose();
 });
 
-test('reduced motion wins over stored pause state and storage failures stay in memory', () => {
-  const reduced = makeMotionFixture({ paused: 'true', reducedMotion: true });
-
-  reduced.intersection.setVisible(reduced.sprite, true);
-  assert.equal(reduced.controller.getArtworkState(reduced.sprite), 'paused');
-  assert.equal(reduced.toggle.disabled, true);
-  assert.equal(reduced.toggle.textContent, 'Animations disabled');
-  assert.equal(reduced.toggle.attributes.get('aria-label'), 'Animations disabled because reduced motion is enabled');
-  reduced.toggle.click();
-  assert.equal(reduced.controller.getState().userPaused, true);
-
-  reduced.mediaQuery.change(false);
-  assert.equal(reduced.toggle.disabled, false);
-  assert.equal(reduced.toggle.textContent, 'Resume animations');
-  assert.equal(reduced.controller.getArtworkState(reduced.sprite), 'paused');
-
+test('loads settings on initial request and visibility return, with failures static', async () => {
+  resetBlogArtworkPlaybackBudgets();
+  FakeIntersectionObserver.instances = [];
+  FakeMutationObserver.instances = [];
+  let calls = 0;
   const card = new FakeCard();
   const sprite = new FakeSprite(card);
   const root = new FakeRoot([sprite]);
-  const toggle = new FakeToggle();
-  const documentRef = new FakeDocument(root, toggle);
+  const documentRef = new FakeDocument(root);
+  documentRef.defaultView = {
+    IntersectionObserver: FakeIntersectionObserver,
+    MutationObserver: FakeMutationObserver,
+  };
   const controller = createBlogArtworkMotionController({
     root,
     documentRef,
+    intersectionObserver: FakeIntersectionObserver,
+    mutationObserver: FakeMutationObserver,
+    mediaQuery: new FakeMediaQuery(false),
+    fetchRef: async () => {
+      calls += 1;
+      return { ok: true, json: async () => ({ artwork_motion: calls === 1 ? 'once' : 'off' }) };
+    },
+    nowRef: () => 0,
+    setTimeoutRef: () => 1,
+    clearTimeoutRef: () => {},
+  });
+  const intersection = FakeIntersectionObserver.instances.at(-1);
+  intersection.setVisible(sprite, true);
+  assert.equal(controller.getArtworkState(sprite), 'paused');
+  await controller.loadMotionSetting();
+  assert.equal(controller.getState().motionMode, 'once');
+  assert.equal(controller.getArtworkState(sprite), 'playing');
+
+  documentRef.hidden = true;
+  documentRef.dispatch('visibilitychange');
+  documentRef.hidden = false;
+  documentRef.dispatch('visibilitychange');
+  await controller.loadMotionSetting();
+  assert.equal(calls, 2);
+  assert.equal(controller.getState().motionMode, 'off');
+  assert.equal(controller.getArtworkState(sprite), 'paused');
+  controller.dispose();
+
+  const failedRoot = new FakeRoot([new FakeSprite(new FakeCard(), 'hexapod')]);
+  const failed = createBlogArtworkMotionController({
+    root: failedRoot,
+    documentRef: new FakeDocument(failedRoot),
     intersectionObserver: null,
     mutationObserver: null,
-    storage: {
-      getItem: () => { throw new Error('storage denied'); },
-      setItem: () => { throw new Error('storage denied'); },
-    },
-    mediaQuery: new FakeMediaQuery(false),
+    fetchRef: async () => { throw new Error('offline'); },
   });
+  await failed.loadMotionSetting();
+  assert.equal(failed.getState().motionMode, 'error');
+  failed.dispose();
+});
 
-  toggle.click();
-  assert.equal(controller.getState().userPaused, true);
-  assert.equal(toggle.textContent, 'Resume animations');
-  controller.dispose();
+test('public artwork has no pause control or local preference path', () => {
+  const source = readFileSync(new URL('../js/blog-artwork.js', import.meta.url), 'utf8');
+  const page = readFileSync(new URL('../blog.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /localStorage|blog-artwork-paused|data-blog-artwork-toggle/);
+  assert.doesNotMatch(page, /data-blog-artwork-toggle|Pause animations/);
 });
 
 test('initialization is idempotent for the same listing and can be disposed', () => {
+  resetBlogArtworkPlaybackBudgets();
+  FakeIntersectionObserver.instances = [];
   const card = new FakeCard();
   const sprite = new FakeSprite(card);
   const root = new FakeRoot([sprite]);
-  const toggle = new FakeToggle();
-  const documentRef = new FakeDocument(root, toggle);
+  const documentRef = new FakeDocument(root);
+  documentRef.defaultView = {
+    IntersectionObserver: FakeIntersectionObserver,
+    MutationObserver: FakeMutationObserver,
+  };
 
   const first = initBlogArtworkMotion(documentRef);
   const second = initBlogArtworkMotion(documentRef);
   assert.equal(first, second);
+  first.setMotionMode('once');
+  FakeIntersectionObserver.instances.at(-1).setVisible(sprite, true);
+  assert.equal(first.getArtworkState(sprite), 'playing');
 
   first.dispose();
   assert.equal(first.getState().disposed, true);
-
   const third = initBlogArtworkMotion(documentRef);
   assert.notEqual(third, first);
   assert.equal(third.getState().disposed, false);
-  assert.equal(third.getArtworkState(sprite), 'playing');
-
+  third.dispose();
   disposeBlogArtworkMotion(documentRef);
-  assert.equal(third.getState().disposed, true);
 });

@@ -1,5 +1,5 @@
 export const LEGACY_BLOG_THUMBNAIL = '/blog/blogpic/pic3.jpg';
-export const BLOG_ARTWORK_STORAGE_KEY = 'blog-artwork-paused';
+export const BLOG_ARTWORK_PLAYBACK_BUDGET_MS = 4000;
 
 const LEGACY_BLOG_THUMBNAIL_PATH = LEGACY_BLOG_THUMBNAIL;
 const CANONICAL_BLOG_HOSTNAMES = new Set(['akmalalif.com', 'www.akmalalif.com']);
@@ -8,6 +8,12 @@ const BLOG_ARTWORK_BY_SLUG = Object.freeze({
   'hexapod-robots-military': 'hexapod',
   'work-life-balance-burnout': 'burnout-desk',
 });
+
+const BLOG_ARTWORK_SLUG_BY_NAME = Object.freeze(
+  Object.fromEntries(Object.entries(BLOG_ARTWORK_BY_SLUG).map(([slug, artwork]) => [artwork, slug])),
+);
+
+const playbackBudgets = new Map();
 
 const BLOG_ARTWORK_SVGS = Object.freeze({
   'robot-workstation': `
@@ -155,30 +161,6 @@ export function renderBlogFilterIcon(slug) {
   return BLOG_FILTER_ICONS[String(slug ?? '').trim().toLowerCase()] ?? '';
 }
 
-function getLocalStorage(windowRef) {
-  try {
-    return windowRef?.localStorage ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function readPaused(storage) {
-  try {
-    return storage?.getItem(BLOG_ARTWORK_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function writePaused(storage, paused) {
-  try {
-    storage?.setItem(BLOG_ARTWORK_STORAGE_KEY, String(paused));
-  } catch {
-    // Keep the in-memory preference when browser storage is unavailable.
-  }
-}
-
 function getReducedMotion(windowRef) {
   return windowRef?.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
 }
@@ -194,25 +176,74 @@ function listArtwork(root) {
   return Array.from(root?.querySelectorAll?.('[data-blog-artwork]') ?? []);
 }
 
+function getNow(nowRef) {
+  const value = Number(nowRef?.());
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function getArtworkBudgetKey(sprite) {
+  const artwork = String(sprite?.dataset?.blogArtwork ?? '').trim();
+  const slug = String(sprite?.dataset?.blogArtworkSlug ?? '').trim()
+    || BLOG_ARTWORK_SLUG_BY_NAME[artwork]
+    || artwork;
+  return slug || 'unknown-artwork';
+}
+
+function getArtworkBudget(sprite) {
+  const key = getArtworkBudgetKey(sprite);
+  let budget = playbackBudgets.get(key);
+
+  if (!budget) {
+    budget = { remaining: BLOG_ARTWORK_PLAYBACK_BUDGET_MS };
+    playbackBudgets.set(key, budget);
+  }
+
+  return budget;
+}
+
+export function resetBlogArtworkPlaybackBudgets() {
+  playbackBudgets.clear();
+}
+
+async function readPublicMotionSetting(fetchRef) {
+  if (typeof fetchRef !== 'function') return null;
+
+  const response = await fetchRef('/api/blog/settings', {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  });
+
+  if (!response?.ok) throw new Error(`Blog settings request failed (${response?.status ?? 'unknown'})`);
+
+  const payload = await response.json();
+  return payload?.artwork_motion === 'once' ? 'once' : 'off';
+}
+
 export function createBlogArtworkMotionController({
   root,
   documentRef = globalThis.document,
   windowRef = globalThis.window,
   intersectionObserver = windowRef?.IntersectionObserver ?? globalThis.IntersectionObserver,
   mutationObserver = windowRef?.MutationObserver ?? globalThis.MutationObserver,
-  storage = getLocalStorage(windowRef),
   mediaQuery = getReducedMotion(windowRef),
+  fetchRef = windowRef?.fetch?.bind(windowRef),
+  nowRef = () => (windowRef?.performance?.now?.() ?? globalThis.performance?.now?.() ?? Date.now()),
+  setTimeoutRef = windowRef?.setTimeout?.bind(windowRef) ?? globalThis.setTimeout,
+  clearTimeoutRef = windowRef?.clearTimeout?.bind(windowRef) ?? globalThis.clearTimeout,
 } = {}) {
   if (!root) return null;
 
   const visible = new Map();
   const observed = new Set();
+  const active = new Map();
   const state = {
     disposed: false,
     documentHidden: Boolean(documentRef?.hidden),
     reducedMotion: Boolean(mediaQuery?.matches),
-    userPaused: readPaused(storage),
+    motionMode: 'pending',
   };
+  let settingRequest = null;
+  let budgetTimer = null;
   const IntersectionObserverRef = intersectionObserver;
   const MutationObserverRef = mutationObserver;
   const observer = typeof IntersectionObserverRef === 'function'
@@ -226,42 +257,69 @@ export function createBlogArtworkMotionController({
   const mutations = typeof MutationObserverRef === 'function'
     ? new MutationObserverRef(() => refresh())
     : null;
-  const toggle = documentRef?.querySelector?.('[data-blog-artwork-toggle]') ?? null;
 
-  function shouldPlay(sprite) {
-    return !state.documentHidden
-      && !state.reducedMotion
-      && !state.userPaused
-      && !isCardFiltered(sprite)
-      && (observer ? visible.get(sprite) === true : true);
+  function clearBudgetTimer() {
+    if (budgetTimer === null) return;
+    clearTimeoutRef?.(budgetTimer);
+    budgetTimer = null;
   }
 
-  function updateToggle() {
-    if (!toggle) return;
+  function stopSprite(sprite, now = getNow(nowRef)) {
+    const startedAt = active.get(sprite);
+    if (startedAt === undefined) return;
 
-    if (state.reducedMotion) {
-      toggle.disabled = true;
-      toggle.textContent = 'Animations disabled';
-      toggle.setAttribute('aria-label', 'Animations disabled because reduced motion is enabled');
-      toggle.setAttribute('aria-pressed', 'false');
-      toggle.dataset.motionState = 'disabled';
-      return;
-    }
+    const budget = getArtworkBudget(sprite);
+    budget.remaining = Math.max(0, budget.remaining - Math.max(0, now - startedAt));
+    active.delete(sprite);
+  }
 
-    toggle.disabled = false;
-    toggle.textContent = state.userPaused ? 'Resume animations' : 'Pause animations';
-    toggle.setAttribute('aria-label', toggle.textContent);
-    toggle.setAttribute('aria-pressed', String(state.userPaused));
-    toggle.dataset.motionState = state.userPaused ? 'paused' : 'playing';
+  function scheduleBudgetTimer() {
+    clearBudgetTimer();
+    if (state.disposed || !active.size || typeof setTimeoutRef !== 'function') return;
+
+    const now = getNow(nowRef);
+    const nextRemaining = Math.min(...Array.from(active, ([sprite, startedAt]) => {
+      const budget = getArtworkBudget(sprite);
+      return Math.max(0, budget.remaining - Math.max(0, now - startedAt));
+    }));
+
+    budgetTimer = setTimeoutRef(updatePlayback, Math.max(1, nextRemaining));
+  }
+
+  function shouldPlay(sprite) {
+    const budget = getArtworkBudget(sprite);
+    return state.motionMode === 'once'
+      && budget.remaining > 0
+      && !state.documentHidden
+      && !state.reducedMotion
+      && !isCardFiltered(sprite)
+      && (observer ? visible.get(sprite) === true : true);
   }
 
   function updatePlayback() {
     if (state.disposed) return;
 
-    listArtwork(root).forEach((sprite) => {
-      sprite.dataset.artworkMotionState = shouldPlay(sprite) ? 'playing' : 'paused';
+    const sprites = listArtwork(root);
+    const current = new Set(sprites);
+    const now = getNow(nowRef);
+
+    active.forEach((_startedAt, sprite) => {
+      if (!current.has(sprite)) stopSprite(sprite, now);
     });
-    updateToggle();
+
+    sprites.forEach((sprite) => {
+      if (active.has(sprite)) {
+        stopSprite(sprite, now);
+      }
+
+      if (shouldPlay(sprite)) {
+        active.set(sprite, now);
+        sprite.dataset.artworkMotionState = 'playing';
+      } else {
+        sprite.dataset.artworkMotionState = 'paused';
+      }
+    });
+    scheduleBudgetTimer();
   }
 
   function refresh() {
@@ -287,13 +345,27 @@ export function createBlogArtworkMotionController({
     updatePlayback();
   }
 
-  function togglePlayback() {
-    if (state.disposed || state.reducedMotion) return state.userPaused;
-
-    state.userPaused = !state.userPaused;
-    writePaused(storage, state.userPaused);
+  function setMotionMode(mode) {
+    if (state.disposed) return state.motionMode;
+    state.motionMode = ['once', 'off', 'error', 'pending'].includes(mode) ? mode : 'pending';
     updatePlayback();
-    return state.userPaused;
+    return state.motionMode;
+  }
+
+  function loadMotionSetting() {
+    if (state.disposed || typeof fetchRef !== 'function') return Promise.resolve(state.motionMode);
+    if (settingRequest) return settingRequest;
+
+    state.motionMode = 'pending';
+    updatePlayback();
+    settingRequest = readPublicMotionSetting(fetchRef)
+      .then((mode) => setMotionMode(mode ?? 'off'))
+      .catch(() => setMotionMode('error'))
+      .finally(() => {
+        settingRequest = null;
+      });
+
+    return settingRequest;
   }
 
   function handleVisibilityChange() {
@@ -301,6 +373,7 @@ export function createBlogArtworkMotionController({
 
     state.documentHidden = Boolean(documentRef?.hidden);
     updatePlayback();
+    if (!state.documentHidden) loadMotionSetting();
   }
 
   function handleMotionChange(event) {
@@ -314,6 +387,9 @@ export function createBlogArtworkMotionController({
     if (state.disposed) return;
 
     state.disposed = true;
+    const now = getNow(nowRef);
+    active.forEach((_startedAt, sprite) => stopSprite(sprite, now));
+    clearBudgetTimer();
     listArtwork(root).forEach((sprite) => {
       sprite.dataset.artworkMotionState = 'paused';
     });
@@ -323,7 +399,6 @@ export function createBlogArtworkMotionController({
     documentRef?.removeEventListener?.('visibilitychange', handleVisibilityChange);
     mediaQuery?.removeEventListener?.('change', handleMotionChange);
     mediaQuery?.removeListener?.(handleMotionChange);
-    toggle?.removeEventListener?.('click', togglePlayback);
   }
 
   documentRef?.addEventListener?.('visibilitychange', handleVisibilityChange);
@@ -334,15 +409,17 @@ export function createBlogArtworkMotionController({
     attributes: true,
     attributeFilter: ['class', 'data-filter-state', 'hidden'],
   });
-  toggle?.addEventListener?.('click', togglePlayback);
   refresh();
+  loadMotionSetting();
 
   return {
     dispose,
     refresh,
-    togglePlayback,
+    loadMotionSetting,
+    setMotionMode,
     getState: () => ({ ...state }),
     getArtworkState: (sprite) => sprite?.dataset?.artworkMotionState ?? null,
+    getArtworkBudget: (sprite) => getArtworkBudget(sprite).remaining,
   };
 }
 

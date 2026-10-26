@@ -54,9 +54,11 @@ body.playground-page {
 }
 
 .playground-wrapper {
-    min-height: 100vh;
+    min-height: calc(100vh - var(--header-total-clearance-height, 80px));
     position: relative;
     z-index: 2;
+    display: flex;
+    flex-direction: column;
     /* Account for header height */
     padding-top: calc(var(--header-total-clearance-height, 80px) + 20px);
 }
@@ -152,8 +154,13 @@ body.playground-page {
 /* ========== MAIN CONTENT ========== */
 .playground-content {
     position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     padding: 40px 20px;
     max-width: 1400px;
+    width: 100%;
+    box-sizing: border-box;
     margin: 0 auto;
 }
 
@@ -614,7 +621,7 @@ body.playground-page {
 /* ========== COPYRIGHT ========== */
 .playground-copyright {
     text-align: center;
-    margin: 40px 0 20px 0;
+    margin: auto 0 0;
     padding: 20px 20px;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
