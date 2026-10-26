@@ -77,13 +77,13 @@ export async function fetchPageMarkdown(event: H3Event, url: string, AI: Ai): Pr
           return result.data.slice(0, MAX_MARKDOWN_LENGTH)
         }
       }
-      catch (err) {
-        console.warn(`[markdown] AI.toMarkdown() failed for ${url}:`, err)
+      catch {
+        console.warn('[markdown] AI.toMarkdown() failed')
       }
     }
   }
-  catch (err) {
-    console.warn(`[markdown] Failed to fetch ${url}:`, err)
+  catch {
+    console.warn('[markdown] Failed to fetch page')
   }
 
   return null

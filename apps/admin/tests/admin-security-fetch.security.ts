@@ -56,6 +56,27 @@ describe('safe public fetch', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('aborts a response body that never finishes after headers', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('partial'))
+      },
+      cancel,
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': 'text/markdown' },
+    })))
+
+    const response = await safePublicFetch('https://example.com/slow', { timeoutMs: 25 })
+    const reader = response.body?.getReader()
+    expect(reader).toBeDefined()
+    await expect(reader!.read()).resolves.toMatchObject({ done: false })
+    await expect(reader!.read()).rejects.toThrow('Public fetch timed out')
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
   it('keeps AI metadata fetches behind the same redirect guard', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, {
       status: 302,
