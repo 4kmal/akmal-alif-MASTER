@@ -16,7 +16,11 @@ function validateImageKey(event: H3Event, key: string): { slug: string, filename
   if (!match)
     throw createError({ status: 400, statusText: 'Invalid image path' })
 
-  const [, slug, filename] = match
+  const slug = match[1]
+  const filename = match[2]
+  if (!slug || !filename)
+    throw createError({ status: 400, statusText: 'Invalid image path' })
+
   const slugResult = slugValidator.safeParse(slug)
   if (!slugResult.success)
     throw createError({ status: 400, statusText: 'Invalid slug format' })

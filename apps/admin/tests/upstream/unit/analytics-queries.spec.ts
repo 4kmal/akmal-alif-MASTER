@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildCountersQuery,
   buildHeatmapQuery,
+  buildLocationsQuery,
   buildMetricsQuery,
   buildViewsQuery,
 } from '../../../server/utils/analytics-queries'
@@ -78,6 +79,12 @@ describe('analytics query builders', () => {
 
     expect(compiled).toContain('group by weekday, hour')
     expect(compiled).not.toContain('limit')
+  })
+
+  it('excludes native zero-coordinate placeholders from the location globe', () => {
+    const compiled = compileAnalyticsQuery(buildLocationsQuery({ limit: 25 }, event))
+
+    expect(compiled).toContain('where double1 != 0 and double2 != 0')
   })
 
   it('inlines the validated row limit for metrics', () => {

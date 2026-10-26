@@ -76,6 +76,67 @@ export const logsMap = Object.fromEntries([
   ...Object.entries(doublesMap).map(([k, v]) => [v, k]),
 ]) as LogsMap
 
+const CAMPAIGN_FIELDS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+] as const
+const MAX_CAMPAIGN_VALUE_LENGTH = 120
+
+type CampaignField = typeof CAMPAIGN_FIELDS[number]
+type Campaign = Partial<Record<CampaignField, string>>
+
+function campaignFromURL(value: unknown): Campaign {
+  if (typeof value !== 'string' || !value)
+    return {}
+
+  let url: URL
+  try {
+    url = new URL(value)
+  }
+  catch {
+    return {}
+  }
+
+  const campaign: Campaign = {}
+  for (const field of CAMPAIGN_FIELDS) {
+    const parameter = url.searchParams.get(field)?.trim().slice(0, MAX_CAMPAIGN_VALUE_LENGTH)
+    if (parameter)
+      campaign[field] = parameter
+  }
+  return campaign
+}
+
+function campaignForClick(event: H3Event, target: unknown): Campaign | undefined {
+  const incoming = campaignFromURL(getRequestURL(event).toString())
+  const configured = campaignFromURL(target)
+  const campaign: Campaign = {}
+
+  for (const field of CAMPAIGN_FIELDS) {
+    const value = incoming[field] || configured[field]
+    if (value)
+      campaign[field] = value
+  }
+
+  return Object.keys(campaign).length ? campaign : undefined
+}
+
+function coordinate(value: unknown, minimum: number, maximum: number): number | undefined {
+  if ((typeof value !== 'number' && typeof value !== 'string')
+    || (typeof value === 'string' && !value.trim())) {
+    return undefined
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum ? parsed : undefined
+}
+
+function requestCoordinate(event: H3Event, value: unknown, header: string, minimum: number, maximum: number): number | undefined {
+  return coordinate(value, minimum, maximum) ?? coordinate(getHeader(event, header), minimum, maximum)
+}
+
 export function logs2blobs(logs: LogsMap) {
   return (Object.keys(blobsMap) as BlobsKey[])
     .sort((a, b) => toBlobNumber(a) - toBlobNumber(b))
@@ -169,8 +230,8 @@ export function collectAccessLog(event: H3Event): AccessLogResult | undefined {
     COLO: cf?.colo,
 
     // For RealTime Globe
-    latitude: Number(cf?.latitude || getHeader(event, 'cf-iplatitude') || 0),
-    longitude: Number(cf?.longitude || getHeader(event, 'cf-iplongitude') || 0),
+    latitude: requestCoordinate(event, cf?.latitude, 'cf-iplatitude', -90, 90),
+    longitude: requestCoordinate(event, cf?.longitude, 'cf-iplongitude', -180, 180),
   }
 
   return {
@@ -225,7 +286,7 @@ function withoutQuery(value: string | undefined) {
 
 async function nativeAnalyticsLogs(event: H3Event, accessLogs: LogsMap): Promise<LogsMap> {
   const { cloudflare } = event.context
-  const env = cloudflare?.env as Record<string, string | undefined> | undefined
+  const env = cloudflare?.env as unknown as Record<string, string | undefined> | undefined
   const country = accessLogs.country || ''
   return {
     ...accessLogs,
@@ -261,8 +322,9 @@ function shortlinkEventData(event: H3Event, accessLogs: LogsMap) {
     event_type: 'shortlink_click',
     slug,
     path: slug ? `/s/${slug}` : '/s/unknown',
-    target: accessLogs.url,
+    target: withoutQuery(accessLogs.url),
     referrer: accessLogs.referer,
+    campaign: campaignForClick(event, accessLogs.url),
     ip: accessLogs.ip,
     user_agent: accessLogs.ua,
     country: accessLogs.country,
