@@ -148,10 +148,12 @@ export default defineNuxtConfig({
     },
   },
   vite: {
+    worker: { format: 'es' },
     plugins: [
       tailwindcss(),
     ],
     optimizeDeps: {
+      exclude: ['@ffmpeg/ffmpeg'],
       include: [
         '@internationalized/date',
         '@lucide/vue',
