@@ -53,7 +53,9 @@
   border-radius: 20px;
   background-color: var(--card);
   background-image: linear-gradient(var(--admin-highlight), transparent 70px), url('/admin/surface-grain.svg');
-  box-shadow: inset 0 1px 0 var(--admin-highlight), var(--admin-shadow);
+  box-shadow:
+    inset 0 1px 0 var(--admin-highlight),
+    var(--admin-shadow);
 }
 
 .portfolio-report__heading {
@@ -219,10 +221,15 @@
   border-radius: 12px;
   background: var(--secondary);
   color: var(--foreground);
-  box-shadow: inset 0 1px 0 var(--admin-highlight), 0 1px 2px rgb(0 0 0 / 4%);
+  box-shadow:
+    inset 0 1px 0 var(--admin-highlight),
+    0 1px 2px rgb(0 0 0 / 4%);
   font-weight: 600;
   font-size: 0.78rem;
-  transition: background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  transition:
+    background-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .portfolio-button:hover:not(:disabled) {
