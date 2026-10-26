@@ -1097,6 +1097,8 @@ body.playground-page .playground-wrapper.awge-tube-shape::after {
     top: 20px;
     right: 20px;
     z-index: 10001;
+    min-width: 44px;
+    min-height: 44px;
     padding: 8px 10px;
     border: 1px solid var(--playground-border-strong);
     background: var(--playground-surface);
@@ -1104,6 +1106,9 @@ body.playground-page .playground-wrapper.awge-tube-shape::after {
     font-family: 'press-start', monospace;
     font-size: 1rem;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .playground-coming-soon-notification {

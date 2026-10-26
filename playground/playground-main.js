@@ -533,31 +533,40 @@ class Creative3DPlaygroundController {
         video.controls = true;
         video.autoplay = true;
 
-        const closeText = document.createElement('div');
-        closeText.className = 'playground-video-modal__close';
-        closeText.textContent = 'CLOSE [ESC]';
+        const closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.className = 'playground-video-modal__close';
+        closeButton.setAttribute('aria-label', 'Close video');
+        closeButton.textContent = 'CLOSE [ESC]';
 
         modal.appendChild(video);
-        modal.appendChild(closeText);
+        modal.appendChild(closeButton);
         document.body.appendChild(modal);
 
         // Close handlers
+        let isClosed = false;
+        let escHandler;
         const closeModal = () => {
-            document.body.removeChild(modal);
+            if (isClosed) return;
+            isClosed = true;
+            document.removeEventListener('keydown', escHandler);
+            modal.remove();
         };
 
         modal.addEventListener('click', (e) => {
-            if (e.target === modal || e.target === closeText) {
+            if (e.target === modal) {
                 closeModal();
             }
         });
 
-        document.addEventListener('keydown', function escHandler(e) {
+        closeButton.addEventListener('click', closeModal);
+
+        escHandler = (e) => {
             if (e.key === 'Escape') {
                 closeModal();
-                document.removeEventListener('keydown', escHandler);
             }
-        });
+        };
+        document.addEventListener('keydown', escHandler);
     }
 
     startTextGlitch() {
@@ -601,7 +610,7 @@ class Creative3DPlaygroundController {
         setTimeout(() => {
             notification.style.transform = 'translate(-50%, -50%) scale(0)';
             setTimeout(() => {
-                document.body.removeChild(notification);
+                if (notification.isConnected) notification.remove();
             }, 300);
         }, 3000);
     }

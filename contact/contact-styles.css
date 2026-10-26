@@ -593,23 +593,17 @@ body.dark .voice-btn:hover {
     background: transparent;
     font-family: 'press-start', monospace !important;
     font-size: 12px;
-    color: #000000;
+    color: var(--contact-text);
     padding: 10px 12px;
     border-radius: 5px;
     outline: none;
     line-height: 1em;
     min-height: 20px;
     resize: none;
-    /* Rainbow text effect for input */
-    background: linear-gradient(124deg, #ff2400, #e81d1d, #e8b71d, #e3e81d, #1de840, #1ddde8, #2b1de8, #dd00f3, #dd00f3);
-    background-size: 1800% 1800%;
-    animation: rainbow 13s ease infinite;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
 }
 
 body.dark .chat-input {
-    color: #f1f5f9;
+    color: var(--contact-text);
 }
 
 .chat-input::placeholder {
@@ -680,15 +674,6 @@ body.dark .send-btn:disabled {
     line-height: inherit !important;
     background: transparent !important;
     text-decoration: none !important;
-}
-
-/* Preserve message bubble backgrounds during scramble */
-.assistant-message .message-content,
-.user-message .message-content {
-    background: inherit !important;
-    border-radius: inherit !important;
-    padding: inherit !important;
-    box-shadow: inherit !important;
 }
 
 /* ========== TEXT VORTEX BACKGROUND ========== */
@@ -1106,17 +1091,28 @@ body.contact-page .send-btn:disabled {
     box-shadow: var(--portfolio-control-shadow);
 }
 
-/* Scramble spans inherit the themed bubble instead of replacing it with the parent surface. */
+/* Scramble text keeps the bubble's normal spacing and shape. */
 body.contact-page .assistant-message .message-content,
 body.contact-page .user-message .message-content {
+    border: 1px solid var(--contact-border);
+    box-shadow: var(--portfolio-card-shadow);
+}
+
+body.contact-page .assistant-message .message-content {
     background: var(--contact-surface-muted) !important;
-    border-radius: inherit !important;
-    padding: inherit !important;
-    box-shadow: inherit !important;
 }
 
 body.contact-page .user-message .message-content {
     background: var(--contact-retro-surface) !important;
+}
+
+body.contact-page .chat-input {
+    background: transparent;
+    background-clip: border-box;
+    color: var(--contact-text);
+    -webkit-background-clip: border-box;
+    -webkit-text-fill-color: currentColor;
+    animation: none;
 }
 
 body.contact-page .contact-container::after {
