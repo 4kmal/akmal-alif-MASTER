@@ -1,3 +1,5 @@
+import { toRaw } from 'vue'
+
 export interface BlogMediaSelectionToken {
   generation: number
   assetId: string | null
@@ -23,4 +25,16 @@ export function isValidBlogClipIndex(index: number, length: number) {
 
 export function getBlogPosterAssets<T extends { kind: string }>(assets: readonly T[]) {
   return assets.filter(asset => asset.kind === 'image' || asset.kind === 'gif')
+}
+
+function unwrapBlogMediaValue<T>(value: T): T {
+  return value !== null && typeof value === 'object' ? toRaw(value) as T : value
+}
+
+export function cloneBlogMediaDocument<T>(document: T): T {
+  return structuredClone(unwrapBlogMediaValue(document))
+}
+
+export function isCurrentBlogMediaDocument<T>(current: T | null | undefined, document: T) {
+  return current != null && unwrapBlogMediaValue(current) === unwrapBlogMediaValue(document)
 }

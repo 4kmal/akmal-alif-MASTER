@@ -6,7 +6,7 @@ import { Check, ChevronDown, Crop, FlipHorizontal, FlipVertical, FolderOpen, Ima
 import { useBlogApi } from '@/composables/useBlogApi'
 import { useBlogMediaUpload } from '@/composables/useBlogMediaUpload'
 import { formatBytes, formatDate } from '@/utils/blog-studio'
-import { createBlogMediaSelectionGuard, isValidBlogClipIndex } from './blog-media-library-state'
+import { cloneBlogMediaDocument, createBlogMediaSelectionGuard, isCurrentBlogMediaDocument, isValidBlogClipIndex } from './blog-media-library-state'
 
 type Clip = MediaClip
 type MediaProjectDocument = SharedMediaProject
@@ -108,8 +108,9 @@ async function selectAsset(asset: BlogAsset) {
       return
     const nextProject = media.createMediaProject(asset.kind, asset) as MediaProjectDocument
     project.value = nextProject
-    if (asset.kind === 'gif')
-      await decodeFrames(true, token, asset, nextProject)
+    const activeProject = project.value
+    if (asset.kind === 'gif' && activeProject)
+      await decodeFrames(true, token, asset, activeProject)
   }
   catch (reason: unknown) {
     if (selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null))
@@ -122,7 +123,7 @@ async function selectProject(saved: BlogMediaProject) {
     return
   clearFramePreviews()
   error.value = ''
-  const nextProject = structuredClone(saved.document) as MediaProjectDocument
+  const nextProject = cloneBlogMediaDocument(saved.document) as MediaProjectDocument
   const sourceId = nextProject?.clips[0]?.asset_id ?? null
   const sourceAsset = assets.value.find(asset => asset.id === sourceId) ?? null
   const token = selectionGuard.begin(sourceAsset?.id ?? null)
@@ -135,9 +136,10 @@ async function selectProject(saved: BlogMediaProject) {
   appendAssetId.value = ''
   lastExport.value && URL.revokeObjectURL(lastExport.value.url)
   lastExport.value = null
-  if (project.value.kind === 'gif') {
+  const activeProject = project.value
+  if (activeProject?.kind === 'gif') {
     try {
-      await decodeFrames(false, token, sourceAsset, nextProject)
+      await decodeFrames(false, token, sourceAsset, activeProject)
     }
     catch (reason) {
       if (selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null))
@@ -150,11 +152,11 @@ async function decodeFrames(resetSelection: boolean, token: BlogMediaSelectionTo
   if (!asset || !document || asset.kind !== 'gif')
     return
   const active = await getProcessor()
-  if (!active || !selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null) || project.value !== document)
+  if (!active || !selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null) || !isCurrentBlogMediaDocument(project.value, document))
     return
   try {
     const decoded = await active.decodeGif(asset.id)
-    if (!selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null) || project.value !== document)
+    if (!selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null) || !isCurrentBlogMediaDocument(project.value, document))
       return
     clearFramePreviews()
     gifFramePreviews.value = Object.fromEntries(decoded.frames.map(frame => [frame.source_index, URL.createObjectURL(frame.blob)]))

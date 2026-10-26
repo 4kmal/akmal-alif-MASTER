@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createBlogMediaSelectionGuard, getBlogPosterAssets, isValidBlogClipIndex } from '../app/components/blog/blog-media-library-state'
+import { reactive, ref } from 'vue'
+import { cloneBlogMediaDocument, createBlogMediaSelectionGuard, getBlogPosterAssets, isCurrentBlogMediaDocument, isValidBlogClipIndex } from '../app/components/blog/blog-media-library-state'
 
 describe('media library selection state', () => {
   it('rejects stale async work after a newer source selection begins', () => {
@@ -28,5 +29,35 @@ describe('media library selection state', () => {
     ]
 
     expect(getBlogPosterAssets(assets).map(asset => asset.id)).toEqual(['still', 'animation'])
+  })
+
+  it('accepts the Vue ref proxy for the same GIF document during frame decoding', () => {
+    const document = {
+      kind: 'gif',
+      clips: [],
+      frames: [],
+      output: { format: 'gif', width: 2, height: 2, fps: 15, quality: 80, loop: 0 },
+    }
+    const project = ref(document)
+
+    expect(project.value).not.toBe(document)
+    expect(isCurrentBlogMediaDocument(project.value, document)).toBe(true)
+  })
+
+  it('clones a reactive saved project document before reloading it', () => {
+    const document = {
+      kind: 'gif',
+      clips: [{ id: 'clip-1', asset_id: 'asset-1' }],
+      frames: [{ source_index: 0, delay_ms: 100, enabled: true }],
+      output: { format: 'gif', width: 2, height: 2, fps: 15, quality: 80, loop: 0 },
+    }
+    const saved = reactive({ document })
+
+    expect(() => structuredClone(saved.document)).toThrow()
+    const clone = cloneBlogMediaDocument(saved.document)
+
+    expect(clone).toEqual(document)
+    expect(clone).not.toBe(document)
+    expect(clone.clips).not.toBe(document.clips)
   })
 })
