@@ -423,7 +423,7 @@ test('heartbeat pauses while hidden and resumes after a visible focused interval
   client.destroy();
 });
 
-test('article thresholds fire once and completion requires thirty seconds at ninety percent', async () => {
+test('article thresholds fire once and completion uses cumulative visible reading before ninety percent', async () => {
   const article = new FakeElement('article', {
     className: 'blog-content',
     top: 0,
@@ -454,6 +454,11 @@ test('article thresholds fire once and completion requires thirty seconds at nin
     [25],
   );
   fetcher.calls.length = 0;
+  clock.advance(30_000);
+  await flushClient(client, clock);
+  events = fetcher.calls.flatMap((call) => payloadFrom(call).events);
+  assert.equal(events.filter((event) => event.type === 'article_complete').length, 0);
+
   article.setTop(-1_500);
   page.windowRef.dispatchEvent({ type: 'scroll' });
   await flushClient(client, clock);
@@ -462,20 +467,11 @@ test('article thresholds fire once and completion requires thirty seconds at nin
     events.filter((event) => event.type === 'article_progress').map((event) => event.progress),
     [50, 75, 90],
   );
-
-  clock.advance(29_999);
-  await flushClient(client, clock);
-  events = fetcher.calls.flatMap((call) => payloadFrom(call).events);
-  assert.equal(events.filter((event) => event.type === 'article_complete').length, 0);
-
-  clock.advance(1);
-  await flushClient(client, clock);
-  events = fetcher.calls.flatMap((call) => payloadFrom(call).events);
   assert.equal(events.filter((event) => event.type === 'article_complete').length, 1);
   client.destroy();
 });
 
-test('media progress counts played intervals and ignores a seek jump', async () => {
+test('media progress uses unique played intervals and ignores seek jumps and buffering', async () => {
   const media = new FakeElement('audio', { id: 'playerAudio', mediaId: 'track-a' });
   media.src = '/lagu/test.mp3';
   media.currentSrc = media.src;
@@ -508,7 +504,10 @@ test('media progress counts played intervals and ignores a seek jump', async () 
 
   media.dispatchEvent({ type: 'ended' });
   media.dispatchEvent({ type: 'play' });
-  clock.advance(1_000);
+  clock.advance(10_000);
+  media.dispatchEvent({ type: 'timeupdate' });
+  assert.equal(media.currentTime, 0);
+
   media.currentTime = 1;
   media.dispatchEvent({ type: 'timeupdate' });
   clock.advance(1_000);
@@ -531,11 +530,72 @@ test('media progress counts played intervals and ignores a seek jump', async () 
 
   const events = fetcher.calls.flatMap((call) => payloadFrom(call).events);
   assert.equal(events.filter((event) => event.type === 'media_start').length, 1);
-  assert.equal(events.filter((event) => event.type === 'media_complete').length, 1);
+  assert.equal(events.filter((event) => event.type === 'media_complete').length, 0);
   assert.equal(events.find((event) => event.type === 'media_start').media_id, 'track-a');
-  assert.ok(events.some((event) => event.type === 'media_progress' && event.progress === 50));
+  assert.equal(events.some((event) => event.type === 'media_progress' && event.progress === 50), false);
+  assert.equal(events.some((event) => event.type === 'media_progress'), false);
+  client.destroy();
+});
+
+test('media completion requires ninety percent unique coverage, so replay cannot qualify it', async () => {
+  const media = new FakeElement('audio', { id: 'playerAudio', mediaId: 'track-a' });
+  media.src = '/lagu/test.mp3';
+  media.currentSrc = media.src;
+  media.duration = 100;
+  const page = makePage({ pathname: '/' });
+  page.windowRef.persistentPlayer = { audio: media, currentTrack: 'track-a', duration: 100 };
+  const clock = makeClock();
+  const fetcher = makeFetch();
+  const client = createAnalyticsClient({
+    windowRef: page.windowRef,
+    documentRef: page.documentRef,
+    navigatorRef: page.navigatorRef,
+    fetchImpl: fetcher.fetchImpl,
+    now: clock.now,
+    setTimeoutImpl: clock.setTimeoutImpl,
+    clearTimeoutImpl: clock.clearTimeoutImpl,
+    requestAnimationFrameImpl: (callback) => {
+      callback();
+      return 1;
+    },
+    forceEnabled: true,
+  });
+  await flushClient(client, clock);
+  fetcher.calls.length = 0;
+
+  media.dispatchEvent({ type: 'play' });
+  clock.advance(10_000);
+  media.currentTime = 10;
+  media.dispatchEvent({ type: 'timeupdate' });
+  media.currentTime = 0;
+  media.dispatchEvent({ type: 'seeking' });
+  media.dispatchEvent({ type: 'seeked' });
+  clock.advance(10_000);
+  media.currentTime = 10;
+  media.dispatchEvent({ type: 'timeupdate' });
+  media.currentTime = 100;
+  media.dispatchEvent({ type: 'ended' });
+  await flushClient(client, clock);
+
+  let events = fetcher.calls.flatMap((call) => payloadFrom(call).events);
+  assert.equal(events.filter((event) => event.type === 'media_complete').length, 0);
+
+  media.currentTime = 10;
+  media.dispatchEvent({ type: 'seeking' });
+  media.dispatchEvent({ type: 'seeked' });
+  media.dispatchEvent({ type: 'play' });
+  for (let currentTime = 11; currentTime <= 90; currentTime += 1) {
+    clock.advance(1_000);
+    media.currentTime = currentTime;
+    media.dispatchEvent({ type: 'timeupdate' });
+  }
+  media.currentTime = 100;
+  media.dispatchEvent({ type: 'ended' });
+  await flushClient(client, clock);
+  events = fetcher.calls.flatMap((call) => payloadFrom(call).events);
+  assert.equal(events.filter((event) => event.type === 'media_complete').length, 1);
   const complete = events.find((event) => event.type === 'media_complete');
-  assert.ok(complete.played_ms < 5_000);
+  assert.ok(complete.played_ms >= 90_000);
   client.destroy();
 });
 

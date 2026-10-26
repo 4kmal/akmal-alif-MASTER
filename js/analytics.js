@@ -11,6 +11,7 @@ const RETRY_DELAY_MS = 1_000;
 const MAX_ACTIVITY_DELTA_MS = 10_000;
 const MAX_MEDIA_DELTA_MS = 10_000;
 const MEDIA_PROGRESS_MARKS = [25, 50, 75];
+const MEDIA_COMPLETION_COVERAGE = 0.9;
 const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
 const EVENT_TYPES = new Set([
   'page_view',
@@ -483,8 +484,8 @@ export function createAnalyticsClient(options = {}) {
     activeState = true;
 
     activeSinceHeartbeat += delta;
-    if (articleState?.at90 && !articleState.complete) {
-      articleState.activeAt90 += delta;
+    if (articleState && !articleState.complete) {
+      articleState.activeMs += delta;
     }
 
     while (activeSinceHeartbeat >= HEARTBEAT_INTERVAL_MS) {
@@ -492,7 +493,7 @@ export function createAnalyticsClient(options = {}) {
       enqueue('heartbeat', { active_ms: HEARTBEAT_INTERVAL_MS });
     }
 
-    if (articleState?.at90 && !articleState.complete && articleState.activeAt90 >= HEARTBEAT_INTERVAL_MS) {
+    if (articleState?.at90 && !articleState.complete && articleState.activeMs >= HEARTBEAT_INTERVAL_MS) {
       articleState.complete = true;
       enqueue('article_complete', { progress: 100, active_ms: HEARTBEAT_INTERVAL_MS });
     }
@@ -541,7 +542,7 @@ export function createAnalyticsClient(options = {}) {
     if (found !== articleElement) {
       articleElement = found;
       articleState = found
-        ? { fired: new Set(), at90: false, activeAt90: 0, complete: false }
+        ? { fired: new Set(), at90: false, activeMs: 0, complete: false }
         : null;
     }
     if (!articleElement || !articleState) return;
@@ -554,7 +555,7 @@ export function createAnalyticsClient(options = {}) {
       }
     }
     articleState.at90 = progress >= 90;
-    if (articleState.at90 && articleState.activeAt90 >= HEARTBEAT_INTERVAL_MS && !articleState.complete) {
+    if (articleState.at90 && articleState.activeMs >= HEARTBEAT_INTERVAL_MS && !articleState.complete) {
       articleState.complete = true;
       enqueue('article_complete', { progress: 100, active_ms: HEARTBEAT_INTERVAL_MS });
     }
@@ -612,6 +613,7 @@ export function createAnalyticsClient(options = {}) {
         completed: false,
         marks: new Set(),
         playedMs: 0,
+        playedRanges: [],
         lastNow: null,
         lastTime: finiteNumber(element?.currentTime),
       };
@@ -626,6 +628,38 @@ export function createAnalyticsClient(options = {}) {
     return finiteNumber(element?.currentTime);
   }
 
+  function addPlayedInterval(state, start, end) {
+    const from = Math.min(start, end);
+    const to = Math.max(start, end);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
+
+    const ranges = [];
+    let nextFrom = from;
+    let nextTo = to;
+    let inserted = false;
+    for (const [rangeFrom, rangeTo] of state.playedRanges) {
+      if (rangeTo + 0.25 < nextFrom) {
+        ranges.push([rangeFrom, rangeTo]);
+        continue;
+      }
+      if (nextTo + 0.25 < rangeFrom) {
+        if (!inserted) {
+          ranges.push([nextFrom, nextTo]);
+          inserted = true;
+        }
+        ranges.push([rangeFrom, rangeTo]);
+        continue;
+      }
+      nextFrom = Math.min(nextFrom, rangeFrom);
+      nextTo = Math.max(nextTo, rangeTo);
+    }
+    if (!inserted) ranges.push([nextFrom, nextTo]);
+    state.playedRanges = ranges;
+    state.playedMs = ranges.reduce((total, [rangeFrom, rangeTo]) => (
+      total + (rangeTo - rangeFrom) * 1000
+    ), 0);
+  }
+
   function accrueMediaTime(element, state) {
     const current = mediaCurrentTime(element);
     const currentNow = finiteNumber(now(), Date.now());
@@ -636,13 +670,14 @@ export function createAnalyticsClient(options = {}) {
     }
 
     const wallDelta = clamp(currentNow - state.lastNow, 0, MAX_MEDIA_DELTA_MS);
-    const mediaDelta = current - state.lastTime;
+    const previousTime = state.lastTime;
+    const mediaDelta = current - previousTime;
     state.lastNow = currentNow;
     state.lastTime = current;
-    if (wallDelta <= 0) return;
+    if (wallDelta <= 0 || mediaDelta <= 0) return;
 
     if (mediaDelta < -0.5 || mediaDelta > wallDelta / 1000 + 2) return;
-    state.playedMs += wallDelta;
+    addPlayedInterval(state, previousTime, current);
   }
 
   function mediaFields(element, state) {
@@ -696,7 +731,7 @@ export function createAnalyticsClient(options = {}) {
     if (!state.playing || state.seeking) return;
 
     const duration = finiteNumber(state.info?.duration, finiteNumber(element?.duration));
-    const progress = duration > 0 ? (mediaCurrentTime(element) / duration) * 100 : 0;
+    const progress = duration > 0 ? (state.playedMs / (duration * 1000)) * 100 : 0;
     for (const mark of MEDIA_PROGRESS_MARKS) {
       if (progress >= mark && !state.marks.has(mark)) {
         state.marks.add(mark);
@@ -710,6 +745,8 @@ export function createAnalyticsClient(options = {}) {
     accrueMediaTime(element, state);
     state.playing = false;
     if (!state.started || state.completed) return;
+    const duration = finiteNumber(state.info?.duration, finiteNumber(element?.duration));
+    if (duration > 0 && state.playedMs < duration * 1000 * MEDIA_COMPLETION_COVERAGE) return;
     state.completed = true;
     enqueue('media_complete', { progress: 100, ...mediaFields(element, state) });
   }
