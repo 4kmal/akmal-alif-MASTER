@@ -29,14 +29,42 @@ const upload = useBlogMediaUpload((asset) => {
   notice.value = `${asset.name} uploaded`
 })
 const uploadTasks = upload.tasks
+const recoverableUploads = upload.recoverableEntries
+const pendingRecoveries = computed(() => recoverableUploads.value.filter(entry => !uploadTasks.value.some(task => task.id === entry.id)))
 const posterTimeMs = ref(0)
 const posterAssetId = ref('')
 const appendAssetId = ref('')
+const gifFramePreviews = ref<Record<number, string>>({})
+const lastExport = ref<{ url: string, filename: string, mime: string } | null>(null)
+const splitAtMs = ref(0)
 
 const currentClip = computed(() => project.value?.clips[activeClip.value] ?? null)
-const selectedAssetPreview = computed(() => selectedAsset.value?.source_url ?? '')
-const sourceBytes = computed(() => project.value?.clips.reduce((total, clip) => total + (assets.value.find(asset => asset.id === clip.asset_id)?.size ?? 0), 0) ?? selectedAsset.value?.size ?? 0)
+const previewAsset = computed(() => assets.value.find(asset => asset.id === currentClip.value?.asset_id) ?? selectedAsset.value)
+const selectedAssetPreview = computed(() => previewAsset.value?.source_url ?? '')
+const sourceBytes = computed(() => {
+  const ids = new Set(project.value?.clips.map(clip => clip.asset_id) ?? [])
+  return assets.value.filter(asset => ids.has(asset.id)).reduce((total, asset) => total + asset.size, 0)
+})
 const isOverSourceLimit = computed(() => sourceBytes.value > 250 * 1024 * 1024)
+const previewStyle = computed(() => {
+  const clip = currentClip.value
+  const crop = clip?.crop
+  return {
+    filter: `brightness(${1 + (clip?.brightness ?? 0)}) contrast(${clip?.contrast ?? 1}) saturate(${clip?.grayscale ? 0 : clip?.saturation ?? 1})`,
+    transform: `rotate(${clip?.rotate ?? 0}deg) scale(${clip?.flip_x ? -1 : 1}, ${clip?.flip_y ? -1 : 1})`,
+    clipPath: crop ? `inset(${crop.y * 100}% ${(1 - crop.x - crop.width) * 100}% ${(1 - crop.y - crop.height) * 100}% ${crop.x * 100}%)` : undefined,
+  }
+})
+
+watch(currentClip, (clip) => {
+  splitAtMs.value = clip ? Math.round((clip.in_ms + clip.out_ms) / 2) : 0
+})
+
+function clearFramePreviews() {
+  for (const url of Object.values(gifFramePreviews.value))
+    URL.revokeObjectURL(url)
+  gifFramePreviews.value = {}
+}
 
 async function load() {
   loading.value = true
@@ -55,6 +83,10 @@ async function load() {
 }
 
 async function selectAsset(asset: BlogAsset) {
+  if (operation.value)
+    return
+  clearFramePreviews()
+  error.value = ''
   selectedAsset.value = asset
   selectedProjectId.value = null
   activeClip.value = 0
@@ -69,26 +101,47 @@ async function selectAsset(asset: BlogAsset) {
   }
 }
 
-function selectProject(saved: BlogMediaProject) {
+async function selectProject(saved: BlogMediaProject) {
+  if (operation.value)
+    return
+  clearFramePreviews()
+  error.value = ''
   selectedProjectId.value = saved.id
   projectVersion.value = saved.version
   project.value = structuredClone(saved.document) as MediaProjectDocument
   const sourceId = project.value?.clips[0]?.asset_id
   selectedAsset.value = assets.value.find(asset => asset.id === sourceId) ?? null
   activeClip.value = 0
+  if (project.value.kind === 'gif') {
+    try {
+      await decodeFrames(false)
+    }
+    catch (reason) {
+      error.value = reason instanceof Error ? reason.message : 'Could not read the source frames.'
+    }
+  }
 }
 
-async function decodeFrames() {
+async function decodeFrames(resetSelection = true) {
   if (!selectedAsset.value || !project.value || selectedAsset.value.kind !== 'gif')
     return
   const active = await getProcessor()
   if (!active)
     return
-  const decoded = await active.decodeGif(selectedAsset.value.id)
-  project.value.frames = decoded.frames.map(frame => ({ source_index: frame.source_index, delay_ms: frame.delay_ms, enabled: true }))
-  project.value.output.width = Math.min(decoded.width, 720)
-  project.value.output.height = Math.min(decoded.height, 720)
-  project.value.output.fps = 15
+  try {
+    const decoded = await active.decodeGif(selectedAsset.value.id)
+    clearFramePreviews()
+    gifFramePreviews.value = Object.fromEntries(decoded.frames.map(frame => [frame.source_index, URL.createObjectURL(frame.blob)]))
+    if (resetSelection) {
+      project.value.frames = decoded.frames.map(frame => ({ source_index: frame.source_index, delay_ms: frame.delay_ms, enabled: true }))
+      project.value.output.width = Math.max(2, Math.floor(Math.min(decoded.width, 720) / 2) * 2)
+      project.value.output.height = Math.max(2, Math.floor(Math.min(decoded.height, 720) / 2) * 2)
+      project.value.output.fps = 15
+    }
+  }
+  finally {
+    operation.value = null
+  }
 }
 
 async function getProcessor() {
@@ -151,24 +204,25 @@ async function renderProject() {
     error.value = 'The project exceeds the 250 MiB source limit.'
     return
   }
-  const durationMs = project.value.clips.reduce((total, clip) => total + Math.max(0, clip.out_ms - clip.in_ms) / Math.max(0.25, clip.rate), 0)
-  if (project.value.kind === 'video' && (durationMs > 300_000 || project.value.output.width > 1920 || project.value.output.height > 1080 || project.value.output.fps > 30)) {
-    error.value = 'Video outputs must be at most 300 seconds, 1920×1080 and 30 fps.'
-    return
-  }
-  if (project.value.kind === 'gif' && (durationMs > 30_000 || project.value.output.width > 720 || project.value.output.height > 720 || project.value.output.fps > 15)) {
-    error.value = 'GIF outputs must be at most 30 seconds, 720px and 15 fps.'
-    return
-  }
+  const document = JSON.parse(JSON.stringify(project.value)) as MediaProjectDocument
+  const sourceIds = [...new Set(document.clips.map(clip => clip.asset_id))]
+  const sourceName = selectedAsset.value.name
+  error.value = ''
+  notice.value = ''
   operation.value = { stage: 'render', ratio: 0, message: 'Preparing derived media…' }
   try {
-    const output = await active.render(project.value)
+    const output = await active.render(document)
+    if (lastExport.value)
+      URL.revokeObjectURL(lastExport.value.url)
+    lastExport.value = { url: URL.createObjectURL(output.blob), filename: output.filename, mime: output.mime_type }
     const file = new File([output.blob], output.filename, { type: output.mime_type })
-    await upload.upload(file, [selectedAsset.value.id])
+    const result = await upload.upload(file, sourceIds)
+    if (result.status !== 'complete')
+      throw new Error(result.error || 'The export is ready locally. Resume its upload in Transfers or download the file below.')
     if (output.poster) {
-      const posterFile = new File([output.poster], `${selectedAsset.value.name}-poster.png`, { type: 'image/png' })
-      const posterTask = await upload.upload(posterFile, [selectedAsset.value.id])
-      posterAssetId.value = posterTask.asset?.id ?? ''
+      const posterFile = new File([output.poster], `${sourceName}-poster.png`, { type: 'image/png' })
+      const posterTask = await upload.upload(posterFile, sourceIds)
+      posterAssetId.value = posterTask.status === 'complete' ? posterTask.asset?.id ?? '' : ''
     }
     notice.value = 'Derived media uploaded as a new immutable asset'
     await load()
@@ -187,14 +241,19 @@ async function generatePoster() {
   const active = await getProcessor()
   if (!active)
     return
+  const asset = selectedAsset.value
+  operation.value = { stage: 'poster', ratio: null, message: 'Preparing selected poster…' }
   try {
-    const blob = await active.poster(selectedAsset.value.id, Math.max(0, posterTimeMs.value))
-    const task = await upload.upload(new File([blob], `${selectedAsset.value.name}-poster.png`, { type: 'image/png' }), [selectedAsset.value.id])
-    posterAssetId.value = task.asset?.id ?? ''
+    const blob = await active.poster(asset.id, Math.max(0, posterTimeMs.value))
+    const task = await upload.upload(new File([blob], `${asset.name}-poster.png`, { type: 'image/png' }), [asset.id])
+    posterAssetId.value = task.status === 'complete' ? task.asset?.id ?? '' : ''
     notice.value = posterAssetId.value ? 'Poster generated as a private derived asset' : 'Poster upload did not complete'
   }
   catch (reason: unknown) {
     error.value = reason instanceof Error ? reason.message : 'Could not generate a poster.'
+  }
+  finally {
+    operation.value = null
   }
 }
 
@@ -202,12 +261,16 @@ function splitClip() {
   const clip = currentClip.value
   if (!clip || !project.value)
     return
-  const midpoint = Math.round((clip.in_ms + clip.out_ms) / 2)
+  const midpoint = Math.round(splitAtMs.value)
+  if (midpoint <= clip.in_ms || midpoint >= clip.out_ms) {
+    error.value = 'Choose a split point inside the trimmed clip.'
+    return
+  }
   const second = { ...clip, id: crypto.randomUUID(), in_ms: midpoint }
   clip.out_ms = midpoint
   project.value.clips.splice(activeClip.value + 1, 0, second)
   project.value = { ...project.value, clips: [...project.value.clips] }
-  notice.value = 'Clip split at the midpoint'
+  notice.value = 'Clip split at the selected time'
 }
 
 function moveClip(direction: -1 | 1) {
@@ -240,6 +303,16 @@ function updateClip<Key extends keyof Clip>(key: Key, value: Clip[Key]) {
   })
 }
 
+function updateCrop(key: 'x' | 'y' | 'width' | 'height', percent: number) {
+  if (!Number.isFinite(percent))
+    return
+  const crop = { ...(currentClip.value?.crop ?? { x: 0, y: 0, width: 1, height: 1 }) }
+  crop[key] = Math.min(1, Math.max(key === 'width' || key === 'height' ? 0.01 : 0, percent / 100))
+  crop.x = Math.min(crop.x, 1 - crop.width)
+  crop.y = Math.min(crop.y, 1 - crop.height)
+  updateClip('crop', crop)
+}
+
 function toggleGifFrame(index: number) {
   if (!project.value?.frames[index])
     return
@@ -270,7 +343,7 @@ function deleteGifFrame(index: number) {
 function changeGifDelay(index: number, delay: number) {
   if (!project.value?.frames[index])
     return
-  project.value.frames[index].delay_ms = Math.max(1, delay)
+  project.value.frames[index].delay_ms = Math.max(10, delay)
   project.value = { ...project.value, frames: [...project.value.frames] }
 }
 
@@ -296,13 +369,31 @@ async function appendVideoClip() {
 function onUploadFiles(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
-  for (const file of files)
-    void upload.upload(file)
+  for (const file of files) {
+    if (upload.findRecoverableUpload(file))
+      void upload.recoverUpload(file)
+    else
+      void upload.upload(file)
+  }
   input.value = ''
 }
 
+async function retryUpload(task: (typeof uploadTasks.value)[number]) {
+  if (task.uploadId) {
+    await upload.resume(task)
+    return
+  }
+  await upload.cancel(task)
+  await upload.upload(task.file, task.derivedFrom)
+}
+
 onMounted(load)
-onBeforeUnmount(() => processor.value?.dispose())
+onBeforeUnmount(() => {
+  processor.value?.dispose()
+  clearFramePreviews()
+  if (lastExport.value)
+    URL.revokeObjectURL(lastExport.value.url)
+})
 </script>
 
 <template>
@@ -348,6 +439,26 @@ onBeforeUnmount(() => processor.value?.dispose())
       /> Loading media…
     </div>
     <template v-else>
+      <section v-if="pendingRecoveries.length" class="blog-panel" aria-labelledby="blog-upload-recovery-title">
+        <div class="blog-panel__header">
+          <div>
+            <h2 id="blog-upload-recovery-title">
+              Resume interrupted uploads
+            </h2>
+            <p class="blog-panel__note">
+              Choose the original files again to continue from their saved parts. Files stay on your device until selected.
+            </p>
+          </div>
+          <button type="button" class="blog-button" @click="uploadInput?.click()">
+            Reselect files
+          </button>
+        </div>
+        <ul class="blog-recovery-list">
+          <li v-for="entry in pendingRecoveries" :key="entry.id">
+            {{ entry.filename }} · {{ formatBytes(entry.size) }}
+          </li>
+        </ul>
+      </section>
       <section v-if="uploadTasks.length" class="blog-panel">
         <div
           class="blog-panel__header"
@@ -383,6 +494,9 @@ onBeforeUnmount(() => processor.value?.dispose())
               >
                 {{ task.error }}
               </p>
+              <p v-if="task.warning" class="blog-panel__note">
+                {{ task.warning }}
+              </p>
             </div><div
               class="blog-upload-row__actions"
             >
@@ -393,13 +507,13 @@ onBeforeUnmount(() => processor.value?.dispose())
               >
                 <Pause :size="15" />
               </button><button
-                v-if="task.status === 'paused'" type="button" class="
+                v-if="['paused', 'error'].includes(task.status)" type="button" class="
                   blog-icon-button
-                " title="Resume upload" @click="upload.resume(task)"
+                " :title="task.uploadId ? 'Resume upload' : 'Retry upload'" @click="retryUpload(task)"
               >
                 <Play :size="15" />
               </button><button
-                v-if="['uploading', 'paused', 'queued'].includes(task.status)" type="button" class="
+                v-if="['uploading', 'paused', 'queued', 'error'].includes(task.status)" type="button" class="
                   blog-icon-button
                 " title="Cancel upload" @click="upload.cancel(task)"
               >
@@ -434,7 +548,7 @@ onBeforeUnmount(() => processor.value?.dispose())
             <button
               v-for="asset in assets" :key="asset.id" type="button" class="
                 blog-asset-card
-              " :class="{ 'is-selected': selectedAsset?.id === asset.id }" @click="selectAsset(asset)"
+              " :class="{ 'is-selected': selectedAsset?.id === asset.id }" :disabled="Boolean(operation)" @click="selectAsset(asset)"
             >
               <div
                 class="blog-asset-card__preview"
@@ -466,7 +580,7 @@ onBeforeUnmount(() => processor.value?.dispose())
           </div><button
             v-for="saved in projects" :key="saved.id" type="button" class="
               blog-project-row
-            " :class="{ 'is-selected': selectedProjectId === saved.id }" @click="selectProject(saved)"
+            " :class="{ 'is-selected': selectedProjectId === saved.id }" :disabled="Boolean(operation)" @click="selectProject(saved)"
           >
             <FolderOpen :size="17" /><span><strong>{{ saved.title }}</strong><small>v{{ saved.version }} · {{ formatDate(saved.updated_at) }}</small></span><ChevronDown :size="15" />
           </button>
@@ -514,7 +628,9 @@ onBeforeUnmount(() => processor.value?.dispose())
 
         <div class="blog-media-editor__grid">
           <div class="blog-media-stage">
-            <img v-if="selectedAsset.kind !== 'video'" :src="selectedAssetPreview" :alt="selectedAsset.name" :style="{ width: `${Math.min(project.output.width / Math.max(selectedAsset.width || project.output.width, 1) * 100, 100)}%`, filter: `brightness(${1 + (currentClip?.brightness ?? 0)}) contrast(${currentClip?.contrast ?? 1}) saturate(${currentClip?.saturation ?? 1}) grayscale(${currentClip?.grayscale ? 1 : 0})`, transform: `rotate(${currentClip?.rotate ?? 0}deg) scale(${currentClip?.flip_x ? -1 : 1}, ${currentClip?.flip_y ? -1 : 1})` }"><video v-else :src="selectedAssetPreview" controls preload="metadata" :style="{ filter: `brightness(${1 + (currentClip?.brightness ?? 0)}) contrast(${currentClip?.contrast ?? 1}) saturate(${currentClip?.saturation ?? 1}) grayscale(${currentClip?.grayscale ? 1 : 0})`, transform: `rotate(${currentClip?.rotate ?? 0}deg) scale(${currentClip?.flip_x ? -1 : 1}, ${currentClip?.flip_y ? -1 : 1})` }" /><p>{{ selectedAsset.width || '—' }} × {{ selectedAsset.height || '—' }} · {{ selectedAsset.duration_ms ? `${Math.round(selectedAsset.duration_ms / 1000)}s` : 'still' }}</p>
+            <img v-if="previewAsset?.kind !== 'video'" :src="selectedAssetPreview" :alt="previewAsset?.name || ''" :style="previewStyle">
+            <video v-else :src="selectedAssetPreview" controls preload="metadata" :style="previewStyle" @timeupdate="splitAtMs = Math.round(($event.target as HTMLVideoElement).currentTime * 1000)" />
+            <p>Source preview · {{ previewAsset?.width || '—' }} × {{ previewAsset?.height || '—' }} · {{ previewAsset?.duration_ms ? `${Math.round(previewAsset.duration_ms / 1000)}s` : 'still' }}</p>
           </div>
           <div class="blog-media-controls">
             <div class="blog-control-tabs">
@@ -566,7 +682,7 @@ onBeforeUnmount(() => processor.value?.dispose())
               <div
                 class="blog-control-section__heading"
               >
-                <h3>Timeline</h3><div
+                <h3>Timeline</h3><label class="blog-field"><span>Split at (ms)</span><input v-model.number="splitAtMs" type="number" :min="(currentClip?.in_ms ?? 0) + 1" :max="(currentClip?.out_ms ?? 0) - 1"></label><div
                   class="blog-control-buttons"
                 >
                   <button
@@ -623,10 +739,10 @@ onBeforeUnmount(() => processor.value?.dispose())
                   <button
                     type="button" class="blog-gif-frame__toggle" :aria-label="`${frame.enabled ? 'Disable' : 'Enable'} frame ${index + 1}`" @click="toggleGifFrame(index)"
                   >
-                    <span>{{ index + 1 }}</span>
+                    <img v-if="gifFramePreviews[frame.source_index]" :src="gifFramePreviews[frame.source_index]" alt=""><span>{{ index + 1 }}</span>
                   </button><label
                     class="blog-field"
-                  ><span>Delay ms</span><input :value="frame.delay_ms" type="number" min="1" @input="changeGifDelay(index, Number(($event.target as HTMLInputElement).value))"></label><button
+                  ><span>Delay ms</span><input :value="frame.delay_ms" type="number" min="10" @input="changeGifDelay(index, Number(($event.target as HTMLInputElement).value))"></label><button
                     type="button" class="blog-icon-button" title="Move frame earlier" @click="moveGifFrame(index, -1)"
                   >
                     <ChevronDown
@@ -648,7 +764,7 @@ onBeforeUnmount(() => processor.value?.dispose())
               <div
                 class="blog-control-section__heading"
               >
-                <h3>Crop</h3><span>Normalized coordinates 0–1</span>
+                <h3>Crop</h3><span>Source selection in percent</span>
               </div><div
                 class="blog-control-buttons"
               >
@@ -666,13 +782,13 @@ onBeforeUnmount(() => processor.value?.dispose())
               >
                 <label
                   class="blog-field"
-                ><span>X</span><input :value="currentClip?.crop?.x ?? 0" type="number" min="0" max="1" step="0.01" @input="updateClip('crop', { ...(currentClip?.crop ?? { x: 0, y: 0, width: 1, height: 1 }), x: Number(($event.target as HTMLInputElement).value) })"></label><label
+                ><span>Left (%)</span><input :value="Math.round((currentClip?.crop?.x ?? 0) * 100)" type="number" min="0" max="100" step="1" @input="updateCrop('x', Number(($event.target as HTMLInputElement).value))"></label><label
                   class="blog-field"
-                ><span>Y</span><input :value="currentClip?.crop?.y ?? 0" type="number" min="0" max="1" step="0.01" @input="updateClip('crop', { ...(currentClip?.crop ?? { x: 0, y: 0, width: 1, height: 1 }), y: Number(($event.target as HTMLInputElement).value) })"></label><label
+                ><span>Top (%)</span><input :value="Math.round((currentClip?.crop?.y ?? 0) * 100)" type="number" min="0" max="100" step="1" @input="updateCrop('y', Number(($event.target as HTMLInputElement).value))"></label><label
                   class="blog-field"
-                ><span>Width</span><input :value="currentClip?.crop?.width ?? 1" type="number" min="0.01" max="1" step="0.01" @input="updateClip('crop', { ...(currentClip?.crop ?? { x: 0, y: 0, width: 1, height: 1 }), width: Number(($event.target as HTMLInputElement).value) })"></label><label
+                ><span>Width (%)</span><input :value="Math.round((currentClip?.crop?.width ?? 1) * 100)" type="number" min="1" max="100" step="1" @input="updateCrop('width', Number(($event.target as HTMLInputElement).value))"></label><label
                   class="blog-field"
-                ><span>Height</span><input :value="currentClip?.crop?.height ?? 1" type="number" min="0.01" max="1" step="0.01" @input="updateClip('crop', { ...(currentClip?.crop ?? { x: 0, y: 0, width: 1, height: 1 }), height: Number(($event.target as HTMLInputElement).value) })"></label>
+                ><span>Height (%)</span><input :value="Math.round((currentClip?.crop?.height ?? 1) * 100)" type="number" min="1" max="100" step="1" @input="updateCrop('height', Number(($event.target as HTMLInputElement).value))"></label>
               </div>
             </div><div
               v-if="project.kind === 'video'" class="blog-control-section"
@@ -708,21 +824,30 @@ onBeforeUnmount(() => processor.value?.dispose())
               >
                 <label
                   class="blog-field"
-                ><span>Format</span><select :value="project.output.format" @change="updateProject(document => { document.output.format = ($event.target as HTMLSelectElement).value as MediaProjectDocument['output']['format'] })"><option v-if="project.kind === 'image'" value="png">PNG</option><option v-if="project.kind === 'image'" value="jpeg">JPEG</option><option v-if="project.kind === 'image'" value="webp">WebP</option><option v-if="project.kind === 'video'" value="mp4">MP4</option><option v-if="project.kind === 'video'" value="webm">WebM</option><option v-if="project.kind === 'gif'" value="gif">GIF</option></select></label><label
+                ><span>Format</span><select :value="project.output.format" @change="updateProject(document => { document.output.format = ($event.target as HTMLSelectElement).value as MediaProjectDocument['output']['format'] })"><option v-if="project.kind === 'image'" value="png">PNG</option><option v-if="project.kind === 'image'" value="jpeg">JPEG</option><option v-if="project.kind === 'image'" value="webp">WebP</option><option v-if="project.kind !== 'image'" value="mp4">MP4</option><option v-if="project.kind !== 'image'" value="webm">WebM</option><option v-if="project.kind !== 'image'" value="gif">GIF</option></select></label><label
                   class="blog-field"
-                ><span>Width</span><input :value="project.output.width" type="number" min="1" max="1920" @input="updateProject(document => { document.output.width = Number(($event.target as HTMLInputElement).value) })"></label><label
+                ><span>Width</span><input :value="project.output.width" type="number" min="1" :max="project.output.format === 'gif' ? 720 : project.kind === 'image' ? 4096 : 1920" @input="updateProject(document => { document.output.width = Number(($event.target as HTMLInputElement).value) })"></label><label
                   class="blog-field"
-                ><span>Height</span><input :value="project.output.height" type="number" min="1" max="1080" @input="updateProject(document => { document.output.height = Number(($event.target as HTMLInputElement).value) })"></label><label
+                ><span>Height</span><input :value="project.output.height" type="number" min="1" :max="project.output.format === 'gif' ? 720 : project.kind === 'image' ? 4096 : 1080" @input="updateProject(document => { document.output.height = Number(($event.target as HTMLInputElement).value) })"></label><label
                   class="blog-field"
-                ><span>FPS</span><input :value="project.output.fps" type="number" min="1" max="30" @input="updateProject(document => { document.output.fps = Number(($event.target as HTMLInputElement).value) })"></label><label
+                ><span>FPS</span><input :value="project.output.fps" type="number" min="1" :max="project.output.format === 'gif' ? 15 : 30" @input="updateProject(document => { document.output.fps = Number(($event.target as HTMLInputElement).value) })"></label><label
                   class="blog-field"
-                ><span>Quality {{ project.output.quality }}</span><input :value="project.output.quality" type="range" min="0" max="1" step="0.01" @input="updateProject(document => { document.output.quality = Number(($event.target as HTMLInputElement).value) })"></label><label
-                  v-if="project.kind === 'gif'" class="blog-field"
-                ><span>Loop count (0 = forever)</span><input :value="project.output.loop" type="number" min="0" @input="updateProject(document => { document.output.loop = Number(($event.target as HTMLInputElement).value) })"></label>
+                ><span>Quality {{ project.output.quality }}</span><input :value="project.output.quality" type="range" min="0.1" max="1" step="0.01" @input="updateProject(document => { document.output.quality = Number(($event.target as HTMLInputElement).value) })"></label><label
+                  v-if="project.output.format === 'gif'" class="blog-field"
+                ><span>Loop count (0 = forever)</span><input :value="project.output.loop" type="number" min="0" max="100" @input="updateProject(document => { document.output.loop = Number(($event.target as HTMLInputElement).value) })"></label>
               </div>
             </div>
           </div>
         </div>
+      </section>
+      <section v-if="lastExport" class="blog-panel blog-export-preview" aria-label="Latest export">
+        <div class="blog-panel__header">
+          <h2>Latest export</h2><a
+            class="blog-button" :href="lastExport.url" :download="lastExport.filename"
+          >Download {{ lastExport.filename }}</a>
+        </div>
+        <video v-if="lastExport.mime.startsWith('video/')" :src="lastExport.url" controls preload="metadata" />
+        <img v-else :src="lastExport.url" alt="Latest edited media">
       </section>
     </template>
   </main>

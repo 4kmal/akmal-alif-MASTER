@@ -56,6 +56,12 @@ test('frontend preview serves clean routes and only forwards public reads', asyn
     assert.match(await response.text(), /My Blog - Akmal Alif/);
   });
 
+  await t.test('serves the shared article shell for a slug published without a build', async () => {
+    const response = await fetch(`${origin}/blog/newly-published-studio-post?preview=1`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /data-blog-content/);
+  });
+
   await t.test('forwards public API reads and their query strings', async () => {
     const response = await fetch(`${origin}/api/profile-metrics?check=1`);
     assert.equal(response.status, 200);

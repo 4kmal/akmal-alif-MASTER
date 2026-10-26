@@ -40,6 +40,6 @@ scope.onmessage = async ({ data }) => {
     scope.postMessage({ type: 'result', result })
   }
   catch (error) {
-    scope.postMessage({ type: 'error', name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : 'Media processing failed.' })
+    scope.postMessage({ type: 'error', name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : String(error), details: error instanceof Error && 'details' in error ? error.details : undefined })
   }
 }

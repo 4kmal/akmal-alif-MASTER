@@ -1,4 +1,5 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BLOG_MEDIA_PART_SIZE,
   BLOG_MEDIA_UPLOAD_RECOVERY_KEY,
@@ -149,7 +150,9 @@ describe('resumable blog upload resilience', () => {
   it('prevents double resume and cancellation during reconciliation from reviving a task', async () => {
     let releaseInitialPart!: () => void
     api.putUploadPart.mockImplementationOnce(async () => {
-      await new Promise<void>(resolve => { releaseInitialPart = resolve })
+      await new Promise<void>((resolve) => {
+        releaseInitialPart = resolve
+      })
       return { part_number: 1, etag: 'initial-etag' }
     })
 
@@ -163,7 +166,9 @@ describe('resumable blog upload resilience', () => {
     expect(task.status).toBe('paused')
 
     let releaseGet!: (value: { upload: { id: string, part_size: number, parts: { part_number: number, etag: string }[] } }) => void
-    api.getUpload.mockImplementationOnce(() => new Promise(resolve => { releaseGet = resolve }))
+    api.getUpload.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseGet = resolve
+    }))
     const firstResume = upload.resume(task)
     await waitFor(() => api.getUpload.mock.calls.length === 1)
     const secondResume = upload.resume(task)
@@ -211,7 +216,9 @@ describe('resumable blog upload resilience', () => {
   it('persists metadata only, matches a reselected file exactly, and recovers after a new composable instance', async () => {
     let releaseInitialPart!: () => void
     api.putUploadPart.mockImplementationOnce(async () => {
-      await new Promise<void>(resolve => { releaseInitialPart = resolve })
+      await new Promise<void>((resolve) => {
+        releaseInitialPart = resolve
+      })
       return { part_number: 1, etag: 'initial-etag' }
     })
 
@@ -246,7 +253,7 @@ describe('resumable blog upload resilience', () => {
   })
 })
 
-describe('DOCX upload gating', () => {
+describe('dOCX upload gating', () => {
   it('rejects imported images when an upload does not reach complete', async () => {
     vi.doMock('@/utils/blog-docx', () => ({
       importBlogDocx: vi.fn(async () => ({

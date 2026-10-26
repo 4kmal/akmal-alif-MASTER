@@ -56,6 +56,8 @@ describe('browser media worker lifecycle', () => {
     expect(first.terminated).toBe(true)
     const retry = processor.poster('original', 500)
     const next = TestWorker.instances[1]!
+    first.onerror?.()
+    expect(next.terminated).toBe(false)
     next.send({ type: 'result', result: new Blob(['poster']) })
     expect((await retry).size).toBe(6)
     processor.dispose()

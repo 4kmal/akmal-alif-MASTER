@@ -1,7 +1,7 @@
 import { Buffer, File as NodeFile } from 'node:buffer'
 // @vitest-environment jsdom
 import JSZip from 'jszip'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { exportBlogDocx, importBlogDocx, sanitizeImportedBlogHtml } from '../app/utils/blog-docx'
 
 vi.mock('mammoth', async () => {
@@ -10,6 +10,7 @@ vi.mock('mammoth', async () => {
 })
 
 describe('word document interchange', () => {
+  afterEach(() => vi.unstubAllGlobals())
   it('exports real DOCX headings, formatting, links, lists and tables and imports it for review', async () => {
     const output = await exportBlogDocx({
       title: 'Studio roundtrip',
@@ -54,5 +55,15 @@ describe('word document interchange', () => {
     expect(xml).toContain('External illustration')
     expect(xml).toContain('Watch video')
     expect(relationships).toContain('/media/blog/clip.mp4')
+  })
+
+  it('preserves rules and exports finite image extents even with invalid authored widths', async () => {
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 32, height: 16, close() {} }))
+    const output = await exportBlogDocx({ title: 'Layout', html: '<hr><p><img src="/media/blog/test.png" width="bad%" alt="Illustration"></p>', resolveImage: async () => new Blob(['png'], { type: 'image/png' }) })
+    const zip = await JSZip.loadAsync(await output.arrayBuffer())
+    const xml = await zip.file('word/document.xml')!.async('text')
+    expect(xml).toContain('w:pBdr')
+    expect(xml).not.toMatch(/NaN|Infinity/)
+    expect(xml).toContain('Illustration')
   })
 })

@@ -1,5 +1,21 @@
+import type { DOMOutputSpec } from '@tiptap/pm/model'
 import type { BlogMediaAttrs } from '@/utils/blog-studio'
 import { mergeAttributes, Node } from '@tiptap/vue-3'
+
+function readMediaAttributes(element: HTMLElement) {
+  const figure = element.tagName.toLowerCase() === 'figure' ? element : null
+  const media = figure?.querySelector('img,video') as HTMLElement | null ?? element
+  return {
+    assetId: element.dataset.assetId || media.dataset.assetId || '',
+    kind: element.dataset.kind || media.dataset.kind || (media.tagName.toLowerCase() === 'video' ? 'video' : 'image'),
+    src: media.getAttribute('src') || media.querySelector('source')?.getAttribute('src') || '',
+    alt: media.getAttribute('alt') || '',
+    caption: figure?.querySelector('figcaption')?.textContent || '',
+    width: Number.parseInt(element.style.width || element.getAttribute('width') || '100', 10),
+    align: element.dataset.align || 'left',
+    posterAssetId: media.getAttribute('data-poster-asset-id') || undefined,
+  }
+}
 
 export const BlogMedia = Node.create({
   name: 'blogMedia',
@@ -24,23 +40,10 @@ export const BlogMedia = Node.create({
     return [
       {
         tag: 'figure[data-blog-media]',
-        getAttrs: (element: HTMLElement) => {
-          const node = element
-          const media = node.querySelector('img,video') as HTMLImageElement | HTMLVideoElement | null
-          return {
-            assetId: node.dataset.assetId ?? '',
-            kind: node.dataset.kind ?? (media?.tagName.toLowerCase() === 'video' ? 'video' : 'image'),
-            src: media?.getAttribute('src') ?? '',
-            alt: media?.getAttribute('alt') ?? '',
-            caption: node.querySelector('figcaption')?.textContent ?? '',
-            width: Number.parseInt(node.style.width || '100', 10),
-            align: node.dataset.align ?? 'left',
-            posterAssetId: media?.getAttribute('data-poster-asset-id') ?? undefined,
-          }
-        },
+        getAttrs: readMediaAttributes,
       },
-      { tag: 'img[data-blog-media]' },
-      { tag: 'video[data-blog-media]' },
+      { tag: 'img[data-blog-media]', getAttrs: readMediaAttributes },
+      { tag: 'video[data-blog-media]', getAttrs: readMediaAttributes },
     ]
   },
 
@@ -53,12 +56,12 @@ export const BlogMedia = Node.create({
       alt: attrs.alt,
       loading: 'lazy',
       controls: attrs.kind === 'video' ? 'controls' : undefined,
-      poster: attrs.posterAssetId || undefined,
+      poster: attrs.posterAssetId ? `/api/admin/blog/media/${encodeURIComponent(attrs.posterAssetId)}/source` : undefined,
     }
-    const media = attrs.kind === 'video'
+    const media: DOMOutputSpec = attrs.kind === 'video'
       ? ['video', mergeAttributes(mediaAttrs, { 'data-blog-media': 'true', 'data-poster-asset-id': attrs.posterAssetId, 'playsinline': 'true' })]
       : ['img', mergeAttributes(mediaAttrs, { 'data-blog-media': 'true' })]
-    const children: unknown[] = [media]
+    const children: DOMOutputSpec[] = [media]
     if (attrs.caption)
       children.push(['figcaption', {}, attrs.caption])
     return ['figure', mergeAttributes(HTMLAttributes, {
@@ -66,7 +69,7 @@ export const BlogMedia = Node.create({
       'data-asset-id': attrs.assetId,
       'data-kind': attrs.kind,
       'data-align': align,
-      'style': `width:${width}%;margin-inline:${align === 'center' ? 'auto' : align === 'right' ? '0 0' : '0 auto'};`,
-    }), children]
+      'style': `width:${width}%;margin-inline:${align === 'center' ? 'auto' : align === 'right' ? 'auto 0' : '0 auto'};`,
+    }), ...children]
   },
 })

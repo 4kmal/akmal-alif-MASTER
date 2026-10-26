@@ -139,7 +139,10 @@ export default defineConfig(({ mode }) => {
           } else {
             const blogMatch = url.match(/^\/blog\/([^/.]+)\/?$/);
             if (blogMatch) {
-              req.url = req.url?.replace(/^\/blog\/([^/.]+)\/?/, '/blog/$1.html');
+              const page = existsSync(resolve(projectRoot, 'blog', `${blogMatch[1]}.html`))
+                ? `/blog/${blogMatch[1]}.html`
+                : '/blog/article-template.html';
+              req.url = req.url?.replace(/^\/blog\/([^/.]+)\/?/, page);
             }
           }
 

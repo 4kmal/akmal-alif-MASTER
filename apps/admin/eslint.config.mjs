@@ -10,6 +10,7 @@ export default withNuxt(antfu(
       '.wrangler/**',
       '.output/**',
       '.nuxt/**',
+      '.editor-runtime/**',
       'app/components/ui/**',
       'app/data/**',
       'public/*.json',
@@ -33,6 +34,12 @@ export default withNuxt(antfu(
     },
     rules: {
       ...eslintPluginBetterTailwindcss.configs['recommended-warn'].rules,
+    },
+  },
+  {
+    files: ['app/components/blog/**/*.vue'],
+    rules: {
+      'better-tailwindcss/no-unknown-classes': ['warn', { ignore: ['^blog-', '^is-(?:active|selected|disabled)$'] }],
     },
   },
 ))

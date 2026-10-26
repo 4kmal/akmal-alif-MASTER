@@ -58,12 +58,17 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
         pending?.resolve(data.result)
       }
       else if (data.type === 'error') {
+        if (data.details)
+          console.error('Media processor diagnostics', data.details)
         const error = new Error(data.message || 'Media processing failed.')
         error.name = data.name || 'Error'
         stop(error)
       }
     }
-    worker.onerror = () => stop(new Error('The browser media worker stopped. Your sources are preserved; retry the export.'))
+    worker.onerror = () => {
+      if (activeWorker === worker)
+        stop(new Error('The browser media worker stopped. Your sources are preserved; retry the export.'))
+    }
     return worker
   }
 
@@ -87,7 +92,7 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
   return {
     render(project: BlogMediaProject) {
       validateMediaProject(project)
-      return run<ProcessedMedia>('render', project)
+      return run<ProcessedMedia>('render', JSON.parse(JSON.stringify(project)))
     },
     decodeGif(assetId: string) {
       return run<DecodedGif>('decodeGif', { assetId })

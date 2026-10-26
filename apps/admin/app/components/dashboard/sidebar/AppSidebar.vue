@@ -49,7 +49,7 @@ const platformItems = computed<NavItem[]>(() => [
     isActive: isActive('blogPosts'),
   },
   {
-    title: 'Blog media',
+    title: 'Media library',
     url: '/admin/blog/media',
     icon: DASHBOARD_ROUTES.blogMedia.icon,
     isActive: isActive('blogMedia'),
@@ -106,7 +106,7 @@ const settingsItems = computed<NavItem[]>(() => [
     isActive: isActive('realtime'),
   },
   {
-    title: 'Blog settings',
+    title: 'Site settings',
     url: '/admin/blog/settings',
     icon: DASHBOARD_ROUTES.blogSettings.icon,
     isActive: isActive('blogSettings'),

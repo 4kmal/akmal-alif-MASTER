@@ -15,16 +15,26 @@ export function useBlogDocuments(onAsset?: (asset: BlogAsset) => void) {
   async function importDocx(file: File): Promise<BlogDocxImportReview> {
     const adapter = await import('@/utils/blog-docx')
     const imported = await adapter.importBlogDocx(file)
-    let html = imported.html
+    const parsed = new DOMParser().parseFromString(imported.html, 'text/html')
     const assets: BlogAsset[] = []
-    for (const image of imported.images) {
-      const task = await uploads.upload(new File([image.blob], `${image.placeholder}.bin`, { type: image.blob.type || 'image/png' }))
+    for (const [index, image] of imported.images.entries()) {
+      const mime = image.blob.type || 'image/png'
+      const extension = ({ 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' } as Record<string, string>)[mime] || 'png'
+      const task = await uploads.upload(new File([image.blob], `docx-image-${index + 1}.${extension}`, { type: mime, lastModified: file.lastModified }))
       if (task.status !== 'complete' || !task.asset)
         throw new Error(`DOCX image ${image.placeholder} could not be uploaded completely. Fix the upload and retry the import.`)
       assets.push(task.asset)
-      const escaped = image.placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      html = html.replace(new RegExp(escaped, 'g'), `<img src="${task.asset.source_url}" data-asset-id="${task.asset.id}" alt="${image.alt.replace(/"/g, '&quot;')}">`)
+      for (const element of parsed.querySelectorAll('img')) {
+        if (element.getAttribute('src') !== image.placeholder)
+          continue
+        element.setAttribute('src', task.asset.source_url)
+        element.setAttribute('data-asset-id', task.asset.id)
+        element.setAttribute('data-kind', task.asset.kind)
+        if (image.alt)
+          element.setAttribute('alt', image.alt)
+      }
     }
+    const html = parsed.body.innerHTML
     return { html, messages: imported.messages, assets, document: convertLegacyHtmlToTiptap(html) }
   }
 

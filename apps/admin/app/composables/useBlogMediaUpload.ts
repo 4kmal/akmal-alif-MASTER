@@ -40,7 +40,7 @@ export const BLOG_MEDIA_MAX_SOURCE_BYTES = 250 * 1024 * 1024
 export const BLOG_MEDIA_MAX_CONCURRENT_PARTS = 2
 export const BLOG_MEDIA_UPLOAD_RECOVERY_KEY = 'akmal-blog-media-upload-recovery-v1'
 
-type MediaMetadata = {
+interface MediaMetadata {
   kind: 'image' | 'gif' | 'video'
   width?: number
   height?: number
@@ -68,8 +68,8 @@ function abortError() {
 }
 
 function isAbortError(reason: unknown) {
-  return reason instanceof DOMException && reason.name === 'AbortError'
-    || reason instanceof Error && reason.name === 'AbortError'
+  return (reason instanceof DOMException && reason.name === 'AbortError')
+    || (reason instanceof Error && reason.name === 'AbortError')
 }
 
 function drainPartWaiters() {
@@ -272,7 +272,7 @@ export function useBlogMediaUpload(onComplete?: (asset: BlogAsset) => void) {
       removeRecovery(task.id)
   }
 
-  function beginOperation(task: MediaUploadTask) {
+  function beginOperation(task: MediaUploadTask): UploadOperation {
     const generation = (generations.get(task.id) ?? 0) + 1
     const operation = { generation, controller: new AbortController() }
     generations.set(task.id, generation)

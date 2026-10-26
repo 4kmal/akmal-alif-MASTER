@@ -8,6 +8,8 @@ type MediaCanvas = HTMLCanvasElement | OffscreenCanvas
 export function mediaCanvas(width: number, height: number): MediaCanvas {
   if (typeof OffscreenCanvas !== 'undefined')
     return new OffscreenCanvas(width, height)
+  if (typeof document === 'undefined')
+    throw new Error('This browser does not support offscreen image editing. Use an up-to-date desktop Chrome or Edge browser.')
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -126,6 +128,7 @@ export async function decodeGifFrames(blob: Blob, signal?: AbortSignal, progress
   const scaled = mediaCanvas(dimensions.width, dimensions.height)
   const scaledContext = context2d(scaled)
   const decoded: DecodedGif = { ...dimensions, duration_ms: 0, frames: [] }
+  let decodedBytes = 0
   let previous: ReturnType<typeof decompressFrame> | null = null
   let restore: ImageData | null = null
 
@@ -144,7 +147,11 @@ export async function decodeGifFrames(blob: Blob, signal?: AbortSignal, progress
     scaledContext.drawImage(original, 0, 0, scaled.width, scaled.height)
     const delay = Math.max(10, frame.delay || 100)
     decoded.duration_ms += delay
-    decoded.frames.push({ source_index: index, delay_ms: delay, blob: await canvasBlob(scaled) })
+    const frameBlob = await canvasBlob(scaled)
+    decodedBytes += frameBlob.size
+    if (decodedBytes > 128 * 1024 * 1024)
+      throw new Error('Decoded GIF frames exceed the 128 MiB browser memory budget. Use a shorter or smaller source GIF.')
+    decoded.frames.push({ source_index: index, delay_ms: delay, blob: frameBlob })
     previous = frame
     progress?.((index + 1) / frames.length)
     if (index % 5 === 0)

@@ -70,7 +70,7 @@ export async function importBlogDocx(file: File): Promise<ImportedBlogDocument> 
       }
       const bytes = await image.readAsArrayBuffer()
       const placeholder = `/__blog_import_image/${images.length}`
-      images.push({ placeholder, blob: new Blob([bytes], { type: image.contentType }), alt: '' })
+      images.push({ placeholder, blob: new Blob([bytes], { type: image.contentType }), alt: (image as typeof image & { altText?: string }).altText || '' })
       return { src: placeholder }
     }),
   })
@@ -98,7 +98,7 @@ export async function exportBlogDocx(options: {
   resolveImage: (src: string) => Promise<Blob | null>
 }): Promise<Blob> {
   const docx = await import('docx')
-  const { Document: WordDocument, Paragraph, TextRun, ExternalHyperlink, ImageRun, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType, LevelFormat, Packer } = docx
+  const { Document: WordDocument, Paragraph, TextRun, ExternalHyperlink, ImageRun, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType, BorderStyle, LevelFormat, Packer } = docx
   const parsed = new DOMParser().parseFromString(sanitizeImportedBlogHtml(options.html), 'text/html')
   type Block = InstanceType<typeof Paragraph> | InstanceType<typeof Table>
   const origin = /^https?:/.test(window.location.origin) ? window.location.origin : 'http://localhost'
@@ -117,7 +117,8 @@ export async function exportBlogDocx(options: {
     let imageType: 'png' | 'jpg' | 'gif' | 'bmp' = blob.type === 'image/jpeg' ? 'jpg' : 'png'
     const image = await createImageBitmap(blob)
     const widthAttribute = element.getAttribute('width') || ''
-    const requestedWidth = widthAttribute.endsWith('%') ? 600 * Number.parseFloat(widthAttribute) / 100 : Number.parseFloat(widthAttribute) || 600
+    const parsedWidth = Number.parseFloat(widthAttribute)
+    const requestedWidth = Number.isFinite(parsedWidth) && parsedWidth > 0 ? (widthAttribute.endsWith('%') ? 600 * parsedWidth / 100 : parsedWidth) : 600
     const scale = Math.min(1, Math.min(600, Math.max(20, requestedWidth)) / image.width)
     const dimensions = { width: Math.round(image.width * scale), height: Math.round(image.height * scale) }
     if (!['image/png', 'image/jpeg'].includes(blob.type)) {
@@ -222,6 +223,10 @@ export async function exportBlogDocx(options: {
         continue
       const element = node as HTMLElement
       const tag = element.tagName.toLowerCase()
+      if (tag === 'hr') {
+        result.push(new Paragraph({ border: { bottom: { color: '808080', style: BorderStyle.SINGLE, size: 6 } }, spacing: { before: 160, after: 160 } }))
+        continue
+      }
       if (['ul', 'ol'].includes(tag)) {
         result.push(...await blocks(element, { ordered: tag === 'ol', level: Math.min(8, list ? list.level + 1 : 0) }))
         continue

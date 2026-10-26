@@ -47,12 +47,12 @@ export const DASHBOARD_ROUTES = {
   },
   blogMedia: {
     paths: ['/admin/blog/media'],
-    titleKey: 'Blog media',
+    titleKey: 'Media library',
     icon: Image,
   },
   blogSettings: {
     paths: ['/admin/blog/settings'],
-    titleKey: 'Blog settings',
+    titleKey: 'Site settings',
     icon: Settings2,
   },
   engagement: {

@@ -16,6 +16,10 @@ interface ProcessorOptions {
 interface ProbeStream { codec_type: string, width?: number, height?: number }
 interface ProbeResult { streams?: ProbeStream[], format?: { duration?: string } }
 
+function sourceExtension(blob: Blob) {
+  return ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'video/webm': 'webm', 'video/mp4': 'mp4' } as Record<string, string>)[blob.type] || 'bin'
+}
+
 function binaryBlob(data: Uint8Array | string, type: string) {
   if (typeof data === 'string')
     throw new Error('The media processor returned text instead of a file.')
@@ -80,11 +84,18 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
   async function run(args: string[], signal: AbortSignal) {
     const ffmpeg = await load(signal)
     logTail = ''
-    const code = await ffmpeg.exec(args, -1, { signal })
+    let code: number
+    try {
+      code = await ffmpeg.exec(args, -1, { signal })
+    }
+    catch (error) {
+      assertMediaNotCancelled(signal)
+      throw Object.assign(new Error('The processor could not finish this export. Your source files are preserved.'), { details: `${args.join(' ')}\n${String(error)}\n${logTail}` })
+    }
     assertMediaNotCancelled(signal)
     if (code !== 0) {
       console.error('Media export failed', logTail)
-      throw new Error('The processor could not export these clips. Check their formats and export settings, then retry.')
+      throw Object.assign(new Error('The processor could not export these clips. Check their formats and export settings, then retry.'), { details: logTail })
     }
   }
 
@@ -96,12 +107,20 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
   async function probe(path: string, signal: AbortSignal): Promise<ProbeResult> {
     const ffmpeg = await load(signal)
     const file = `probe_${++sequence}.json`
-    const code = await ffmpeg.ffprobe(['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-show_entries', 'format=duration', '-of', 'json', path, '-o', file], -1, { signal })
-    if (code !== 0)
+    logTail = ''
+    const code = await ffmpeg.ffprobe(['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', path, '-o', file], -1, { signal })
+    // Core 0.12.10 reports -1 even for a successful ffprobe (#817 upstream).
+    // Accept that code only when a complete, usable JSON report was written.
+    if (code !== 0 && code !== -1) {
+      console.error('Media source probe failed', logTail)
       throw new Error('The selected source format could not be decoded.')
+    }
     const result = await ffmpeg.readFile(file, 'utf8', { signal })
     await ffmpeg.deleteFile(file)
-    return JSON.parse(String(result))
+    const metadata: ProbeResult = JSON.parse(String(result))
+    if (!metadata.streams?.some(stream => stream.codec_type === 'video' && Number(stream.width) > 0 && Number(stream.height) > 0))
+      throw new Error('The source has no readable video or image stream.')
+    return metadata
   }
 
   async function job<T>(operation: (signal: AbortSignal, prefix: string) => Promise<T>): Promise<T> {
@@ -186,7 +205,7 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
     }
     else {
       const codec = project.output.format === 'webm'
-        ? ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-crf', '32', '-b:v', '0']
+        ? ['-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '4', '-crf', String(Math.round(40 - project.output.quality * 30)), '-b:v', '4M']
         : ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-movflags', '+faststart']
       await run(['-f', 'concat', '-safe', '0', '-i', list, '-vf', `fps=${project.output.fps},format=yuv420p`, '-t', String(duration / 1000), ...codec, '-threads', '1', output], signal)
     }
@@ -200,15 +219,25 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
     for (const clip of project.clips)
       blobs.set(clip.asset_id, await source(clip.asset_id, signal))
     validateMediaProject(project, [...blobs].map(([id, blob]) => ({ id, size: blob.size })))
+    const reports = new Map<string, ProbeResult>()
+    for (const [id, blob] of blobs) {
+      const path = `${prefix}_probe.${sourceExtension(blob)}`
+      await write(path, blob, signal)
+      reports.set(id, await probe(path, signal))
+      // ffprobe and ffmpeg share native globals in this core. Keep probing in
+      // disposable instances so a probe cannot corrupt a later encoder run.
+      engine?.terminate()
+      engine = null
+    }
     const ffmpeg = await load(signal)
     const webm = project.output.format === 'webm'
     const segments: string[] = []
     for (let index = 0; index < project.clips.length; index++) {
       const clip = project.clips[index]!
       const blob = blobs.get(clip.asset_id)!
-      const input = `${prefix}_input_${index}.${blob.type === 'image/gif' ? 'gif' : blob.type.startsWith('image/') ? 'png' : blob.type === 'video/webm' ? 'webm' : 'mp4'}`
+      const input = `${prefix}_input_${index}.${sourceExtension(blob)}`
       await write(input, blob, signal)
-      const metadata = await probe(input, signal)
+      const metadata = reports.get(clip.asset_id)!
       const sourceDuration = Number(metadata.format?.duration) * 1000
       if (Number.isFinite(sourceDuration) && clip.out_ms > sourceDuration + 100)
         throw new Error(`Clip ${index + 1} ends after its source media.`)
@@ -218,8 +247,8 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
       const outputTime = sourceTime / clip.rate
       const segment = `${prefix}_clip_${index}.mkv`
       const codec = webm
-        ? ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-crf', String(Math.round(48 - project.output.quality * 20)), '-b:v', '0', '-c:a', 'libopus']
-        : ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', String(Math.round(36 - project.output.quality * 16)), '-c:a', 'aac']
+        ? ['-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '4', '-crf', String(Math.round(40 - project.output.quality * 30)), '-b:v', '4M']
+        : ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', String(Math.round(36 - project.output.quality * 16))]
       progressWindow = { base: index / project.clips.length * 0.8, span: 0.8 / project.clips.length, duration_ms: outputTime * 1000 }
       await run([
         ...(still ? ['-loop', '1'] : []),
@@ -246,12 +275,12 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
         ...codec,
         '-pix_fmt',
         'yuv420p',
+        '-c:a',
+        'pcm_s16le',
         '-ac',
         '2',
         '-ar',
         '48000',
-        '-b:a',
-        '128k',
         '-threads',
         '1',
         segment,
@@ -264,7 +293,7 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
     const joined = `${prefix}_joined.${webm ? 'webm' : 'mp4'}`
     const duration = mediaProjectDuration(project)
     progressWindow = { base: 0.8, span: 0.1, duration_ms: duration }
-    await run(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-t', String(duration / 1000), ...(!webm ? ['-movflags', '+faststart'] : []), joined], signal)
+    await run(['-f', 'concat', '-safe', '0', '-i', list, '-c:v', 'copy', '-c:a', webm ? 'libvorbis' : 'aac', '-b:a', '128k', '-t', String(duration / 1000), ...(!webm ? ['-movflags', '+faststart'] : []), joined], signal)
     const posterFile = `${prefix}_poster.png`
     await run(['-i', joined, '-frames:v', '1', posterFile], signal)
     const poster = binaryBlob(await ffmpeg.readFile(posterFile), 'image/png')
@@ -304,7 +333,7 @@ export function createBlogMediaProcessor(options: ProcessorOptions) {
           return (await renderStillImage(blob, project.clips[0]!, project.output, signal)).blob
         }
         const ffmpeg = await load(signal)
-        const input = `${prefix}_poster_source.mp4`
+        const input = `${prefix}_poster_source.${sourceExtension(blob)}`
         const output = `${prefix}_poster.png`
         await write(input, blob, signal)
         await run(['-ss', String(Math.max(0, timeMs) / 1000), '-i', input, '-frames:v', '1', '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease', output], signal)
