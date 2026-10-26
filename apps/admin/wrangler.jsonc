@@ -1,0 +1,100 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "akmalalif-admin",
+  "main": ".output/server/index.mjs",
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".output/public",
+    "html_handling": "drop-trailing-slash",
+    "run_worker_first": true
+  },
+  "compatibility_date": "2026-10-19",
+  "account_id": "73138007ecb740aea99f9c99bb2a2705",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "go.akmalalif.com",
+      "custom_domain": true
+    }
+  ],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "keep_vars": true,
+  "upload_source_maps": true,
+  "observability": {
+    "logs": {
+      "enabled": true
+    },
+    "traces": {
+      "enabled": true
+    }
+  },
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+  // Values marked with DEPLOY_* below are placeholders for local/dev.
+  // CLI deploy (pnpm deploy:worker / deploy:config) rewrites them into gitignored wrangler.deploy.jsonc.
+  // Prefer setting DEPLOY_* in .env or Workers Builds / Pages variables — do not hardcode production IDs here.
+  "analytics_engine_datasets": [
+    {
+      "binding": "ANALYTICS",
+      "dataset": "akmalalif_shortlinks"
+    },
+    {
+      "binding": "PORTFOLIO_ANALYTICS",
+      "dataset": "akmalalif_portfolio"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "preview_id": "b810de9ed6d0491c905b088d3f5b4cb7",
+      "id": "b810de9ed6d0491c905b088d3f5b4cb7"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "akmalalif-admin",
+      "database_id": "23b07f54-d1d0-491d-9ec3-b6a67315e018",
+      "migrations_dir": "drizzle"
+    },
+    {
+      "binding": "PORTFOLIO_DB",
+      "database_name": "akmalalif-portfolio",
+      "database_id": "675ccbd5-f4aa-4ad6-b292-0d8fac7c54d5"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      // preview_bucket_name: DEPLOY_R2_PREVIEW_BUCKET_NAME (falls back to DEPLOY_R2_BUCKET_NAME)
+      // omit DEPLOY_R2_BUCKET_NAME to drop R2 from generated deploy config
+      "preview_bucket_name": "akmalalif-admin-data",
+      "bucket_name": "akmalalif-admin-data"
+    }
+  ],
+  "services": [
+    {
+      "binding": "PORTFOLIO",
+      "service": "akmalalif-portfolio"
+    }
+  ],
+  "vars": {
+    "PORTFOLIO_ADMIN_ORIGIN": "https://www.akmalalif.com",
+    "SHORTLINK_ORIGIN": "https://go.akmalalif.com",
+    "ADMIN_EMAIL": "iamaleep@gmail.com",
+    "CF_ACCESS_TEAM_DOMAIN": "restless-moon-2787.cloudflareaccess.com",
+    "CF_ACCESS_AUD": "714d0158f871371058f2c4e4a2e119f2f72476e301a1aacdca730aa44372cc33",
+    "CF_ACCOUNT_ID": "73138007ecb740aea99f9c99bb2a2705",
+    "CF_WEB_ANALYTICS_SITE_TAG": "615f382c02b94e40b1e9f31bd230cfa3",
+    "NUXT_CF_ACCOUNT_ID": "73138007ecb740aea99f9c99bb2a2705",
+    "NUXT_DATASET": "akmalalif_shortlinks"
+  },
+  "triggers": {
+    "crons": ["0 0 * * *"] // Run backup task daily at 00:00 UTC
+  }
+}

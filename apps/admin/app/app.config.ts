@@ -1,0 +1,16 @@
+export default defineAppConfig({
+  title: 'Akmal Alif / Admin',
+  documentation: 'https://www.akmalalif.com/docs',
+  github: 'https://github.com/4kmal/akmal-alif-MASTER',
+  coffee: 'https://www.akmalalif.com/contact/',
+  twitter: '',
+  telegram: '',
+  description: 'Private portfolio briefing, analytics, and shortlink operations.',
+  image: '/admin/icon-192.png',
+  previewTTL: 300, // 5 minutes
+  slugRegex: /^[a-z0-9]+(?:-[a-z0-9]+)*$/i,
+  reserveSlug: [
+    'admin',
+    'dashboard',
+  ],
+})
