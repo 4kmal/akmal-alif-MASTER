@@ -812,7 +812,9 @@ export async function listBlogPosts(event: H3Event) {
       p.meta_description, p.canonical_path, p.published_version,
       c.slug AS category_slug, c.name AS category_name,
       c.color_class AS category_color_class, c.sort_order AS category_sort_order,
-      d.version AS draft_version, d.updated_at AS draft_updated_at
+      d.version AS draft_version, d.updated_at AS draft_updated_at,
+      d.title AS draft_title, d.slug AS draft_slug, d.excerpt AS draft_excerpt,
+      p.updated_at
     FROM blog_posts AS p
     LEFT JOIN blog_categories AS c ON c.id = p.category_id
     LEFT JOIN blog_post_drafts AS d ON d.post_id = p.id
@@ -834,7 +836,13 @@ export async function listBlogPosts(event: H3Event) {
         content_html: '',
         updated_at: row.draft_updated_at,
       }, [])
-      return postFromRow(row, draft)
+      return {
+        ...postFromRow(row, draft),
+        title: String(row.draft_title ?? row.title ?? ''),
+        slug: String(row.draft_slug ?? row.slug),
+        excerpt: String(row.draft_excerpt ?? row.excerpt ?? ''),
+        updated_at: String(row.draft_updated_at ?? row.updated_at),
+      }
     })),
   }
 }

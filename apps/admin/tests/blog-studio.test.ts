@@ -9,6 +9,7 @@ import {
   createBlogTaxonomy,
   createMediaProject,
   initBlogUpload,
+  listBlogPosts,
   previewBlogPost,
   publishBlogPost,
   putBlogUploadPart,
@@ -225,6 +226,13 @@ describe('blog studio persistence', () => {
       expect(saved.post.title).toBe('Private draft')
       expect(saved.draft.title).toBe('Second title')
       expect(database.prepare('SELECT title FROM blog_posts WHERE id = ?').get(created.post.id).title).toBe('Private draft')
+      const listing = await listBlogPosts(eventFor(d1, bucket, 'GET', '/posts'))
+      expect(listing.posts[0]).toMatchObject({
+        id: created.post.id,
+        title: 'Second title',
+        excerpt: 'Second excerpt',
+        updated_at: saved.draft.updated_at,
+      })
 
       const writes = await Promise.allSettled([
         updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', { version: 2, title: 'CAS A' }), created.post.id),
