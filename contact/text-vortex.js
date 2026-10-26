@@ -30,11 +30,18 @@ class TextVortexBackground {
         this.frameCount = 0;
         this.fpsCounter = 0;
         this.lastFpsUpdate = 0;
+        this.animationFrameId = null;
+        this.resizeTimeout = null;
+        this.isPaused = false;
+        this.isDestroyed = false;
+        this.initialized = false;
         
         this.init();
     }
     
     init() {
+        if (this.initialized || this.isDestroyed) return;
+        this.initialized = true;
         console.log('🌀 Initializing Optimized Text Vortex Background...');
         
         // Create canvas element
@@ -162,7 +169,9 @@ class TextVortexBackground {
 
         if (typeof MutationObserver === 'undefined') return;
 
-        this.themeObserver = new MutationObserver(() => this.updateThemePalette());
+        this.themeObserver = new MutationObserver(() => {
+            if (!this.isDestroyed) this.updateThemePalette();
+        });
         this.themeObserver.observe(document.documentElement, {
             attributes: true,
             attributeFilter: ['class', 'data-theme']
@@ -191,13 +200,18 @@ class TextVortexBackground {
     }
     
     startAnimation() {
-        this.animate();
+        if (this.isDestroyed || this.isPaused || this.animationFrameId !== null) return;
+        this.animationFrameId = window.requestAnimationFrame((time) => this.animate(time));
     }
     
     animate(currentTime) {
+        this.animationFrameId = null;
+
+        if (this.isDestroyed || this.isPaused || !Number.isFinite(currentTime)) return;
+
         // FPS throttling for consistent performance
         if (currentTime - this.lastFrameTime < this.frameInterval) {
-            requestAnimationFrame((time) => this.animate(time));
+            this.animationFrameId = window.requestAnimationFrame((time) => this.animate(time));
             return;
         }
         
@@ -221,7 +235,9 @@ class TextVortexBackground {
         this.updateFPS(currentTime);
         
         // Continue animation
-        requestAnimationFrame((time) => this.animate(time));
+        if (!this.isDestroyed && !this.isPaused) {
+            this.animationFrameId = window.requestAnimationFrame((time) => this.animate(time));
+        }
     }
     
     drawText(time) {
@@ -284,9 +300,15 @@ class TextVortexBackground {
     }
     
     handleResize() {
+        if (this.isDestroyed) return;
+
         // Debounce resize events
-        clearTimeout(this.resizeTimeout);
+        if (this.resizeTimeout !== null) {
+            clearTimeout(this.resizeTimeout);
+        }
         this.resizeTimeout = setTimeout(() => {
+            this.resizeTimeout = null;
+            if (this.isDestroyed) return;
             this.updateCanvasSize();
             this.updateGridParameters();
             this.setupRenderer();
@@ -295,11 +317,18 @@ class TextVortexBackground {
     
     // Public API methods
     pause() {
+        if (this.isDestroyed) return;
         this.isPaused = true;
+        if (this.animationFrameId !== null) {
+            window.cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
     }
     
     resume() {
+        if (this.isDestroyed) return;
         this.isPaused = false;
+        this.startAnimation();
     }
     
     getCurrentFPS() {
@@ -316,14 +345,28 @@ class TextVortexBackground {
     }
     
     destroy() {
+        if (this.isDestroyed) return;
+        this.isDestroyed = true;
         this.isPaused = true;
-        if (this.root && this.canvas) {
+
+        if (this.animationFrameId !== null) {
+            window.cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+
+        if (this.resizeTimeout !== null) {
+            clearTimeout(this.resizeTimeout);
+        }
+        this.resizeTimeout = null;
+
+        if (this.root && this.canvas && this.canvas.parentNode === this.root) {
             this.root.removeChild(this.canvas);
         }
         if (this.resizeHandler) {
             window.removeEventListener('resize', this.resizeHandler);
         }
         this.themeObserver?.disconnect();
+        this.themeObserver = null;
         console.log('🌀 Text Vortex destroyed');
     }
 }
@@ -332,6 +375,7 @@ class TextVortexBackground {
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize text vortex background after a small delay
     setTimeout(() => {
+        if (window.textVortex) return;
         const textVortex = new TextVortexBackground();
         window.textVortex = textVortex; // Make available globally for debugging
         console.log('🌀 Text Vortex Background fully loaded and running!');
