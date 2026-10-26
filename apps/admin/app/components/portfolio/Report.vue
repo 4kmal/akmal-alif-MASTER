@@ -953,9 +953,13 @@ onBeforeUnmount(() => {
   <section class="portfolio-report">
     <div class="portfolio-report__heading">
       <div>
-        <p class="portfolio-kicker">{{ report === 'overview' ? 'Briefing' : title }}</p>
+        <p class="portfolio-kicker">
+          {{ report === 'overview' ? 'Briefing' : title }}
+        </p>
         <h1>{{ title }}</h1>
-        <p class="portfolio-report__intro">{{ intro }}</p>
+        <p class="portfolio-report__intro">
+          {{ intro }}
+        </p>
       </div>
       <div class="portfolio-report__actions">
         <PortfolioSourceBadge :state="sourceState" />
@@ -1021,7 +1025,9 @@ onBeforeUnmount(() => {
         </label>
         <a class="portfolio-button portfolio-button--quiet" :href="historyCSVURL" download>Export CSV</a>
       </template>
-      <button class="portfolio-button portfolio-button--quiet" type="submit">Apply range</button>
+      <button class="portfolio-button portfolio-button--quiet" type="submit">
+        Apply range
+      </button>
     </form>
 
     <div class="portfolio-metric-grid">
@@ -1047,21 +1053,25 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="payload?.alerts.length" class="portfolio-alerts" role="status">
-      <p class="portfolio-eyebrow">Attention</p>
+      <p class="portfolio-eyebrow">
+        Attention
+      </p>
       <ul>
-        <li v-for="alert in payload.alerts" :key="alert">{{ alert }}</li>
+        <li v-for="alert in payload.alerts" :key="alert">
+          {{ alert }}
+        </li>
       </ul>
     </div>
 
     <div
       v-if="payload?.series.length"
-      class="
-        portfolio-panel portfolio-panel--chart
-      "
+      class="portfolio-panel portfolio-panel--chart"
     >
       <div class="portfolio-panel__header">
         <div>
-          <p class="portfolio-eyebrow">Trend</p>
+          <p class="portfolio-eyebrow">
+            Trend
+          </p>
           <h2>Activity across the selected windows</h2>
         </div>
         <span class="portfolio-panel__note">Daily activity from the selected window.</span>
@@ -1069,7 +1079,11 @@ onBeforeUnmount(() => {
       <svg class="portfolio-report__chart" viewBox="0 0 1000 260" width="100%" height="260" style="display:block;width:100%;height:auto;min-height:12rem" role="img" aria-labelledby="portfolio-chart-title portfolio-chart-description">
         <title id="portfolio-chart-title">Daily report activity</title>
         <desc id="portfolio-chart-description">A line chart of activity for each day in the selected report range.</desc>
-        <line x1="24" y1="220" x2="976" y2="220" class="portfolio-report__chart-axis" stroke="currentColor" stroke-opacity=".2" stroke-width="2" />
+        <line
+          x1="24" y1="220" x2="976" y2="220" class="
+            portfolio-report__chart-axis
+          " stroke="currentColor" stroke-opacity=".2" stroke-width="2"
+        />
         <polyline :points="chartPolyline" class="portfolio-report__chart-line" fill="none" stroke="var(--chart-1, currentColor)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
         <circle
           v-for="point in chartPoints"
@@ -1085,25 +1099,44 @@ onBeforeUnmount(() => {
           <title>{{ point.label }}: {{ point.raw }}</title>
         </circle>
       </svg>
-      <div class="portfolio-table-wrap portfolio-report__chart-table-wrap">
-        <table class="portfolio-table portfolio-report__chart-table">
-          <caption>Daily activity points</caption>
-          <thead><tr><th scope="col">Day</th><th scope="col">Activity</th></tr></thead>
-          <tbody>
-            <tr v-for="point in chartPoints" :key="`table-${point.label}-${point.raw}`">
-              <th scope="row">{{ point.label }}</th>
-              <td>{{ point.raw }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <details class="portfolio-chart-values">
+        <summary>View daily values</summary>
+        <div class="portfolio-table-wrap portfolio-report__chart-table-wrap">
+          <table class="portfolio-table portfolio-report__chart-table">
+            <caption>Daily activity points</caption>
+            <thead>
+              <tr>
+                <th scope="col">
+                  Day
+                </th><th scope="col">
+                  Activity
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="point in chartPoints" :key="`table-${point.label}-${point.raw}`">
+                <th scope="row">
+                  {{ point.label }}
+                </th>
+                <td>{{ point.raw }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
 
     <div v-if="payload?.drilldowns.length" class="portfolio-drilldown-grid">
-      <article v-for="section in payload.drilldowns" :key="section.title" class="portfolio-panel portfolio-panel--drilldown">
+      <article
+        v-for="section in payload.drilldowns" :key="section.title" class="
+          portfolio-panel portfolio-panel--drilldown
+        "
+      >
         <div class="portfolio-panel__header">
           <div>
-            <p class="portfolio-eyebrow">Drilldown</p>
+            <p class="portfolio-eyebrow">
+              Drilldown
+            </p>
             <h2>{{ section.title }}</h2>
           </div>
           <span v-if="section.note" class="portfolio-panel__note">{{ section.note }}</span>
@@ -1112,14 +1145,22 @@ onBeforeUnmount(() => {
           <table class="portfolio-table">
             <thead>
               <tr>
-                <th scope="col">Dimension</th>
-                <th scope="col">Value</th>
-                <th scope="col">Detail</th>
+                <th scope="col">
+                  Dimension
+                </th>
+                <th scope="col">
+                  Value
+                </th>
+                <th scope="col">
+                  Detail
+                </th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in section.items" :key="`${section.title}-${item.label}`">
-                <th scope="row">{{ item.label }}</th>
+                <th scope="row">
+                  {{ item.label }}
+                </th>
                 <td>{{ item.value ?? '—' }}</td>
                 <td>{{ item.detail || '—' }}</td>
               </tr>
@@ -1129,10 +1170,14 @@ onBeforeUnmount(() => {
       </article>
     </div>
 
-    <section v-if="payload?.history" class="portfolio-panel portfolio-panel--history">
+    <section
+      v-if="payload?.history" class="portfolio-panel portfolio-panel--history"
+    >
       <div class="portfolio-panel__header">
         <div>
-          <p class="portfolio-eyebrow">Retained detail</p>
+          <p class="portfolio-eyebrow">
+            Retained detail
+          </p>
           <h2>Event history</h2>
         </div>
         <span class="portfolio-panel__note">Raw D1 detail is retained for 90 days.</span>
@@ -1141,18 +1186,32 @@ onBeforeUnmount(() => {
         <table class="portfolio-table portfolio-table--history">
           <thead>
             <tr>
-              <th scope="col">When</th>
-              <th scope="col">Event</th>
-              <th scope="col">Path / slug</th>
-              <th scope="col">Source</th>
-              <th scope="col">Country</th>
-              <th scope="col">Detail</th>
+              <th scope="col">
+                When
+              </th>
+              <th scope="col">
+                Event
+              </th>
+              <th scope="col">
+                Path / slug
+              </th>
+              <th scope="col">
+                Source
+              </th>
+              <th scope="col">
+                Country
+              </th>
+              <th scope="col">
+                Detail
+              </th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="event in payload.history.events" :key="event.event_id">
               <td>{{ event.event_at ? formatUpdatedAt(event.event_at) : '—' }}</td>
-              <th scope="row">{{ event.event_type || 'Unknown event' }}</th>
+              <th scope="row">
+                {{ event.event_type || 'Unknown event' }}
+              </th>
               <td>{{ event.shortlink_slug ? `/${event.shortlink_slug}` : event.path || event.target || '—' }}</td>
               <td>{{ event.source || '—' }}</td>
               <td>{{ event.country || '—' }}</td>
@@ -1181,7 +1240,11 @@ onBeforeUnmount(() => {
       </div>
       <div class="portfolio-history-actions">
         <span class="portfolio-panel__note">{{ payload.history.events.length }} rows in this page.</span>
-        <button v-if="payload.history.hasMore" class="portfolio-button portfolio-button--quiet" type="button" @click="loadNextHistoryPage">
+        <button
+          v-if="payload.history.hasMore" class="
+            portfolio-button portfolio-button--quiet
+          " type="button" @click="loadNextHistoryPage"
+        >
           Load next page
         </button>
       </div>
@@ -1189,11 +1252,15 @@ onBeforeUnmount(() => {
 
     <div class="portfolio-panel portfolio-panel--notes">
       <div>
-        <p class="portfolio-eyebrow">Status</p>
+        <p class="portfolio-eyebrow">
+          Status
+        </p>
         <h2>{{ payload?.sourceNote || 'Every metric must identify its source and freshness.' }}</h2>
       </div>
       <ul v-if="payload?.highlights.length">
-        <li v-for="highlight in payload.highlights" :key="highlight">{{ highlight }}</li>
+        <li v-for="highlight in payload.highlights" :key="highlight">
+          {{ highlight }}
+        </li>
       </ul>
       <p v-else class="portfolio-panel__note">
         Visitor and session estimates follow each source's declared method. Blank fields mean the source did not return a value.

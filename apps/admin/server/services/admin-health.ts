@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import { readLinkHealth } from '../utils/link-health-state'
 
 interface D1Statement {
   bind: (...values: unknown[]) => D1Statement
@@ -95,13 +96,30 @@ export async function readAdminHealth(event: H3Event, now = Date.now()): Promise
     }
   }
 
-  source_health.push({
-    name: 'Sink link checks',
-    state: 'unavailable',
-    available: false,
-    reason: 'Sink checks run on demand in /admin/check; no persisted result table is available to this briefing.',
-  })
-  alerts.push('Broken-link results are available from the on-demand Sink health check; no cached count is being inferred here.')
+  try {
+    if (!db)
+      throw new Error('Missing database')
+    const health = await readLinkHealth(db, now)
+    source_health.push({
+      name: 'Sink link checks',
+      state: health.checked ? 'live' : 'partial',
+      available: true,
+      reason: health.checked
+        ? `${health.broken} failures across ${health.checked} destinations checked within seven days.`
+        : 'No recent destination checks. Run Health check to inspect links.',
+      detail: health.lastCheckedAt ? `Last check: ${health.lastCheckedAt}` : undefined,
+    })
+    if (health.broken)
+      alerts.push(`${health.broken} recently checked shortlink destination${health.broken === 1 ? '' : 's'} failed. Review Health check.`)
+  }
+  catch {
+    source_health.push({
+      name: 'Sink link checks',
+      state: 'unavailable',
+      available: false,
+      reason: 'Recent destination-check results could not be read.',
+    })
+  }
 
   for (const [name, binding, reason] of [
     ['Shortlink analytics', env.ANALYTICS, 'Analytics Engine shortlink dataset binding.'],

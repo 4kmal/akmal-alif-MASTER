@@ -10,5 +10,6 @@ definePageMeta({
       {{ $t('nav.migrate') }}
     </h1>
     <DashboardMigrate />
+    <PortfolioMaintenance />
   </main>
 </template>

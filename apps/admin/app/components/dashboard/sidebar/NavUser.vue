@@ -12,7 +12,6 @@ const { userEmail } = useAuthSession()
 const menuButton = useTemplateRef<{ $el: HTMLElement }>('menuButton')
 const menuOpen = shallowRef(false)
 const logoutOpen = shallowRef(false)
-const avatarURL = shallowRef('')
 
 async function openLogoutDialog() {
   menuOpen.value = false
@@ -31,23 +30,6 @@ const user = computed<User>(() => ({
 }))
 const avatarFallback = computed(() => user.value.name.charAt(0).toUpperCase() || 'R')
 
-watch(userEmail, async (email, _previousEmail, onCleanup) => {
-  avatarURL.value = ''
-  if (!email)
-    return
-
-  let cancelled = false
-  onCleanup(() => {
-    cancelled = true
-  })
-
-  const bytes = new TextEncoder().encode(email.trim().toLowerCase())
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
-  if (!cancelled) {
-    const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
-    avatarURL.value = `https://gravatar.webp.se/avatar/${hash}?d=404`
-  }
-}, { immediate: true })
 </script>
 
 <template>
@@ -65,7 +47,6 @@ watch(userEmail, async (email, _previousEmail, onCleanup) => {
             "
           >
             <Avatar class="size-8 rounded-full">
-              <AvatarImage v-if="avatarURL" :src="avatarURL" alt="" />
               <AvatarFallback class="rounded-full">
                 {{ avatarFallback }}
               </AvatarFallback>
@@ -86,7 +67,6 @@ watch(userEmail, async (email, _previousEmail, onCleanup) => {
           <DropdownMenuLabel class="p-0">
             <div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
               <Avatar class="size-8 rounded-full">
-                <AvatarImage v-if="avatarURL" :src="avatarURL" alt="" />
                 <AvatarFallback class="rounded-full">
                   {{ avatarFallback }}
                 </AvatarFallback>

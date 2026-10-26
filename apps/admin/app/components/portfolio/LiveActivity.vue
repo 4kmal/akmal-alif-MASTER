@@ -4,6 +4,7 @@ import type { ActivityEvent, ActivityFilters, ActivitySnapshot } from './live-ac
 import { useDocumentVisibility, useOnline } from '@vueuse/core'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { getTimeZone } from '@/utils/time'
+import CountryActivityMap from './CountryActivityMap.vue'
 import {
   ACTIVITY_EVENT_TYPES,
   activitySourceState,

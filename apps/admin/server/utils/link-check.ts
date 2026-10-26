@@ -3,6 +3,7 @@ import type { LinkCheckRequest, LinkCheckResponse, LinkCheckResult } from '#shar
 import { getHeader } from 'h3'
 import { ofetch } from 'ofetch'
 import { toErrorMessage } from '#shared/utils/error'
+import { persistLinkHealth } from './link-health-state'
 import { listLinks } from './link-store'
 import { isPublicHttpUrl } from './public-url'
 
@@ -82,8 +83,15 @@ export async function checkLinksPage(event: H3Event, { cursor, limit, timeout }:
     status: 'all',
   })
 
+  const results = await Promise.all(page.links.map(({ slug, url }) => checkLink({ slug, url }, headers, timeout)))
+  try {
+    await persistLinkHealth(event.context.cloudflare.env.DB, results)
+  }
+  catch {
+    console.warn('[link-check] Could not retain the latest health results')
+  }
   return {
-    results: await Promise.all(page.links.map(({ slug, url }) => checkLink({ slug, url }, headers, timeout))),
+    results,
     cursor: page.cursor,
     list_complete: page.list_complete,
   }

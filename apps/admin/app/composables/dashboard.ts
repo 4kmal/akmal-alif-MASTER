@@ -25,6 +25,11 @@ export const DASHBOARD_ROUTES = {
     titleKey: 'Traffic',
     icon: ChartArea,
   },
+  activity: {
+    paths: ['/admin/activity'],
+    titleKey: 'Live activity',
+    icon: Activity,
+  },
   history: {
     paths: ['/admin/history'],
     titleKey: 'Event history',
@@ -62,7 +67,7 @@ export const DASHBOARD_ROUTES = {
   },
   realtime: {
     paths: ['/admin/realtime'],
-    titleKey: 'nav.realtime',
+    titleKey: 'Shortlink realtime',
     icon: Activity,
   },
   check: {

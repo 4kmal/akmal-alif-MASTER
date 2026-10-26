@@ -25,6 +25,12 @@ const platformItems = computed<NavItem[]>(() => [
     isActive: isActive('traffic'),
   },
   {
+    title: 'Live activity',
+    url: '/admin/activity',
+    icon: DASHBOARD_ROUTES.activity.icon,
+    isActive: isActive('activity'),
+  },
+  {
     title: 'Event history',
     url: '/admin/history',
     icon: DASHBOARD_ROUTES.history.icon,
@@ -82,7 +88,7 @@ const settingsItems = computed<NavItem[]>(() => [
     isActive: isActive('analysis'),
   },
   {
-    title: 'Realtime',
+    title: 'Shortlink realtime',
     url: '/admin/realtime',
     icon: DASHBOARD_ROUTES.realtime.icon,
     isActive: isActive('realtime'),
@@ -106,7 +112,7 @@ const settingsItems = computed<NavItem[]>(() => [
                 "
               >
                 <img
-                  :src="adminAssetURL('sink.png')"
+                  :src="adminAssetURL('portfolio-mark.svg')"
                   alt=""
                   width="32"
                   height="32"
