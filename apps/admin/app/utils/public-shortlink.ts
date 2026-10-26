@@ -1,5 +1,5 @@
 export const DEFAULT_PUBLIC_SHORTLINK_ORIGIN = 'https://go.akmalalif.com'
-export const PUBLIC_PORTFOLIO_ICON_PATH = '/icon/ig.ico'
+export const PUBLIC_PORTFOLIO_ICON_PATH = '/icon/portfolio.svg'
 
 const SAFE_UPLOADED_IMAGE_PATH = '/_assets/images/'
 

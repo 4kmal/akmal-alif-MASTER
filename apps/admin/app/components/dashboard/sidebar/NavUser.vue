@@ -29,7 +29,6 @@ const user = computed<User>(() => ({
   email: userEmail.value || '',
 }))
 const avatarFallback = computed(() => user.value.name.charAt(0).toUpperCase() || 'R')
-
 </script>
 
 <template>

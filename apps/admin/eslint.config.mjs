@@ -7,6 +7,9 @@ export default withNuxt(antfu(
     formatters: true,
     pnpm: false,
     ignores: [
+      '.wrangler/**',
+      '.output/**',
+      '.nuxt/**',
       'app/components/ui/**',
       'app/data/**',
       'public/*.json',

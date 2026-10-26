@@ -20,7 +20,7 @@ interface BodyDeadline {
   response: Response
   target: URL
   fetchController: AbortController
-  callerSignal?: AbortSignal
+  callerSignal?: AbortSignal | null
   abortFromCaller: () => void
   bodyTimeoutMs: number
 }

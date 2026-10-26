@@ -10,5 +10,5 @@
       <circle cx="3" cy="23" r=".5" fill="#fff" fill-opacity=".16"/>
     </pattern>
   </defs>
-  <rect width="96" height="96" fill="url(#grain)"/>
+  <rect width="96" height="96" fill="url(#grain)" opacity=".14"/>
 </svg>
