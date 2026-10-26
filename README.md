@@ -8,6 +8,7 @@ Vite 5, plain HTML, CSS and JavaScript, served by Cloudflare Workers Static Asse
 | Static build | `dist/` / `ASSETS` |
 | D1 | `akmalalif-portfolio` / `DB` |
 | R2 | `akmalalif-portfolio-media` / `MEDIA` |
+| Admin service | `akmalalif-admin` / `ADMIN` |
 | Preview | `https://akmalalif-portfolio.iamaleep.workers.dev` |
 | Canonical domain | `https://www.akmalalif.com` |
 
@@ -44,6 +45,28 @@ pnpm exec wrangler deploy --dry-run
 
 Tests execute the real schema and Worker SQL through Node SQLite. Coverage includes published/future/draft filtering, missing posts, atomic visit updates and rollback, clean routes, and media range/HEAD requests.
 
+## Private administration
+
+The separate Sink-based Nuxt application lives in `apps/admin`. Its browser interface is served through the portfolio Worker at `https://www.akmalalif.com/admin`. Cloudflare Access and both Workers validate the owner identity. Native short links and bearer-authenticated Sink API/MCP clients use `https://go.akmalalif.com`.
+
+The admin service has its own D1 database, KV namespace, private R2 bucket, two Analytics Engine datasets and Workers AI binding. The portfolio's existing content database, lifetime counters and media bucket remain separate. See [the admin app](apps/admin/README.md) for setup and [the Sink parity checklist](docs/admin-sink-parity.md) for feature and release evidence.
+
+Install the admin dependencies separately, using the same pinned runtime:
+
+```powershell
+pnpm --dir apps/admin install --frozen-lockfile
+pnpm dev:admin
+pnpm test:admin
+pnpm check:admin
+pnpm build:admin
+```
+
+Frontend development at port 3000 continues to block API writes. The admin's local backend workflow uses explicit local settings and local storage; production credentials belong in encrypted Cloudflare secrets.
+
+Portfolio events use first-party anonymous browser and session identifiers. Reports label visitors as browser estimates and active visitors as active within five minutes. Sessions expire after 30 minutes of inactivity. Detailed records are retained for 90 days and mergeable daily summaries for 13 months. Imported page history is labelled as legacy recorded events, with no invented historical visitors or engagement. Contact interactions measure intent because the public chat is a local simulation.
+
+The analytics datasets have separate schemas: `akmalalif_shortlinks` retains Sink's aggregate contract; `akmalalif_portfolio` receives portfolio event records. Raw IP, full user-agent and precise location stay in the protected D1 history. Neither public lifetime counters nor GET polling records an additional visit.
+
 ## HTTP interface
 
 - `GET /api/blog/categories`: active categories, ordered by sort order/name.
@@ -51,6 +74,10 @@ Tests execute the real schema and Worker SQL through Node SQLite. Coverage inclu
 - `GET /api/blog/posts/:slug`: one published post, or JSON `null`.
 - `GET /api/profile-metrics`: views and blog impressions.
 - `POST /api/profile-metrics`: record a visit and update counters in one D1 batch.
+- `POST /api/events`: bounded, deduplicated portfolio event batches from the canonical site.
+- `GET /api/admin/overview`: private briefing data.
+- `GET /api/admin/portfolio/*`: private portfolio reports and retained history.
+- `/api/admin/sink/*`: owner-authenticated Sink operations through the service gateway.
 
 The Worker accepts writes on `www.akmalalif.com` and localhost for direct local API testing. Browser visit tracking writes only on `www.akmalalif.com`; localhost and workers.dev previews only read metrics. Browser tracking retains the per-path session key, and polling never records visits. Any path beginning `/blog`, including `/blogs`, increments impressions. Paths are truncated to 512 Unicode characters; referrer/user agent to 1,024.
 
