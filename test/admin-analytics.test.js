@@ -134,11 +134,17 @@ test('schema creates prefixed raw, daily, and state tables', () => {
 test('ingestion normalizes, trusts gateway metadata, deduplicates atomically, and mirrors accepted rows', async () => {
   const { database, d1 } = createDatabase();
   const writes = [];
+  const nativeWrites = [];
   try {
     const env = environment(d1, {
       PORTFOLIO_ANALYTICS: {
         writeDataPoint(point) {
           writes.push(point);
+        },
+      },
+      ANALYTICS: {
+        writeDataPoint(point) {
+          nativeWrites.push(point);
         },
       },
     });
@@ -171,6 +177,7 @@ test('ingestion normalizes, trusts gateway metadata, deduplicates atomically, an
     });
     assert.match(first.headers.get('set-cookie') ?? '', /__Host-portfolio-visitor=/);
     assert.equal(writes.length, 2);
+    assert.equal(nativeWrites.length, 0);
     assert.equal(writes[0].indexes[0], 'page_view');
     assert.equal(writes[0].indexes.includes('203.0.113.8'), false);
     assert.equal(writes[0].indexes.includes('MY'), true);
@@ -217,6 +224,118 @@ test('ingestion normalizes, trusts gateway metadata, deduplicates atomically, an
     });
     assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count, 2);
     assert.equal(writes.length, 2);
+    assert.equal(nativeWrites.length, 0);
+  } finally {
+    database.close();
+  }
+});
+
+test('history exposes bounded raw detail with stable cursors while reports and AE stay redacted', async () => {
+  const { database, d1 } = createDatabase();
+  const portfolioWrites = [];
+  const nativeWrites = [];
+  try {
+    const env = environment(d1, {
+      PORTFOLIO_ANALYTICS: {
+        writeDataPoint(point) {
+          portfolioWrites.push(point);
+        },
+      },
+      ANALYTICS: {
+        writeDataPoint(point) {
+          nativeWrites.push(point);
+        },
+      },
+    });
+    const first = await ingestEvents(request('/internal/events', [
+      { id: 'history-a', type: 'page_view', path: '/' },
+      { id: 'history-b', type: 'article_progress', path: '/blog/story', progress: 50 },
+    ]), env);
+    assert.equal(first.status, 200);
+
+    const page = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/history?range=24h&limit=1'),
+      env,
+    );
+    const pageData = await page.json();
+    assert.equal(page.status, 200);
+    assert.equal(pageData.data.events.length, 1);
+    assert.equal(pageData.data.has_more, true);
+    assert.deepEqual({
+      ip: pageData.data.events[0].ip,
+      user_agent: pageData.data.events[0].user_agent,
+      country: pageData.data.events[0].country,
+      region: pageData.data.events[0].region,
+      city: pageData.data.events[0].city,
+      latitude: pageData.data.events[0].latitude,
+      longitude: pageData.data.events[0].longitude,
+      source: pageData.data.events[0].source,
+      event_at: pageData.data.events[0].event_at,
+    }, {
+      ip: '203.0.113.8',
+      user_agent: 'Mozilla/5.0',
+      country: 'MY',
+      region: '10',
+      city: 'Kuala Lumpur',
+      latitude: 3.139,
+      longitude: 101.6869,
+      source: 'portfolio',
+      event_at: '2026-10-26T10:00:00.000Z',
+    });
+    assert.match(pageData.data.next_cursor, /^[A-Za-z0-9_-]+$/);
+
+    const filtered = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/history?range=24h&source=portfolio&event_type=article_progress&path=%2Fblog%2Fstory'),
+      env,
+    );
+    const filteredData = await filtered.json();
+    assert.equal(filtered.status, 200);
+    assert.deepEqual(filteredData.data.events.map((event) => event.event_id), ['history-b']);
+
+    env.ANALYTICS_NOW = now + 1_000;
+    const next = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/history?range=24h&limit=1&cursor=' + encodeURIComponent(pageData.data.next_cursor)),
+      env,
+    );
+    const nextData = await next.json();
+    assert.equal(next.status, 200);
+    assert.equal(nextData.data.events.length, 1);
+    assert.notEqual(nextData.data.events[0].event_id, pageData.data.events[0].event_id);
+    assert.equal(nextData.data.has_more, false);
+
+    const csv = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/history?range=24h&limit=2&format=csv'),
+      env,
+    );
+    const csvText = await csv.text();
+    assert.equal(csv.status, 200);
+    assert.match(csv.headers.get('content-type') ?? '', /text\/csv/);
+    assert.match(csvText, /event_id,.*user_agent/);
+    assert.match(csvText, /203\.0\.113\.8/);
+    assert.match(csvText, /Mozilla\/5\.0/);
+
+    const tooOld = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/history?from=' + encodeURIComponent(new Date(now - (91 * 24 * 60 * 60 * 1000)).toISOString()) + '&to=' + encodeURIComponent(new Date(now).toISOString())),
+      env,
+    );
+    assert.equal(tooOld.status, 416);
+
+    for (const route of ['overview', 'traffic', 'realtime']) {
+      const response = await handleAnalyticsRequest(
+        new Request('https://www.akmalalif.com/api/portfolio/' + route + '?range=24h'),
+        env,
+      );
+      const body = await response.text();
+      assert.equal(body.includes('203.0.113.8'), false, route);
+      assert.equal(body.includes('Mozilla/5.0'), false, route);
+      assert.equal(body.includes('Kuala Lumpur'), false, route);
+      assert.equal(body.includes('3.139'), false, route);
+    }
+    assert.equal(nativeWrites.length, 0);
+    assert.equal(portfolioWrites.some((point) => JSON.stringify(point).includes('203.0.113.8')), false);
+    assert.equal(portfolioWrites.some((point) => JSON.stringify(point).includes('Mozilla/5.0')), false);
+    assert.equal(portfolioWrites.some((point) => JSON.stringify(point).includes('Kuala Lumpur')), false);
+    assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count, 2);
   } finally {
     database.close();
   }
@@ -404,7 +523,7 @@ test('reports expose deterministic overview, content, conversions, realtime, and
   }
 });
 
-test('performance queries Workers and RUM with bounded Time ranges and source-specific coverage', async () => {
+test('performance queries Workers and RUM with bounded string ranges and source-specific coverage', async () => {
   const { database, d1 } = createDatabase();
   const calls = [];
   try {
@@ -470,10 +589,11 @@ test('performance queries Workers and RUM with bounded Time ranges and source-sp
     const result = await response.json();
     assert.equal(response.status, 200);
     assert.equal(calls.length, 3);
-    assert.equal(calls.every((call) => call.query.includes('Time!')), true);
-    assert.equal(calls.some((call) => call.query.includes('Date!')), false);
+    assert.equal(calls.every((call) => call.query.includes('string!')), true);
+    assert.equal(calls.some((call) => call.query.includes('Time!') || call.query.includes('Date!')), false);
     assert.equal(calls.every((call) => call.query.includes('accountTag: string!')), true);
-    assert.equal(calls.every((call) => call.variables.start === '2026-09-25T10:00:00.000Z'), true);
+    assert.equal(calls.every((call) => call.variables.datetimeStart === '2026-09-25T10:00:00.000Z'), true);
+    assert.equal(calls.every((call) => call.variables.datetimeEnd === '2026-10-26T10:00:00.000Z'), true);
     assert.equal(calls.filter((call) => call.query.includes('PortfolioWorkerPerformance')).every((call) => call.query.includes('scriptName')), true);
     assert.equal(calls.some((call) => call.query.includes('siteTag: $siteTag')), true);
     assert.equal(result.meta.coverage.unavailable, false);

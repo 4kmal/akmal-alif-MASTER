@@ -7,6 +7,7 @@ const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_EVENTS = 20;
 const MAX_REPORT_ROWS = 50_000;
+const MAX_HISTORY_ROWS = 100;
 const MAINTENANCE_BATCH_SIZE = 1_000;
 const MAX_PATH_LENGTH = 512;
 const HLL_REGISTERS = 64;
@@ -24,6 +25,15 @@ class AnalyticsRangeLimitError extends Error {
   constructor() {
     super('Raw analytics detail exceeds the bounded report limit');
     this.code = 'REPORT_TOO_LARGE';
+  }
+}
+
+class HistoryQueryError extends Error {
+  constructor(message, status = 400, meta = undefined) {
+    super(message);
+    this.code = 'HISTORY_QUERY_INVALID';
+    this.status = status;
+    this.meta = meta;
   }
 }
 
@@ -50,6 +60,7 @@ const REPORT_ROUTES = new Set([
   'conversions',
   'realtime',
   'performance',
+  'history',
 ]);
 
 const CAMPAIGN_FIELDS = [
@@ -615,9 +626,12 @@ function dataPointForEvent(event, env) {
 }
 
 function mirrorEvents(events, env, ctx) {
-  const bindings = [...new Set([env.PORTFOLIO_ANALYTICS, env.ANALYTICS].filter(
+  // Portfolio events use the prefixed payload contract. Native Sink owns its
+  // ANALYTICS binding and writes its own legacy access-log shape in the app
+  // wrapper; mirroring this payload there would corrupt that dataset.
+  const bindings = [env.PORTFOLIO_ANALYTICS].filter(
     (binding) => binding && typeof binding.writeDataPoint === 'function',
-  ))];
+  );
   const writes = [];
   for (const binding of bindings) {
     for (const event of events) {
@@ -1235,16 +1249,10 @@ function buildLocations(rows) {
   for (const row of rows) {
     const country = row.country ?? 'unknown';
     const region = row.region ?? 'unknown';
-    const city = row.city ?? 'unknown';
-    const latitude = row.latitude == null ? null : row.latitude;
-    const longitude = row.longitude == null ? null : row.longitude;
-    const key = [country, region, city, latitude, longitude].join('|');
+    const key = [country, region].join('|');
     const current = locations.get(key) ?? {
       country,
       region,
-      city,
-      latitude,
-      longitude,
       count: 0,
     };
     current.count += 1;
@@ -1253,8 +1261,7 @@ function buildLocations(rows) {
   return [...locations.values()]
     .sort((left, right) => right.count - left.count ||
       left.country.localeCompare(right.country) ||
-      left.region.localeCompare(right.region) ||
-      left.city.localeCompare(right.city))
+      left.region.localeCompare(right.region))
     .slice(0, 100);
 }
 
@@ -1428,6 +1435,319 @@ function safeRealtimeRow(row) {
     shortlink_slug: row.shortlink_slug,
     campaign: row.campaign,
   };
+}
+
+const HISTORY_SOURCES = new Set(['portfolio', 'sink', 'legacy_page_event']);
+const HISTORY_EVENT_TYPES = new Set([...EVENT_TYPES, 'legacy_page_event']);
+const HISTORY_CSV_COLUMNS = [
+  'event_id',
+  'event_type',
+  'source_event_type',
+  'source',
+  'source_event_id',
+  'event_at',
+  'received_at',
+  'path',
+  'target',
+  'progress',
+  'active_ms',
+  'media_id',
+  'media_kind',
+  'played_ms',
+  'duration_ms',
+  'referrer',
+  'campaign',
+  'shortlink_slug',
+  'ip',
+  'user_agent',
+  'country',
+  'region',
+  'city',
+  'timezone',
+  'latitude',
+  'longitude',
+  'colo',
+  'is_bot',
+];
+
+function decodeBase64Url(value) {
+  const normalized = String(value ?? '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function historyFilterKey(range, filters) {
+  return JSON.stringify({
+    range: range.preset === 'custom'
+      ? { preset: 'custom', from: range.from, to: range.to }
+      : { preset: range.preset },
+    source: filters.source,
+    event_type: filters.eventType,
+    path: filters.path,
+    shortlink_slug: filters.shortlinkSlug,
+    include_bots: filters.includeBots,
+  });
+}
+
+function encodeHistoryCursor(range, filters, row) {
+  return bytesToBase64Url(new TextEncoder().encode(JSON.stringify({
+    v: 1,
+    event_at: Number(row.event_at),
+    event_id: row.event_id,
+    filter: historyFilterKey(range, filters),
+  })));
+}
+
+function decodeHistoryCursor(value, range, filters) {
+  if (!value) {
+    return null;
+  }
+  if (value.length > 2_048) {
+    throw new HistoryQueryError('History cursor is too large');
+  }
+  let cursor;
+  try {
+    cursor = JSON.parse(decodeBase64Url(value));
+  } catch {
+    throw new HistoryQueryError('History cursor is invalid');
+  }
+  if (!cursor || cursor.v !== 1 || !Number.isSafeInteger(cursor.event_at) ||
+      !cleanText(cursor.event_id, 128) || cursor.filter !== historyFilterKey(range, filters)) {
+    throw new HistoryQueryError('History cursor does not match the requested filters');
+  }
+  return {
+    eventAt: cursor.event_at,
+    eventId: cursor.event_id,
+  };
+}
+
+function historyRangeFromRequest(url, now) {
+  const cutoff = now - RAW_RETENTION_MS;
+  const explicitBounds = url.searchParams.has('from') || url.searchParams.has('to');
+  let from;
+  let to;
+  let preset = url.searchParams.get('range') ?? url.searchParams.get('preset') ?? '24h';
+  if (explicitBounds || preset === 'custom') {
+    from = Date.parse(url.searchParams.get('from') ?? '');
+    to = Date.parse(url.searchParams.get('to') ?? '');
+    if (!Number.isFinite(from) || !Number.isFinite(to)) {
+      throw new HistoryQueryError('History detail requires valid from and to timestamps');
+    }
+    preset = 'custom';
+  } else {
+    const durations = {
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+      '90d': RAW_RETENTION_MS,
+    };
+    if (!durations[preset]) {
+      throw new HistoryQueryError('History range must be 24h, 7d, 30d, 90d, or custom');
+    }
+    to = now;
+    from = now - durations[preset];
+  }
+
+  to = Math.min(to, now);
+  if (to <= from) {
+    throw new HistoryQueryError('History range does not contain any time');
+  }
+  if (from < cutoff) {
+    throw new HistoryQueryError(
+      'Raw history is retained for the last 90 days only',
+      416,
+      {
+        raw_detail_cutoff: new Date(cutoff).toISOString(),
+        requested_from: new Date(from).toISOString(),
+      },
+    );
+  }
+  return {
+    preset,
+    from,
+    to,
+  };
+}
+
+function historyFiltersFromRequest(url) {
+  const source = cleanText(url.searchParams.get('source'), 32);
+  if (source && !HISTORY_SOURCES.has(source)) {
+    throw new HistoryQueryError('History source filter is invalid');
+  }
+  const eventType = cleanText(url.searchParams.get('event_type') ?? url.searchParams.get('type'), 48);
+  if (eventType && !HISTORY_EVENT_TYPES.has(eventType)) {
+    throw new HistoryQueryError('History event_type filter is invalid');
+  }
+  const pathValue = cleanText(url.searchParams.get('path'), MAX_PATH_LENGTH);
+  const shortlinkSlug = cleanText(url.searchParams.get('shortlink_slug') ?? url.searchParams.get('slug'), 256);
+  const limitValue = url.searchParams.get('limit');
+  const limit = limitValue == null ? 50 : finiteInteger(limitValue, 1, MAX_HISTORY_ROWS);
+  if (limit == null || (limitValue != null && String(limit) !== String(Number(limitValue)))) {
+    throw new HistoryQueryError('History limit must be an integer from 1 to ' + MAX_HISTORY_ROWS);
+  }
+  return {
+    source,
+    eventType,
+    path: pathValue ? normalizePath(pathValue) : null,
+    shortlinkSlug,
+    includeBots: url.searchParams.get('include_bots') === '1',
+    limit,
+    cursor: url.searchParams.get('cursor'),
+  };
+}
+
+function historyDetailRow(row) {
+  const stored = parseStoredRow(row);
+  const eventAt = Number(stored.event_at);
+  const receivedAt = Number(stored.received_at);
+  return {
+    event_id: stored.event_id,
+    event_type: stored.event_type,
+    source_event_type: stored.source_event_type,
+    source: stored.source,
+    source_event_id: stored.source_event_id,
+    event_at: Number.isFinite(eventAt) ? new Date(eventAt).toISOString() : null,
+    received_at: Number.isFinite(receivedAt) ? new Date(receivedAt).toISOString() : null,
+    path: stored.path,
+    target: stored.target,
+    progress: stored.progress,
+    active_ms: stored.active_ms,
+    media_id: stored.media_id,
+    media_kind: stored.media_kind,
+    played_ms: stored.played_ms,
+    duration_ms: stored.duration_ms,
+    referrer: stored.referrer,
+    campaign: stored.campaign,
+    shortlink_slug: stored.shortlink_slug,
+    ip: stored.ip,
+    user_agent: stored.user_agent,
+    country: stored.country,
+    region: stored.region,
+    city: stored.city,
+    timezone: stored.timezone,
+    latitude: stored.latitude,
+    longitude: stored.longitude,
+    colo: stored.colo,
+    is_bot: Boolean(stored.is_bot),
+  };
+}
+
+function csvCell(value) {
+  if (value == null) {
+    return '';
+  }
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function historyCsv(rows) {
+  const lines = [HISTORY_CSV_COLUMNS.join(',')];
+  for (const row of rows) {
+    lines.push(HISTORY_CSV_COLUMNS.map((column) => csvCell(row[column])).join(','));
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
+async function historyReport(db, url, now) {
+  const range = historyRangeFromRequest(url, now);
+  const filters = historyFiltersFromRequest(url);
+  const cursor = decodeHistoryCursor(filters.cursor, range, filters);
+  const clauses = [
+    'event_at >= ?',
+    'event_at <= ?',
+  ];
+  const params = [range.from, range.to];
+  if (!filters.includeBots) {
+    clauses.push('is_bot = 0');
+  }
+  if (filters.source) {
+    clauses.push('source = ?');
+    params.push(filters.source);
+  }
+  if (filters.eventType) {
+    clauses.push('event_type = ?');
+    params.push(filters.eventType);
+  }
+  if (filters.path) {
+    clauses.push('path = ?');
+    params.push(filters.path);
+  }
+  if (filters.shortlinkSlug) {
+    clauses.push('shortlink_slug = ?');
+    params.push(filters.shortlinkSlug);
+  }
+  if (cursor) {
+    clauses.push('(event_at < ? OR (event_at = ? AND event_id < ?))');
+    params.push(cursor.eventAt, cursor.eventAt, cursor.eventId);
+  }
+
+  const result = await db.prepare([
+    'SELECT event_id, event_type, source_event_type, path, target, progress,',
+    '       active_ms, media_id, media_kind, played_ms, duration_ms, referrer,',
+    '       campaign_json, shortlink_slug, source, source_event_id, event_at,',
+    '       received_at, ip, user_agent, country, region, city, timezone,',
+    '       latitude, longitude, colo, is_bot',
+    'FROM portfolio_analytics_events',
+    'WHERE ' + clauses.join('\n  AND '),
+    'ORDER BY event_at DESC, event_id DESC',
+    'LIMIT ' + (filters.limit + 1),
+  ].join('\n')).bind(...params).all();
+  const rows = rowsFromResult(result).map(historyDetailRow);
+  const hasMore = rows.length > filters.limit;
+  const page = hasMore ? rows.slice(0, filters.limit) : rows;
+  const nextCursor = hasMore
+    ? encodeHistoryCursor(range, filters, {
+      event_at: Date.parse(page.at(-1).event_at),
+      event_id: page.at(-1).event_id,
+    })
+    : null;
+  const meta = {
+    source: 'portfolio_analytics_events',
+    detail: 'raw_90_day_events',
+    timezone: ANALYTICS_TIMEZONE,
+    raw_detail_cutoff: new Date(now - RAW_RETENTION_MS).toISOString(),
+    range: {
+      preset: range.preset,
+      from: new Date(range.from).toISOString(),
+      to: new Date(range.to).toISOString(),
+    },
+    filters: {
+      source: filters.source,
+      event_type: filters.eventType,
+      path: filters.path,
+      shortlink_slug: filters.shortlinkSlug,
+      include_bots: filters.includeBots,
+    },
+    limit: filters.limit,
+    returned: page.length,
+    has_more: hasMore,
+    next_cursor: nextCursor,
+  };
+  if (url.searchParams.get('format') === 'csv') {
+    const headers = new Headers({
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="portfolio-analytics-history.csv"',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Has-More': String(hasMore),
+    });
+    if (nextCursor) {
+      headers.set('X-Next-Cursor', nextCursor);
+    }
+    return new Response(historyCsv(page), { status: 200, headers });
+  }
+  return jsonResponse({
+    data: {
+      events: page,
+      next_cursor: nextCursor,
+      has_more: hasMore,
+    },
+    meta,
+  });
 }
 
 async function queryDaily(db, from, to, dimension = 'all') {
@@ -1886,12 +2206,12 @@ async function performanceReport(env, range) {
   }
 
   const workerQuery = [
-    'query PortfolioWorkerPerformance($accountTag: string!, $start: Time!, $end: Time!, $scriptName: string!) {',
+    'query PortfolioWorkerPerformance($accountTag: string!, $datetimeStart: string!, $datetimeEnd: string!, $scriptName: string!) {',
     '  viewer {',
     '    accounts(filter: {accountTag: $accountTag}) {',
     '      workersInvocationsAdaptive(',
     '        limit: 1000',
-    '        filter: {scriptName: $scriptName, datetime_geq: $start, datetime_leq: $end}',
+    '        filter: {scriptName: $scriptName, datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd}',
     '      ) {',
     '        sum { requests errors subrequests }',
     '        quantiles { cpuTimeP50 cpuTimeP99 }',
@@ -1902,12 +2222,12 @@ async function performanceReport(env, range) {
     '}',
   ].join('\n');
   const rumQuery = [
-    'query PortfolioRumPerformance($accountTag: string!, $start: Time!, $end: Time!, $siteTag: string!) {',
+    'query PortfolioRumPerformance($accountTag: string!, $datetimeStart: string!, $datetimeEnd: string!, $siteTag: string!) {',
     '  viewer {',
     '    accounts(filter: {accountTag: $accountTag}) {',
     '      rumWebVitalsEventsAdaptiveGroups(',
     '        limit: 1000',
-    '        filter: {siteTag: $siteTag, datetime_geq: $start, datetime_leq: $end}',
+    '        filter: {siteTag: $siteTag, datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd}',
     '      ) {',
     '        count',
     '        dimensions { datetime siteTag requestHost requestPath }',
@@ -1920,8 +2240,8 @@ async function performanceReport(env, range) {
   ].join('\n');
   const variables = {
     accountTag: accountId,
-    start: queryRangeMeta.from,
-    end: queryRangeMeta.to,
+    datetimeStart: queryRangeMeta.from,
+    datetimeEnd: queryRangeMeta.to,
   };
 
   const queryWorker = async (scriptName) => {
@@ -2175,14 +2495,38 @@ export async function handleAnalyticsRequest(request, env = {}, ctx = null) {
     return errorResponse(404, 'Not Found');
   }
 
-  const range = rangeFromRequest(url, nowMs(env));
+  const now = nowMs(env);
+  if (route === 'history') {
+    const db = analyticsDb(env);
+    if (!db) {
+      return errorResponse(503, 'Analytics database is unavailable', {
+        source: 'portfolio_analytics_events',
+        timezone: ANALYTICS_TIMEZONE,
+        coverage: { unavailable: true },
+      });
+    }
+    try {
+      return await historyReport(db, url, now);
+    } catch (error) {
+      if (error?.code === 'HISTORY_QUERY_INVALID') {
+        return errorResponse(error.status ?? 400, error.message, error.meta);
+      }
+      return errorResponse(503, 'Analytics history is unavailable', {
+        source: 'portfolio_analytics_events',
+        timezone: ANALYTICS_TIMEZONE,
+        coverage: { unavailable: true },
+      });
+    }
+  }
+
+  const range = rangeFromRequest(url, now);
   if (range.error) {
     return errorResponse(400, range.error);
   }
 
   try {
     if (route === 'performance') {
-      return jsonResponse(await reportData(route, null, range, env, nowMs(env), url));
+      return jsonResponse(await reportData(route, null, range, env, now, url));
     }
     const db = analyticsDb(env);
     if (!db) {
@@ -2192,7 +2536,7 @@ export async function handleAnalyticsRequest(request, env = {}, ctx = null) {
         coverage: { unavailable: true },
       });
     }
-    return jsonResponse(await reportData(route, db, range, env, nowMs(env), url));
+    return jsonResponse(await reportData(route, db, range, env, now, url));
   } catch (error) {
     if (error?.code === 'REPORT_TOO_LARGE') {
       return errorResponse(503, 'Analytics detail exceeds the bounded report limit', {
