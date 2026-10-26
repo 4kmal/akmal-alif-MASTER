@@ -1,22 +1,16 @@
-const TOKEN_KEY = 'SinkSiteToken'
-
-export function getAuthToken() {
-  if (!import.meta.client)
-    return null
-
-  return localStorage.getItem(TOKEN_KEY)
+/**
+ * Browser admin sessions use Cloudflare Access or the explicit local owner
+ * bypass. The legacy Sink site token never belongs in browser storage.
+ */
+export function getAuthToken(): null {
+  return null
 }
 
-export function setAuthToken(token: string) {
-  if (!import.meta.client)
-    return
-
-  localStorage.setItem(TOKEN_KEY, token)
+export function setAuthToken(_token: string): void {
+  // Kept as a no-op for old call sites while the owner boundary migrates away
+  // from the legacy browser token flow.
 }
 
-export function removeAuthToken() {
-  if (!import.meta.client)
-    return
-
-  localStorage.removeItem(TOKEN_KEY)
+export function removeAuthToken(): void {
+  // No browser token is persisted or removed.
 }

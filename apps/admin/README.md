@@ -20,6 +20,33 @@ encrypted secret, and `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` (or their `NUXT_
 runtime aliases) before enabling the production route. `ALLOW_LOCAL_ADMIN=true` is
 reserved for an explicitly configured local gateway.
 
+## Local-only workflow
+
+Use the Nuxt server at `http://localhost:7466/admin` for the fastest local UI loop. Put
+these values in an untracked `apps/admin/.env.local` file and never reuse them in a
+deployment environment:
+
+```dotenv
+ALLOW_LOCAL_ADMIN=true
+PORTFOLIO_ADMIN_ORIGIN=http://localhost:7466
+SHORTLINK_ORIGIN=http://localhost:7466
+NUXT_PUBLIC_PREVIEW_MODE=false
+```
+
+For a separate Worker-runtime check, build first and run the committed local-only
+Wrangler config. It has no production routes, service bindings, remote D1 IDs, R2
+bucket, or machine token:
+
+```powershell
+pnpm build
+pnpm db:migrate:local
+pnpm preview:worker:local
+```
+
+Open `http://localhost:8788/admin`. This uses Wrangler's local D1/KV stores, so links
+created there stay local. Do not use `wrangler.jsonc`, `deploy:worker`, or
+`db:migrate:remote` for local testing.
+
 ## Feature parity checklist
 
 - [x] Shortlink list, search, filtering, sorting, tags, copy, QR, edit, delete, expiry.

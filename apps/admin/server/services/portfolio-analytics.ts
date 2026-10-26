@@ -4,6 +4,7 @@ import type { H3Event } from 'h3'
 import * as analyticsWorker from '@portfolio-analytics'
 import { createError, getHeader, getQuery, readBody, sendWebResponse } from 'h3'
 import { getRuntimeString } from '../utils/runtime-config'
+import { readAdminHealth } from './admin-health'
 
 interface AnalyticsWorker {
   handleAnalyticsRequest?: (request: Request, env: unknown, ctx: ExecutionContext) => Promise<Response>
@@ -25,6 +26,53 @@ function workerEnvironment(event: H3Event): unknown {
 
 function loadAnalyticsWorker(): AnalyticsWorker | null {
   return analyticsWorker as unknown as AnalyticsWorker
+}
+
+function responseHeaders(response: Response): Headers {
+  const headers = new Headers()
+  response.headers.forEach((value, key) => {
+    if (key.toLowerCase() !== 'set-cookie')
+      headers.set(key, value)
+  })
+  const cookieHeaders = (response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.()
+    ?? (response.headers.get('set-cookie') ? [response.headers.get('set-cookie')!] : [])
+  for (const cookie of cookieHeaders)
+    headers.append('set-cookie', cookie)
+  return headers
+}
+
+async function addAdminHealth(event: H3Event, response: Response): Promise<Response> {
+  const contentType = response.headers.get('content-type') || ''
+  if (!response.ok || !contentType.includes('application/json'))
+    return response
+
+  let body: Record<string, unknown>
+  try {
+    body = await response.clone().json() as Record<string, unknown>
+  }
+  catch {
+    return response
+  }
+
+  const health = await readAdminHealth(event)
+  const data = body.data && typeof body.data === 'object'
+    ? body.data as Record<string, unknown>
+    : {}
+  const existingSources = Array.isArray(data.source_health) ? data.source_health : []
+  const existingAlerts = Array.isArray(data.alerts) ? data.alerts : []
+  body.data = {
+    ...data,
+    source_health: [...existingSources, ...health.source_health],
+    alerts: [...existingAlerts, ...health.alerts],
+  }
+  const headers = responseHeaders(response)
+  headers.set('content-type', 'application/json; charset=utf-8')
+  headers.delete('content-length')
+  return new Response(JSON.stringify(body), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 function queryString(query: Record<string, unknown>) {
@@ -66,7 +114,7 @@ export async function handlePortfolioReport(event: H3Event, report: string): Pro
   // Forward the worker response directly. This preserves status, cache
   // policy, Content-Disposition, X-Next-Cursor, and multiple Set-Cookie
   // headers for history CSV and future report formats.
-  await sendWebResponse(event, response)
+  await sendWebResponse(event, report === 'overview' ? await addAdminHealth(event, response) : response)
   return undefined
 }
 

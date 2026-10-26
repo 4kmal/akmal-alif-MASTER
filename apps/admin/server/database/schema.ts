@@ -78,7 +78,7 @@ export const portfolioAnalyticsEvents = sqliteTable('portfolio_analytics_events'
   sourceEventType: text('source_event_type'),
   path: text().notNull(),
   target: text(),
-  progress: integer({ mode: 'number' }),
+  progress: real(),
   activeMs: integer('active_ms'),
   mediaId: text('media_id'),
   mediaKind: text('media_kind'),

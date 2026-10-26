@@ -540,7 +540,7 @@
         },
         "progress": {
           "name": "progress",
-          "type": "integer",
+          "type": "real",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

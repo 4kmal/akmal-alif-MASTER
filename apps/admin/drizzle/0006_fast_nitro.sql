@@ -22,7 +22,7 @@ CREATE TABLE `portfolio_analytics_events` (
 	`source_event_type` text,
 	`path` text NOT NULL,
 	`target` text,
-	`progress` integer,
+	`progress` real,
 	`active_ms` integer,
 	`media_id` text,
 	`media_kind` text,

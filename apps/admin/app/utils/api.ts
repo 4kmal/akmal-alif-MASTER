@@ -38,9 +38,12 @@ export async function useAPI(api: string, options?: APIOptions): Promise<unknown
   }
 
   if (!isWebAdmin) {
-    requestOptions.headers = {
-      ...requestOptions.headers,
-      Authorization: `Bearer ${getAuthToken() ?? ''}`,
+    const authToken = getAuthToken()
+    if (authToken) {
+      requestOptions.headers = {
+        ...requestOptions.headers,
+        Authorization: `Bearer ${authToken}`,
+      }
     }
   }
 

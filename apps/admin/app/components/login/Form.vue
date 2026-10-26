@@ -1,63 +1,23 @@
 <script setup lang="ts">
 import { AlertCircle, Loader2 } from '@lucide/vue'
-import { z } from 'zod'
 
-const { t } = useI18n()
 const { previewMode } = useRuntimeConfig().public
 
-const token = shallowRef('')
-const error = shallowRef('')
 const submitError = shallowRef('')
 const isSubmitting = shallowRef(false)
-const isAccessGate = import.meta.client && (() => {
-  const { public: publicConfig } = useRuntimeConfig()
-  try {
-    return window.location.hostname === new URL(publicConfig.adminOrigin).hostname
-  }
-  catch {
-    return window.location.hostname === 'www.akmalalif.com' || window.location.hostname === 'localhost'
-  }
-})()
-
-const LoginSchema = z.object({
-  token: z.string().min(1),
-})
-
-watch(token, () => {
-  error.value = ''
-  submitError.value = ''
-})
 
 async function handleSubmit() {
   if (isSubmitting.value)
     return
 
-  if (isAccessGate) {
-    submitError.value = 'Cloudflare Access must authenticate the owner before this page can load.'
-    return
-  }
-
-  error.value = ''
   submitError.value = ''
-  const result = LoginSchema.safeParse({ token: token.value })
-
-  if (!result.success) {
-    error.value = t('login.token_required')
-    await nextTick()
-    document.getElementById('token')?.focus()
-    return
-  }
-
   try {
     isSubmitting.value = true
-    setAuthToken(token.value)
-    await useAPI('/api/verify')
-    await navigateTo('/admin')
+    if (import.meta.client)
+      window.location.reload()
   }
-  catch (e) {
-    removeAuthToken()
-    console.error(e)
-    submitError.value = t('login.failed')
+  catch {
+    submitError.value = 'The owner sign-in could not be retried. Check the Access application and try again.'
   }
   finally {
     isSubmitting.value = false
@@ -67,37 +27,13 @@ async function handleSubmit() {
 
 <template>
   <form class="space-y-6" :aria-busy="isSubmitting" @submit.prevent="handleSubmit">
-    <Input
-      type="text"
-      name="username"
-      autocomplete="username"
-      value="root"
-      readonly
-      class="sr-only size-px min-h-px min-w-px p-0"
-      tabindex="-1"
-      aria-hidden="true"
-    />
-    <FieldGroup>
-      <Field :data-invalid="!!error">
-        <FieldLabel for="token">
-          {{ $t('login.token_label') }}
-        </FieldLabel>
-        <Input
-          id="token"
-          v-model="token"
-          type="password"
-          name="password"
-          autocomplete="current-password"
-          placeholder="********"
-          :aria-invalid="!!error"
-          :aria-describedby="error ? 'token-error' : undefined"
-          autocapitalize="none"
-          spellcheck="false"
-          :disabled="isSubmitting"
-        />
-        <FieldError v-if="error" id="token-error" :errors="[error]" />
-      </Field>
-    </FieldGroup>
+    <Alert role="status">
+      <AlertCircle aria-hidden="true" class="size-4" />
+      <AlertTitle>Owner sign-in required</AlertTitle>
+      <AlertDescription>
+        Continue through the configured Cloudflare Access application. This page never accepts or stores a site token.
+      </AlertDescription>
+    </Alert>
 
     <Alert v-if="submitError" variant="destructive" role="alert">
       <AlertCircle aria-hidden="true" class="size-4" />
@@ -106,12 +42,9 @@ async function handleSubmit() {
 
     <Alert v-if="previewMode">
       <AlertCircle aria-hidden="true" class="size-4" />
-      <AlertTitle>{{ $t('login.tips') }}</AlertTitle>
+      <AlertTitle>Local owner mode</AlertTitle>
       <AlertDescription>
-        {{ $t('login.preview_token') }}
-        <code
-          class="rounded-md bg-muted px-1.5 py-0.5 font-mono text-foreground"
-        >SinkCool</code>
+        Use the explicitly configured local owner bypass. Production Access credentials are never exposed here.
       </AlertDescription>
     </Alert>
 
@@ -124,7 +57,7 @@ async function handleSubmit() {
       <Loader2
         v-if="isSubmitting" aria-hidden="true" class="motion-safe:animate-spin"
       />
-      {{ $t(isSubmitting ? 'login.logging_in' : 'login.submit') }}
+      {{ isSubmitting ? 'Retrying owner sign-in…' : 'Retry Cloudflare Access' }}
     </Button>
   </form>
 </template>
