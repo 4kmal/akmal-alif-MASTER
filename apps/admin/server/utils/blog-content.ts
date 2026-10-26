@@ -88,7 +88,7 @@ function safeCssValue(value: unknown, kind: 'fontFamily' | 'fontSize' | 'color' 
     return null
   const candidate = text(value, kind, 160).trim()
   if (kind === 'fontFamily') {
-    const families = new Set(['Inter', 'Poppins', 'Orbitron', 'Departure Mono', 'system-ui', 'sans-serif', 'serif', 'monospace'])
+    const families = new Set(['Inter', 'Poppins', 'Orbitron', 'Departure Mono', 'Arial', 'Georgia', 'system-ui', 'sans-serif', 'serif', 'monospace'])
     if (families.has(candidate))
       return candidate
     fail('Unsupported font family')

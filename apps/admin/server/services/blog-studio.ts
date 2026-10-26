@@ -10,6 +10,17 @@ const BLOG_MAX_JSON_BODY_BYTES = BLOG_MAX_CANONICAL_BYTES * 2 + 64 * 1024
 const BLOG_MAX_PROJECT_DEPTH = 64
 const BLOG_MAX_PROJECT_NODES = 10_000
 
+interface KnownLengthStream {
+  readable: ReadableStream<Uint8Array>
+  writable: WritableStream<Uint8Array>
+}
+
+function knownLengthStream(length: number): KnownLengthStream {
+  if (typeof FixedLengthStream !== 'undefined')
+    return new FixedLengthStream(length) as unknown as KnownLengthStream
+  return new TransformStream<Uint8Array, Uint8Array>()
+}
+
 type D1Like = D1Database
 type BlogEnv = Cloudflare.Env & { PORTFOLIO_MEDIA?: R2Bucket }
 
@@ -89,6 +100,15 @@ function first<T = Record<string, unknown>>(result: unknown): T | null {
 function changes(result: unknown): number {
   const value = result as { meta?: { changes?: number }, changes?: number } | null
   return Number(value?.meta?.changes ?? value?.changes ?? 0)
+}
+
+function isBlogSlugUniqueViolation(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /unique constraint failed:\s*blog_posts\.slug\b/i.test(message)
+}
+
+function throwSlugConflict(): never {
+  throw createError({ statusCode: 409, statusMessage: 'A post with this slug already exists' })
 }
 
 function auditInsert(
@@ -186,13 +206,24 @@ function integerField(value: unknown, key: string, min: number, max: number, fal
   return number
 }
 
+const BLOG_COVER_ASSET_PATH = /^\/media\/blog\/([\w-]+)$/
+
+function blogCoverAssetId(value: string | null): string | null {
+  return value ? BLOG_COVER_ASSET_PATH.exec(value)?.[1] ?? null : null
+}
+
 function safeCoverUrl(value: unknown): string | null {
   const cover = nullableString(value, 'cover_image_url', 2_048)
   if (!cover)
     return null
-  if (!cover.startsWith('/') || cover.startsWith('//') || cover.includes('\\') || Array.from(cover).some(character => character.charCodeAt(0) < 32))
-    throw createError({ statusCode: 400, statusMessage: 'cover_image_url must be a same-origin path' })
-  return cover
+  if (BLOG_COVER_ASSET_PATH.test(cover))
+    return cover
+  if (cover.startsWith('/media/blog/'))
+    throw createError({ statusCode: 400, statusMessage: 'cover_image_url must use a canonical media asset path' })
+  const legacyPath = normalizeLegacyMediaPath(cover)
+  if (!legacyPath)
+    throw createError({ statusCode: 400, statusMessage: 'cover_image_url must be a same-origin legacy media path or approved asset' })
+  return legacyPath
 }
 
 export function parseJsonBody<T extends Record<string, unknown>>(event: H3Event): Promise<T> {
@@ -469,14 +500,41 @@ function mediaIdsFromDocument(value: unknown, result: string[] = []): string[] {
   return result
 }
 
-function mediaIdsFromHtml(value: string, result: string[] = []): string[] {
-  const pattern = /\/media\/blog\/([\w-]+)(?=[?#"'\s>]|$)/g
-  for (const match of value.matchAll(pattern)) {
-    const assetId = match[1]
-    if (assetId && !result.includes(assetId))
-      result.push(assetId)
+type HtmlMediaKind = 'image' | 'gif' | 'video'
+
+interface HtmlMediaReference {
+  id: string
+  kinds: HtmlMediaKind[]
+}
+
+function mediaReferencesFromHtml(value: string): HtmlMediaReference[] {
+  const references: HtmlMediaReference[] = []
+  const tags = /<(img|source|video)\b[^>]*>/gi
+  const attributes = /\b(src|poster)\s*=\s*["']([^"']+)["']/gi
+  for (const tagMatch of value.matchAll(tags)) {
+    const tagName = tagMatch[1]?.toLowerCase()
+    const tag = tagMatch[0]
+    if (!tagName || !tag)
+      continue
+    for (const attributeMatch of tag.matchAll(attributes)) {
+      const attribute = attributeMatch[1]?.toLowerCase()
+      const path = attributeMatch[2]
+      if (!attribute || !path)
+        continue
+      if (path.startsWith('/media/blog/')) {
+        const assetId = blogCoverAssetId(path)
+        if (!assetId)
+          throw createError({ statusCode: 400, statusMessage: 'Legacy blog media URLs must use canonical asset paths' })
+        const kinds = attribute === 'poster' && tagName === 'video'
+          ? ['image', 'gif'] as HtmlMediaKind[]
+          : tagName === 'img'
+            ? ['image', 'gif'] as HtmlMediaKind[]
+            : ['video'] as HtmlMediaKind[]
+        references.push({ id: assetId, kinds })
+      }
+    }
   }
-  return result
+  return references
 }
 
 async function mediaResolver(db: D1Like, actor: string, approvedLegacyPaths: Set<string> = new Set()) {
@@ -532,6 +590,34 @@ async function approvedLegacyMediaPaths(db: D1Like, postId?: string): Promise<Se
   }
 }
 
+async function approvedLegacyCoverPaths(db: D1Like): Promise<Set<string>> {
+  const paths = new Set<string>()
+  const add = (value: unknown) => {
+    if (typeof value !== 'string' || BLOG_COVER_ASSET_PATH.test(value) || value.startsWith('/media/blog/'))
+      return
+    const path = normalizeLegacyMediaPath(value)
+    if (path)
+      paths.add(path)
+  }
+  const known = await db.prepare(`
+    SELECT cover_image_url FROM blog_posts WHERE cover_image_url IS NOT NULL
+    UNION
+    SELECT cover_image_url FROM blog_post_drafts WHERE cover_image_url IS NOT NULL
+  `).all()
+  for (const row of rows<{ cover_image_url: unknown }>(known))
+    add(row.cover_image_url)
+  const originals = await db.prepare('SELECT snapshot_json FROM blog_post_revisions WHERE kind = \'original\'').all()
+  for (const original of rows<{ snapshot_json: string }>(originals)) {
+    try {
+      add((JSON.parse(original.snapshot_json) as Record<string, unknown>).cover_image_url)
+    }
+    catch {
+      // Invalid snapshots are rejected by restore and do not approve media paths.
+    }
+  }
+  return paths
+}
+
 async function draftInputFromBody(db: D1Like, actor: string, body: Record<string, unknown>, current?: BlogDraft, postId?: string): Promise<DraftInput> {
   const title = stringField(body.title ?? current?.title, 'title', 300)
   const slug = slugField(body.slug ?? current?.slug)
@@ -556,6 +642,7 @@ async function draftInputFromBody(db: D1Like, actor: string, body: Record<string
   const contentJson = parseContentJson(body.content_json === undefined ? current?.content_json : body.content_json)
   let contentHtml: string
   let assetIds: string[] = []
+  const htmlMediaRequirements = new Map<string, HtmlMediaKind[][]>()
   if (contentJson) {
     assetIds = mediaIdsFromDocument(contentJson)
     const resolveMedia = await mediaResolver(db, actor, await approvedLegacyMediaPaths(db, postId))
@@ -565,18 +652,32 @@ async function draftInputFromBody(db: D1Like, actor: string, body: Record<string
     const suppliedContentHtml = body.content_html === undefined ? current?.content_html ?? '' : body.content_html
     const unchangedLegacyHtml = current && typeof suppliedContentHtml === 'string' && suppliedContentHtml === current.content_html
     contentHtml = unchangedLegacyHtml ? suppliedContentHtml : sanitizeLegacyBlogHtml(suppliedContentHtml)
-    assetIds = mediaIdsFromHtml(contentHtml)
+    for (const reference of mediaReferencesFromHtml(contentHtml)) {
+      const requirements = htmlMediaRequirements.get(reference.id) ?? []
+      requirements.push(reference.kinds)
+      htmlMediaRequirements.set(reference.id, requirements)
+    }
+    assetIds = [...htmlMediaRequirements.keys()]
   }
-  const coverImageUrl = safeCoverUrl(body.cover_image_url === undefined ? current?.cover_image_url : body.cover_image_url)
-  const coverAssetMatch = /^\/media\/blog\/(\w[-\w]*)$/.exec(coverImageUrl ?? '')
-  const coverAssetId = coverAssetMatch?.[1]
+  const coverImageUrl = body.cover_image_url === undefined
+    ? current?.cover_image_url ?? null
+    : safeCoverUrl(body.cover_image_url)
+  const coverAssetId = blogCoverAssetId(coverImageUrl)
+  if (coverImageUrl && !coverAssetId) {
+    const approvedLegacyCovers = await approvedLegacyCoverPaths(db)
+    if (!approvedLegacyCovers.has(coverImageUrl) && coverImageUrl !== current?.cover_image_url)
+      throw createError({ statusCode: 400, statusMessage: 'Legacy cover path is not an approved existing media path' })
+  }
   if (coverAssetId && !assetIds.includes(coverAssetId))
     assetIds.push(coverAssetId)
   if (blogByteLength(contentHtml) > BLOG_MAX_CANONICAL_BYTES)
     throw createError({ statusCode: 400, statusMessage: 'Rendered content is too large' })
   for (const assetId of assetIds) {
-    const asset = await first<{ id: string, created_by: string, status: string }>(await db.prepare('SELECT id, created_by, status FROM blog_assets WHERE id = ?').bind(assetId).all())
-    if (!asset || asset.created_by !== actor || asset.status !== 'ready')
+    const asset = await first<{ id: string, kind: HtmlMediaKind, created_by: string, status: string }>(await db.prepare('SELECT id, kind, created_by, status FROM blog_assets WHERE id = ?').bind(assetId).all())
+    const requirements = htmlMediaRequirements.get(assetId) ?? []
+    const validHtmlKind = !requirements.length || requirements.every(kinds => asset ? kinds.includes(asset.kind) : false)
+    const validCoverKind = coverAssetId !== assetId || asset?.kind === 'image' || asset?.kind === 'gif'
+    if (!asset || asset.created_by !== actor || asset.status !== 'ready' || !validHtmlKind || !validCoverKind)
       throw createError({ statusCode: 400, statusMessage: 'Referenced media asset is unavailable' })
   }
   return {
@@ -754,13 +855,16 @@ export async function createBlogPost(event: H3Event, body: Record<string, unknow
     throw createError({ statusCode: 409, statusMessage: 'A post with this slug already exists' })
   const id = crypto.randomUUID().replaceAll('-', '')
   const now = new Date().toISOString()
-  const initial = await draftInputFromBody(db, actor, {
+  const initialBody: Record<string, unknown> = {
     ...body,
     title,
     slug,
     excerpt: body.excerpt ?? '',
     content_html: body.content_html ?? '<p></p>',
-  })
+  }
+  if (body.content_json === undefined && body.content_html === undefined)
+    initialBody.content_json = { type: 'doc', content: [{ type: 'paragraph' }] }
+  const initial = await draftInputFromBody(db, actor, initialBody)
   const snapshot = snapshotDraft({ version: 1, schema_version: BLOG_SCHEMA_VERSION, ...initial, updated_at: now })
   const statements = [
     db.prepare(`
@@ -786,7 +890,14 @@ export async function createBlogPost(event: H3Event, body: Record<string, unknow
   for (const assetId of initial.asset_ids)
     statements.push(db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) VALUES (?, ?, \'draft\')').bind(id, assetId))
   statements.push(auditInsert(db, actor, 'post.create', id, { status: 'draft', version: 1 }))
-  await db.batch(statements)
+  try {
+    await db.batch(statements)
+  }
+  catch (error) {
+    if (isBlogSlugUniqueViolation(error))
+      throwSlugConflict()
+    throw error
+  }
   return loadDetail(db, id)
 }
 
@@ -894,12 +1005,15 @@ export async function restoreBlogPost(event: H3Event, postId: string): Promise<B
     ...restored.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...restored.asset_ids.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    db.prepare(`INSERT INTO blog_post_revisions (post_id, version, kind, snapshot_json, created_at, created_by)
+      SELECT ?, ?, 'restore', ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)`)
+      .bind(postId, nextVersion, snapshotDraft({ ...restored, version: nextVersion, updated_at: now }), now, actor, postId, token, nextVersion),
     auditInsert(db, actor, 'post.restore', postId, { status: 'draft', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
   const result = await db.batch(statements)
   if (changes(result[0]) !== 1)
     conflict(await currentDraftVersion(db, postId))
-  await db.prepare(`INSERT INTO blog_post_revisions (post_id, version, kind, snapshot_json, created_at, created_by) SELECT ?, ?, 'restore', ?, ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)`).bind(postId, nextVersion, snapshotDraft({ ...restored, version: nextVersion, updated_at: now }), now, actor, postId, token).run()
   return loadDetail(db, postId)
 }
 
@@ -934,7 +1048,15 @@ export async function publishBlogPost(event: H3Event, postId: string): Promise<B
     db.prepare('INSERT INTO blog_post_revisions (post_id, version, kind, snapshot_json, created_at, created_by) SELECT ?, ?, \'publish\', ?, ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)').bind(postId, nextVersion, revisionSnapshot, now, actor, postId, token, nextVersion),
     auditInsert(db, actor, 'post.publish', postId, { status: 'published', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
-  const result = await db.batch(statements.filter(Boolean) as D1PreparedStatement[])
+  let result: Awaited<ReturnType<D1Like['batch']>>
+  try {
+    result = await db.batch(statements.filter(Boolean) as D1PreparedStatement[])
+  }
+  catch (error) {
+    if (isBlogSlugUniqueViolation(error))
+      throwSlugConflict()
+    throw error
+  }
   if (changes(result[0]) !== 1)
     conflict(await currentDraftVersion(db, postId))
   return loadDetail(db, postId)
@@ -1103,9 +1225,6 @@ export async function initBlogUpload(event: H3Event): Promise<Record<string, unk
   const size = integerField(body.size, 'size', 1, BLOG_MAX_SOURCE_SIZE)
   const width = body.width == null ? null : integerField(body.width, 'width', 1, 8_000)
   const height = body.height == null ? null : integerField(body.height, 'height', 1, 8_000)
-  const durationMs = body.duration_ms == null
-    ? null
-    : integerField(body.duration_ms, 'duration_ms', kind === 'image' ? 0 : 1, 300_000)
   const derivedFrom = body.derived_from ?? []
   if (!Array.isArray(derivedFrom) || derivedFrom.length > 32)
     throw createError({ statusCode: 400, statusMessage: 'derived_from must be an array' })
@@ -1116,6 +1235,14 @@ export async function initBlogUpload(event: H3Event): Promise<Record<string, unk
     if (sourceIds.some(id => !found.has(id)))
       throw createError({ statusCode: 400, statusMessage: 'Derived source asset is unavailable' })
   }
+  const durationMax = kind === 'image'
+    ? 0
+    : sourceIds.length === 0
+      ? 86_400_000
+      : kind === 'video' ? 300_000 : 30_000
+  const durationMs = body.duration_ms == null
+    ? null
+    : integerField(body.duration_ms, 'duration_ms', kind === 'image' ? 0 : 1, durationMax)
   const assetId = crypto.randomUUID().replaceAll('-', '')
   const uploadId = crypto.randomUUID().replaceAll('-', '')
   const objectKey = `blog/originals/${assetId}/${filename}`
@@ -1163,7 +1290,7 @@ export async function putBlogUploadPart(event: H3Event, uploadId: string, partNu
   if (row.status !== 'active')
     throw createError({ statusCode: 409, statusMessage: 'Upload is no longer active' })
   const requestLength = Number(getHeader(event, 'content-length') || 0)
-  if (requestLength > BLOG_UPLOAD_PART_SIZE || requestLength <= 0)
+  if (!Number.isSafeInteger(requestLength) || requestLength > BLOG_UPLOAD_PART_SIZE || requestLength <= 0)
     throw createError({ statusCode: 413, statusMessage: 'Upload parts must be between 1 and 10 MiB' })
   const body = getRequestWebStream(event)
   if (!body)
@@ -1171,34 +1298,25 @@ export async function putBlogUploadPart(event: H3Event, uploadId: string, partNu
   const bucket = requirePortfolioMedia(event)
   const upload = bucket.resumeMultipartUpload(String(row.object_key), String(row.r2_upload_id))
   let observedLength = 0
-  const countedBody = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = body.getReader()
-      try {
-        while (true) {
-          const chunk = await reader.read()
-          if (chunk.done) {
-            controller.close()
-            return
-          }
-          const value = chunk.value instanceof Uint8Array ? chunk.value : new Uint8Array(chunk.value)
-          observedLength += value.byteLength
-          if (observedLength > requestLength || observedLength > BLOG_UPLOAD_PART_SIZE) {
-            await reader.cancel()
-            controller.error(createError({ statusCode: 413, statusMessage: 'Upload part exceeds declared size' }))
-            return
-          }
-          controller.enqueue(value)
-        }
+  const fixedBody = knownLengthStream(requestLength)
+  const countedBody = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const value = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)
+      observedLength += value.byteLength
+      if (observedLength > requestLength || observedLength > BLOG_UPLOAD_PART_SIZE) {
+        controller.error(createError({ statusCode: 413, statusMessage: 'Upload part exceeds declared size' }))
+        return
       }
-      catch (error) {
-        controller.error(error)
-      }
+      controller.enqueue(value)
+    },
+    flush(controller) {
+      if (observedLength !== requestLength)
+        controller.error(createError({ statusCode: 400, statusMessage: 'Upload part size does not match Content-Length' }))
     },
   })
-  const uploaded = await upload.uploadPart(partNumber, countedBody)
-  if (observedLength !== requestLength)
-    throw createError({ statusCode: 400, statusMessage: 'Upload part size does not match Content-Length' })
+  const pump = body.pipeThrough(countedBody).pipeTo(fixedBody.writable)
+  const uploadPromise = upload.uploadPart(partNumber, fixedBody.readable)
+  const [, uploaded] = await Promise.all([pump, uploadPromise])
   const etag = String(uploaded.etag)
   await db.batch([
     db.prepare('INSERT INTO blog_upload_parts (upload_id, part_number, etag, size) VALUES (?, ?, ?, ?) ON CONFLICT(upload_id, part_number) DO UPDATE SET etag = excluded.etag, size = excluded.size').bind(uploadId, partNumber, etag, requestLength),
@@ -1355,7 +1473,7 @@ export async function updateMediaProject(event: H3Event, projectId: string) {
   const now = new Date().toISOString()
   const result = await db.batch([
     db.prepare('UPDATE blog_media_projects SET version = ?, title = ?, document = ?, updated_at = ? WHERE id = ? AND created_by = ? AND version = ?').bind(nextVersion, title, serialized, now, projectId, actor, version),
-    auditInsert(db, actor, 'media.project.update', projectId, { status: 'updated', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_media_projects WHERE id = ? AND created_by = ? AND version = ?)', [projectId, actor, nextVersion]),
+    auditInsert(db, actor, 'media.project.update', projectId, { status: 'updated', version: nextVersion }, 'changes() = 1'),
   ])
   if (changes(result[0]) !== 1) {
     const current = first<{ version: number }>(await db.prepare('SELECT version FROM blog_media_projects WHERE id = ? AND created_by = ?').bind(projectId, actor).all())

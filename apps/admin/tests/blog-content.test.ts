@@ -65,7 +65,7 @@ describe('blog content boundaries', () => {
         {
           type: 'heading',
           attrs: { level: 2, id: 'chapter-1', textAlign: null, lineHeight: null, indent: 0 },
-          content: [{ type: 'text', text: 'Chapter one' }],
+          content: [{ type: 'text', text: 'Chapter one', marks: [{ type: 'textStyle', attrs: { fontFamily: 'Arial' } }] }],
         },
         {
           type: 'taskList',
@@ -82,9 +82,26 @@ describe('blog content boundaries', () => {
       ],
     })
 
-    expect(html).toContain('<h2 id="chapter-1">Chapter one</h2>')
+    expect(html).toContain('<h2 id="chapter-1">')
+    expect(html).toContain('Chapter one')
+    expect(html).toContain('font-family:Arial')
     expect(html).toContain('<ul class="task-list" data-type="taskList">')
     expect(html).toContain('<li class="task-item" data-type="taskItem" data-checked="true"><input type="checkbox" disabled checked><p>Ship it</p></li>')
+  })
+
+  it('allows the finite UI font families used by the editor ribbon', async () => {
+    const html = await renderTiptapDocument({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{
+          type: 'text',
+          text: 'Editorial',
+          marks: [{ type: 'textStyle', attrs: { fontFamily: 'Georgia' } }],
+        }],
+      }],
+    })
+    expect(html).toContain('font-family:Georgia')
   })
 
   it('sanitizes legacy HTML and removes external media sources', () => {

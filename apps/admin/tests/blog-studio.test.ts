@@ -14,6 +14,7 @@ import {
   restoreBlogPost,
   setBlogPostStatus,
   updateBlogDraft,
+  updateMediaProject,
 } from '../server/services/blog-studio'
 
 const migrationSql = [
@@ -90,9 +91,11 @@ class FakeUpload {
 
 class FakeBucket {
   readonly upload = new FakeUpload()
+  private nextUploadId = 1
 
   async createMultipartUpload() {
-    return { uploadId: 'r2-upload-1', uploadPart: this.upload.uploadPart.bind(this.upload), complete: this.upload.complete.bind(this.upload), abort: this.upload.abort.bind(this.upload) }
+    const uploadId = `r2-upload-${this.nextUploadId++}`
+    return { uploadId, uploadPart: this.upload.uploadPart.bind(this.upload), complete: this.upload.complete.bind(this.upload), abort: this.upload.abort.bind(this.upload) }
   }
 
   resumeMultipartUpload() {
@@ -142,6 +145,23 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllGlobals())
 
 describe('blog studio persistence', () => {
+  it('creates new posts with an editor-ready empty Tiptap document', async () => {
+    const { database, d1, bucket } = databaseFixture()
+    try {
+      const created = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
+        title: 'Editor ready',
+        slug: 'editor-ready',
+        excerpt: 'A blank editor document',
+      })
+
+      expect(created.draft.content_json).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+      expect(created.draft.content_html).toBe('<p></p>')
+    }
+    finally {
+      database.close()
+    }
+  })
+
   it('keeps autosaves private, rejects stale CAS writes, and restores checkpoints', async () => {
     const { database, d1, bucket } = databaseFixture()
     try {
@@ -171,11 +191,52 @@ describe('blog studio persistence', () => {
       expect((writes.find(result => result.status === 'rejected') as PromiseRejectedResult).reason).toMatchObject({ statusCode: 409 })
 
       const current = database.prepare('SELECT version FROM blog_post_drafts WHERE post_id = ?').get(created.post.id).version
+      database.exec(`CREATE TRIGGER fail_restore_revision BEFORE INSERT ON blog_post_revisions
+        WHEN NEW.kind = 'restore'
+        BEGIN SELECT RAISE(ABORT, 'restore revision failure'); END`)
+      await expect(restoreBlogPost(eventFor(d1, bucket, 'POST', '/restore', { version: current, revision_id: checkpoint.revision.id }), created.post.id)).rejects.toThrow('restore revision failure')
+      expect(database.prepare('SELECT version FROM blog_post_drafts WHERE post_id = ?').get(created.post.id).version).toBe(current)
+      expect(database.prepare('SELECT COUNT(*) AS count FROM blog_post_revisions WHERE post_id = ? AND kind = \'restore\'').get(created.post.id).count).toBe(0)
+      expect(database.prepare('SELECT COUNT(*) AS count FROM blog_audit_records WHERE entity_id = ? AND action = \'post.restore\'').get(created.post.id).count).toBe(0)
+      database.exec('DROP TRIGGER fail_restore_revision')
       const restored = await restoreBlogPost(eventFor(d1, bucket, 'POST', '/restore', { version: current, revision_id: checkpoint.revision.id }), created.post.id)
       expect(restored.draft.title).toBe('Private draft')
+      expect(database.prepare('SELECT version FROM blog_post_revisions WHERE post_id = ? AND kind = \'restore\'').get(created.post.id).version).toBe(current + 1)
       const audits = database.prepare('SELECT action, details_json FROM blog_audit_records WHERE entity_id = ? ORDER BY rowid ASC').all(created.post.id)
       expect(audits.map(row => row.action)).toEqual(['post.create', 'post.checkpoint', 'post.draft', 'post.draft', 'post.restore'])
       expect(audits.map(row => row.details_json).join('')).not.toContain('Second body')
+    }
+    finally {
+      database.close()
+    }
+  })
+
+  it('maps duplicate create and publish slug races to 409 without partial writes', async () => {
+    const { database, d1, bucket } = databaseFixture()
+    try {
+      const creations = await Promise.allSettled([
+        createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), { title: 'Race one', slug: 'race-slug', excerpt: 'One', content_html: '<p>One</p>' }),
+        createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), { title: 'Race two', slug: 'race-slug', excerpt: 'Two', content_html: '<p>Two</p>' }),
+      ])
+      expect(creations.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      expect(creations.filter(result => result.status === 'rejected')).toHaveLength(1)
+      expect((creations.find(result => result.status === 'rejected') as PromiseRejectedResult).reason).toMatchObject({ statusCode: 409 })
+      expect(database.prepare('SELECT COUNT(*) AS count FROM blog_posts WHERE slug = ?').get('race-slug').count).toBe(1)
+
+      const first = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), { title: 'Publish one', slug: 'publish-one', excerpt: 'One', content_html: '<p>One</p>' })
+      const second = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), { title: 'Publish two', slug: 'publish-two', excerpt: 'Two', content_html: '<p>Two</p>' })
+      const firstDraft = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', { version: first.draft.version, slug: 'published-race' }), first.post.id)
+      const secondDraft = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', { version: second.draft.version, slug: 'published-race' }), second.post.id)
+      const publishes = await Promise.allSettled([
+        publishBlogPost(eventFor(d1, bucket, 'POST', '/publish', { version: firstDraft.draft.version }), first.post.id),
+        publishBlogPost(eventFor(d1, bucket, 'POST', '/publish', { version: secondDraft.draft.version }), second.post.id),
+      ])
+      expect(publishes.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      expect(publishes.filter(result => result.status === 'rejected')).toHaveLength(1)
+      expect((publishes.find(result => result.status === 'rejected') as PromiseRejectedResult).reason).toMatchObject({ statusCode: 409 })
+      expect(database.prepare('SELECT COUNT(*) AS count FROM blog_posts WHERE slug = ? AND status = \'published\'').get('published-race').count).toBe(1)
+      expect(database.prepare('SELECT status FROM blog_posts WHERE id = ?').get(second.post.id).status === 'draft' || database.prepare('SELECT status FROM blog_posts WHERE id = ?').get(first.post.id).status === 'draft').toBe(true)
+      expect(database.prepare('SELECT COUNT(*) AS count FROM blog_post_revisions WHERE post_id IN (?, ?) AND kind = \'publish\'').get(first.post.id, second.post.id).count).toBe(1)
     }
     finally {
       database.close()
@@ -192,11 +253,25 @@ describe('blog studio persistence', () => {
         duration_ms: 0,
       }))
       expect(upload.asset.duration_ms).toBe(0)
+      const longSource = await initBlogUpload(eventFor(d1, bucket, 'POST', '/uploads', {
+        filename: 'long-source.mp4',
+        mime_type: 'video/mp4',
+        size: 4,
+        duration_ms: 600_000,
+      }))
+      expect(longSource.asset.duration_ms).toBe(600_000)
       await putBlogUploadPart(eventFor(d1, bucket, 'PUT', '/parts/1', new Uint8Array([1, 2, 3, 4])), upload.upload.id, 1)
       const completed = await completeBlogUpload(eventFor(d1, bucket, 'POST', '/complete', { parts: [{ part_number: 1, etag: 'etag-1' }] }), upload.upload.id)
       const retried = await completeBlogUpload(eventFor(d1, bucket, 'POST', '/complete', { parts: [{ part_number: 1, etag: 'etag-1' }] }), upload.upload.id)
       expect(retried.asset.id).toBe(completed.asset.id)
       const assetId = completed.asset.id
+      await expect(initBlogUpload(eventFor(d1, bucket, 'POST', '/uploads', {
+        filename: 'too-long-output.mp4',
+        mime_type: 'video/mp4',
+        size: 4,
+        duration_ms: 300_001,
+        derived_from: [assetId],
+      }))).rejects.toMatchObject({ statusCode: 400 })
       const created = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
         title: 'Publishable',
         slug: 'publishable',
@@ -207,8 +282,17 @@ describe('blog studio persistence', () => {
         INSERT INTO blog_assets (id, name, mime_type, kind, size, object_key, source_object_key, status, created_by, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)
       `).run('video-asset', 'video.mp4', 'video/mp4', 'video', 4, 'blog/derived/video-asset.mp4', 'blog/originals/video-asset/video.mp4', 'owner', new Date().toISOString())
-      const saved = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+      await expect(updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
         version: created.draft.version,
+        content_html: '<video src="/media/blog/video-asset" poster="/media/blog/video-asset"></video>',
+      }), created.post.id)).rejects.toMatchObject({ statusCode: 400 })
+      const legacyVideo = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: created.draft.version,
+        content_html: `<video src="/media/blog/video-asset" poster="/media/blog/${assetId}"></video>`,
+      }), created.post.id)
+      expect(legacyVideo.draft.content_html).toContain(`/media/blog/${assetId}`)
+      const saved = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: legacyVideo.draft.version,
         cover_image_url: `/media/blog/${assetId}`,
         content_json: {
           type: 'doc',
@@ -218,6 +302,23 @@ describe('blog studio persistence', () => {
       expect(saved.draft.content_html).toContain('/media/blog/video-asset')
       expect(saved.draft.content_html).toContain(`/media/blog/${assetId}`)
       expect(saved.draft.content_html).not.toContain('forged.invalid')
+
+      await expect(updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: saved.draft.version,
+        cover_image_url: '/media/blog/video-asset',
+      }), created.post.id)).rejects.toMatchObject({ statusCode: 400 })
+      await expect(updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: saved.draft.version,
+        cover_image_url: '/api/admin/blog/media/video-asset/source',
+      }), created.post.id)).rejects.toMatchObject({ statusCode: 400 })
+      await expect(updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: saved.draft.version,
+        cover_image_url: `/media/blog/${assetId}?cache=1`,
+      }), created.post.id)).rejects.toMatchObject({ statusCode: 400 })
+      await expect(updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: saved.draft.version,
+        cover_image_url: '/assets/unknown-cover.png',
+      }), created.post.id)).rejects.toMatchObject({ statusCode: 400 })
 
       const published = await publishBlogPost(eventFor(d1, bucket, 'POST', '/publish', { version: saved.draft.version }), created.post.id)
       expect(published.post.status).toBe('published')
@@ -241,12 +342,21 @@ describe('blog studio persistence', () => {
   it('preserves untouched legacy HTML and restricts legacy conversion to original media paths', async () => {
     const { database, d1, bucket } = databaseFixture()
     try {
+      await expect(createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
+        title: 'Private cover',
+        slug: 'private-cover',
+        excerpt: 'Rejected cover',
+        content_html: '<p>Body</p>',
+        cover_image_url: '/api/admin/blog/media/secret/source',
+      })).rejects.toMatchObject({ statusCode: 400 })
       const created = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
         title: 'Legacy article',
         slug: 'legacy-article',
         excerpt: 'Legacy excerpt',
         content_html: '<h2 id="chapter-1">Legacy heading</h2><p><img src="/assets/legacy.png" alt="Legacy"></p>',
       })
+      database.prepare('UPDATE blog_posts SET cover_image_url = ? WHERE id = ?').run('/assets/known-cover.png', created.post.id)
+      database.prepare('UPDATE blog_post_drafts SET cover_image_url = ? WHERE post_id = ?').run('/assets/known-cover.png', created.post.id)
       const originalHtml = created.draft.content_html
       const metadataOnly = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
         version: created.draft.version,
@@ -255,6 +365,7 @@ describe('blog studio persistence', () => {
       expect(metadataOnly.draft.content_json).toBeNull()
       expect(metadataOnly.draft.content_html).toBe(originalHtml)
       expect(metadataOnly.draft.content_html).toContain('id="chapter-1"')
+      expect(metadataOnly.draft.cover_image_url).toBe('/assets/known-cover.png')
 
       const converted = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
         version: metadataOnly.draft.version,
@@ -332,6 +443,9 @@ describe('blog studio persistence', () => {
       expect(project.project.version).toBe(1)
       expect(database.prepare('SELECT document FROM blog_media_projects WHERE id = ?').get(project.project.id).document).toContain('schema_version')
       expect(database.prepare('SELECT action FROM blog_audit_records WHERE entity_id = ?').get(project.project.id).action).toBe('media.project.create')
+      await updateMediaProject(eventFor(d1, bucket, 'PUT', '/projects', { version: 1, title: 'Photo project updated', document: project.project.document }), project.project.id)
+      await expect(updateMediaProject(eventFor(d1, bucket, 'PUT', '/projects', { version: 1, title: 'Stale update', document: project.project.document }), project.project.id)).rejects.toMatchObject({ statusCode: 409 })
+      expect(database.prepare('SELECT action FROM blog_audit_records WHERE entity_id = ? ORDER BY rowid ASC').all(project.project.id).map(row => row.action)).toEqual(['media.project.create', 'media.project.update'])
     }
     finally {
       database.close()
