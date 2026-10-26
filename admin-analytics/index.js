@@ -2140,7 +2140,7 @@ function rumRows(data, siteTag) {
   const series = rows.map((row) => ({
     samples: numberOrNull(row?.count) ?? 0,
     dimensions: {
-      timestamp: row?.dimensions?.datetime ?? null,
+      timestamp: row?.dimensions?.datetimeHour ?? row?.dimensions?.datetime ?? null,
       site_tag: row?.dimensions?.siteTag ?? siteTag,
       host: row?.dimensions?.requestHost ?? null,
       path: row?.dimensions?.requestPath ?? null,
@@ -2230,7 +2230,7 @@ async function performanceReport(env, range) {
     '        filter: {siteTag: $siteTag, datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd}',
     '      ) {',
     '        count',
-    '        dimensions { datetime siteTag requestHost requestPath }',
+    '        dimensions { datetimeHour siteTag requestHost requestPath }',
     '        avg { largestContentfulPaint interactionToNextPaint cumulativeLayoutShift firstContentfulPaint timeToFirstByte }',
     '        quantiles { largestContentfulPaintP75 interactionToNextPaintP75 cumulativeLayoutShiftP75 }',
     '      }',

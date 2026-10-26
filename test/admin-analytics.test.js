@@ -542,7 +542,7 @@ test('performance queries Workers and RUM with bounded string ranges and source-
                   rumWebVitalsEventsAdaptiveGroups: [{
                     count: 4,
                     dimensions: {
-                      datetime: '2026-10-26T10:00:00Z',
+                      datetimeHour: '2026-10-26T10:00:00Z',
                       siteTag: 'site-tag',
                       requestHost: 'www.akmalalif.com',
                       requestPath: '/',
@@ -596,6 +596,8 @@ test('performance queries Workers and RUM with bounded string ranges and source-
     assert.equal(calls.every((call) => call.variables.datetimeEnd === '2026-10-26T10:00:00.000Z'), true);
     assert.equal(calls.filter((call) => call.query.includes('PortfolioWorkerPerformance')).every((call) => call.query.includes('scriptName')), true);
     assert.equal(calls.some((call) => call.query.includes('siteTag: $siteTag')), true);
+    assert.equal(calls.filter((call) => call.query.includes('PortfolioRumPerformance')).every((call) => call.query.includes('datetimeHour')), true);
+    assert.equal(calls.filter((call) => call.query.includes('PortfolioRumPerformance')).every((call) => !call.query.includes('dimensions { datetime siteTag')), true);
     assert.equal(result.meta.coverage.unavailable, false);
     assert.equal(result.meta.coverage.workers['akmalalif-portfolio'].available, true);
     assert.equal(result.data.cloudflare.scripts['akmalalif-portfolio'].totals.requests, 10);
