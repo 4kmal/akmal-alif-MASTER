@@ -23,6 +23,8 @@ const draft = ref<BlogDraft>(createEmptyDraft())
 const loading = ref(true)
 const error = ref('')
 const taxonomy = ref<{ categories: { id: string, name: string, slug: string }[], tags: { id: string, name: string, slug: string }[] }>({ categories: [], tags: [] })
+const taxonomyNames = reactive({ category: '', tag: '' })
+const taxonomySaving = ref<'category' | 'tag' | null>(null)
 const revisions = ref<BlogRevision[]>([])
 const revisionsOpen = ref(false)
 const previewOpen = ref(false)
@@ -96,6 +98,40 @@ const saveLabel = computed(() => {
   return 'Saved privately'
 })
 const isStale = computed(() => autosave.state.value === 'stale')
+
+async function addTaxonomy(kind: 'category' | 'tag') {
+  const requestedPostId = postId.value
+  const name = taxonomyNames[kind].trim()
+  if (!name || taxonomySaving.value)
+    return
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  const collection = kind === 'category' ? 'categories' : 'tags'
+  const existing = taxonomy.value[collection].find(item => item.slug === slug || item.name.toLowerCase() === name.toLowerCase())
+  taxonomySaving.value = kind
+  try {
+    const updated = existing ? taxonomy.value : await api.createTaxonomy({ kind, name, slug })
+    if (requestedPostId !== postId.value)
+      return
+    taxonomy.value = updated
+    const selected = existing ?? updated[collection].find(item => item.slug === slug)
+    if (!selected)
+      throw new Error('The new item was not returned. Refresh the post before trying again.')
+    if (kind === 'category')
+      setDraftField('category_id', selected.id)
+    else
+      setDraftField('tag_ids', [...new Set([...draft.value.tag_ids, selected.id])])
+    taxonomyNames[kind] = ''
+    statusNotice.value = `${selected.name} selected for this draft.`
+  }
+  catch (reason: unknown) {
+    if (requestedPostId === postId.value)
+      error.value = reason instanceof Error ? reason.message : `Could not add the ${kind}.`
+  }
+  finally {
+    taxonomySaving.value = null
+  }
+}
+
 const posterAssets = computed(() => getBlogPosterAssets(mediaAssets.value))
 const selectedPosterAsset = computed(() => {
   const posterId = selectedMediaAttrs.value?.posterAssetId
@@ -706,7 +742,22 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <label class="blog-field"><span>Slug</span><input :value="draft.slug" autocomplete="off" :disabled="Boolean(detail?.post.published_version)" @input="setDraftField('slug', ($event.target as HTMLInputElement).value)"></label>
             <label class="blog-field"><span>Excerpt</span><textarea :value="draft.excerpt" rows="3" @input="setDraftField('excerpt', ($event.target as HTMLTextAreaElement).value)" /></label>
             <label class="blog-field"><span>Category</span><select :value="draft.category_id ?? ''" @change="setDraftField('category_id', ($event.target as HTMLSelectElement).value || null)"><option value="">Uncategorised</option><option v-for="category in taxonomy.categories" :key="category.id" :value="category.id">{{ category.name }}</option></select></label>
-            <label class="blog-field"><span>Tags</span><select multiple :value="draft.tag_ids" @change="setDraftField('tag_ids', Array.from(($event.target as HTMLSelectElement).selectedOptions).map(option => option.value))"><option v-for="tag in taxonomy.tags" :key="tag.id" :value="tag.id">{{ tag.name }}</option></select></label>
+            <details class="blog-taxonomy-disclosure">
+              <summary>Add category</summary>
+              <form class="blog-taxonomy-create" @submit.prevent="addTaxonomy('category')">
+                <label class="blog-field"><span>New category</span><input v-model="taxonomyNames.category" required maxlength="160" :disabled="taxonomySaving !== null" autocomplete="off"></label>
+                <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.category.trim()">{{ taxonomySaving === 'category' ? 'Adding…' : 'Add category' }}</button>
+              </form>
+            </details>
+            <fieldset class="blog-field blog-tag-options">
+              <legend>Tags</legend>
+              <p v-if="!taxonomy.tags.length" class="blog-inspector__empty">Add a tag to start organizing this post.</p>
+              <label v-for="tag in taxonomy.tags" :key="tag.id" class="blog-toggle"><input type="checkbox" :checked="draft.tag_ids.includes(tag.id)" @change="setDraftField('tag_ids', ($event.target as HTMLInputElement).checked ? [...draft.tag_ids, tag.id] : draft.tag_ids.filter(id => id !== tag.id))"><span>{{ tag.name }}</span></label>
+            </fieldset>
+            <form class="blog-taxonomy-create" @submit.prevent="addTaxonomy('tag')">
+              <label class="blog-field"><span>New tag</span><input v-model="taxonomyNames.tag" required maxlength="160" :disabled="taxonomySaving !== null" autocomplete="off"></label>
+              <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.tag.trim()">{{ taxonomySaving === 'tag' ? 'Adding…' : 'Add tag' }}</button>
+            </form>
             <label class="blog-field"><span>Cover image URL</span><input :value="draft.cover_image_url" type="url" placeholder="Protected asset URL" @input="setDraftField('cover_image_url', ($event.target as HTMLInputElement).value)"></label>
             <label class="blog-field"><span>Cover alt text</span><input :value="draft.cover_image_alt" @input="setDraftField('cover_image_alt', ($event.target as HTMLInputElement).value)"></label>
             <label class="blog-field"><span>Read time (minutes)</span><input :value="draft.read_minutes" type="number" min="1" max="999" @input="setDraftField('read_minutes', Number(($event.target as HTMLInputElement).value) || 1)"></label>

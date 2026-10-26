@@ -6,6 +6,7 @@ import {
   checkpointBlogPost,
   completeBlogUpload,
   createBlogPost,
+  createBlogTaxonomy,
   createMediaProject,
   initBlogUpload,
   previewBlogPost,
@@ -156,6 +157,49 @@ describe('blog studio persistence', () => {
 
       expect(created.draft.content_json).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
       expect(created.draft.content_html).toBe('<p></p>')
+    }
+    finally {
+      database.close()
+    }
+  })
+
+  it('keeps new category and tag assignments private until explicit publication', async () => {
+    const { database, d1, bucket } = databaseFixture()
+    try {
+      const withCategory = await createBlogTaxonomy(eventFor(d1, bucket, 'POST', '/taxonomy', {
+        kind: 'category',
+        name: 'Projects',
+        slug: 'projects',
+      }))
+      const withTag = await createBlogTaxonomy(eventFor(d1, bucket, 'POST', '/taxonomy', {
+        kind: 'tag',
+        name: 'Cloudflare',
+        slug: 'cloudflare',
+      }))
+      const category = withCategory.categories.find(item => item.slug === 'projects')
+      const tag = withTag.tags.find(item => item.slug === 'cloudflare')
+      expect(category).toMatchObject({ name: 'Projects', is_active: 1 })
+      expect(tag).toMatchObject({ name: 'Cloudflare' })
+      const created = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
+        title: 'Categorised draft',
+        slug: 'categorised-draft',
+        excerpt: 'A private project',
+      })
+      const saved = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: created.draft.version,
+        category_id: category.id,
+        tag_ids: [tag.id],
+      }), created.post.id)
+
+      expect(saved.draft.category_id).toBe(category.id)
+      expect(saved.draft.tag_ids).toEqual([tag.id])
+      expect(database.prepare('SELECT category_id FROM blog_posts WHERE id = ?').get(created.post.id).category_id).toBeNull()
+      expect(database.prepare('SELECT tag_id FROM blog_post_tags WHERE post_id = ?').all(created.post.id)).toEqual([])
+
+      await publishBlogPost(eventFor(d1, bucket, 'POST', '/publish', { version: saved.draft.version }), created.post.id)
+
+      expect(database.prepare('SELECT category_id FROM blog_posts WHERE id = ?').get(created.post.id).category_id).toBe(category.id)
+      expect(database.prepare('SELECT tag_id FROM blog_post_tags WHERE post_id = ?').all(created.post.id).map(row => row.tag_id)).toEqual([tag.id])
     }
     finally {
       database.close()

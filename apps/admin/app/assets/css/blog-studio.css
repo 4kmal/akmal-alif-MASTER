@@ -1535,3 +1535,28 @@
     animation: none;
   }
 }
+.blog-taxonomy-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin-block: 8px 16px;
+}
+
+.blog-taxonomy-disclosure summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.blog-tag-options {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.blog-tag-options legend {
+  margin-bottom: 8px;
+}
