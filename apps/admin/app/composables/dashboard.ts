@@ -25,6 +25,11 @@ export const DASHBOARD_ROUTES = {
     titleKey: 'Traffic',
     icon: ChartArea,
   },
+  history: {
+    paths: ['/admin/history'],
+    titleKey: 'Event history',
+    icon: ChartArea,
+  },
   content: {
     paths: ['/admin/content'],
     titleKey: 'Content',

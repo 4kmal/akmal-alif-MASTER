@@ -25,6 +25,12 @@ const platformItems = computed<NavItem[]>(() => [
     isActive: isActive('traffic'),
   },
   {
+    title: 'Event history',
+    url: '/admin/history',
+    icon: DASHBOARD_ROUTES.history.icon,
+    isActive: isActive('history'),
+  },
+  {
     title: 'Content',
     url: '/admin/content',
     icon: DASHBOARD_ROUTES.content.icon,

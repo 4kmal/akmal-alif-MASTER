@@ -184,7 +184,7 @@ export default eventHandler(async (event) => {
 
       if (accessLogResult) {
         try {
-          writeAccessLog(event, accessLogResult.logs)
+          await writeAccessLog(event, accessLogResult.logs)
         }
         catch {
           console.error({ event: 'access_log.write.failed' })

@@ -62,6 +62,9 @@ export default eventHandler(async (event) => {
     },
   })
 
-  const imageUrl = `/admin/_assets/${key}`
+  // Keep uploaded images usable from the public shortlink host. The admin
+  // asset route remains available for the dashboard, while OG templates and
+  // preview requests resolve this relative URL against the shortlink origin.
+  const imageUrl = `/_assets/${key}`
   return { url: imageUrl, key }
 })

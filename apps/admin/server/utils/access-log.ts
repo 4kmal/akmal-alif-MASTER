@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import * as analyticsWorker from '@portfolio-analytics'
 import { parseAcceptLanguage } from 'intl-parse-accept-language'
 import { UAParser } from 'ua-parser-js'
 import {
@@ -186,22 +187,127 @@ export function collectAccessLog(event: H3Event): AccessLogResult | undefined {
   }
 }
 
-export function writeAccessLog(event: H3Event, accessLogs: LogsMap): void {
+function bytesToHex(bytes: Uint8Array) {
+  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function pseudonymousIp(ip: string | undefined, secret: string | undefined) {
+  if (!ip || !secret || !globalThis.crypto?.subtle)
+    return ''
+
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await globalThis.crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(`sink-ip-v1:${ip}`),
+  )
+  return `sink-ip-v1:${bytesToHex(new Uint8Array(signature))}`
+}
+
+function withoutQuery(value: string | undefined) {
+  if (!value)
+    return ''
+
+  try {
+    const parsed = new URL(value)
+    return `${parsed.origin}${parsed.pathname || '/'}`
+  }
+  catch {
+    return value.split(/[?#]/, 1)[0]
+  }
+}
+
+async function nativeAnalyticsLogs(event: H3Event, accessLogs: LogsMap): Promise<LogsMap> {
+  const { cloudflare } = event.context
+  const env = cloudflare?.env as Record<string, string | undefined> | undefined
+  const country = accessLogs.country || ''
+  return {
+    ...accessLogs,
+    url: withoutQuery(accessLogs.url),
+    // The native Sink dataset is retained longer than raw D1 detail. Store a
+    // stable pseudonym and coarse browser facts, never the raw credentials.
+    ua: [accessLogs.browser, accessLogs.os, accessLogs.deviceType].filter(Boolean).join(' / '),
+    ip: await pseudonymousIp(accessLogs.ip, env?.ANALYTICS_ID_SECRET),
+    region: country,
+    city: '',
+    timezone: '',
+    language: '',
+    device: '',
+    latitude: 0,
+    longitude: 0,
+  }
+}
+
+function executionContext(event: H3Event): ExecutionContext | null {
+  return event.context.cloudflare?.context ?? null
+}
+
+function analyticsEnvironment(event: H3Event): unknown {
+  return event.context.cloudflare?.env ?? {}
+}
+
+function shortlinkEventData(event: H3Event, accessLogs: LogsMap) {
+  const link = event.context.link || {}
+  const slug = String(link.slug || accessLogs.slug || '')
+  const requestId = getHeader(event, 'cf-ray') || crypto.randomUUID()
+  return {
+    event_id: `sink:${String(link.id || slug)}:${requestId}`,
+    event_type: 'shortlink_click',
+    slug,
+    path: slug ? `/s/${slug}` : '/s/unknown',
+    target: accessLogs.url,
+    referrer: accessLogs.referer,
+    ip: accessLogs.ip,
+    user_agent: accessLogs.ua,
+    country: accessLogs.country,
+    region: accessLogs.region,
+    city: accessLogs.city,
+    timezone: accessLogs.timezone,
+    latitude: accessLogs.latitude,
+    longitude: accessLogs.longitude,
+    colo: accessLogs.COLO,
+  }
+}
+
+async function mirrorShortlinkEvent(event: H3Event, accessLogs: LogsMap) {
+  const recordShortlinkEvent = (analyticsWorker as {
+    recordShortlinkEvent?: (data: unknown, env: unknown, ctx: ExecutionContext | null) => Promise<unknown>
+  }).recordShortlinkEvent
+  if (!recordShortlinkEvent || !accessLogs.slug)
+    return
+
+  const task = recordShortlinkEvent(shortlinkEventData(event, accessLogs), analyticsEnvironment(event), executionContext(event))
+  const context = executionContext(event)
+  if (context?.waitUntil)
+    context.waitUntil(task)
+  else
+    await task
+}
+
+export async function writeAccessLog(event: H3Event, accessLogs: LogsMap): Promise<void> {
   const { cloudflare } = event.context
   const link = event.context.link || {}
 
   if (process.env.NODE_ENV === 'production') {
     const analytics = cloudflare.env.ANALYTICS
-    if (!analytics)
-      return
-
-    analytics.writeDataPoint({
-      indexes: [link.id], // only one index
-      blobs: logs2blobs(accessLogs),
-      doubles: logs2doubles(accessLogs),
-    })
-    return
+    if (analytics) {
+      const sanitizedLogs = await nativeAnalyticsLogs(event, accessLogs)
+      analytics.writeDataPoint({
+        indexes: [String(link.id || accessLogs.slug || '')], // only one index
+        blobs: logs2blobs(sanitizedLogs),
+        doubles: logs2doubles(sanitizedLogs),
+      })
+    }
+  }
+  else {
+    console.log('access logs:', accessLogs)
   }
 
-  console.log('access logs:', accessLogs)
+  await mirrorShortlinkEvent(event, accessLogs)
 }

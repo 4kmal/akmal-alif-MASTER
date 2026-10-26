@@ -30,6 +30,27 @@ reserved for an explicitly configured local gateway.
 - [x] Link health checks with progress, filtering, stop/clear, and CSV export.
 - [x] Link JSON import/export, access CSV export, R2 backup, and D1 migration status.
 - [x] OpenAPI and authenticated MCP tools for links and analytics.
-- [x] Portfolio briefing, traffic, content, engagement, goals, and performance routes.
+- [x] Portfolio briefing, traffic, content, engagement, goals, performance, realtime,
+      and retained event-history routes.
 
-The Sink-derived code and notices remain under the project license in `LICENSE`.
+## Fresh admin D1 bootstrap
+
+The `DB` binding is the new `akmalalif-admin` database. Apply its migrations in
+order with Wrangler; migration `0006_fast_nitro.sql` creates the raw event,
+13-month daily-rollup (including `session_hll`), and maintenance-state tables.
+
+```powershell
+pnpm db:migrate:local
+pnpm wrangler d1 migrations apply DB --remote --config wrangler.jsonc
+```
+
+For a dashboard-console bootstrap, execute the SQL files in `drizzle/` from
+`0000` through `0006` in filename order, and record the same six migration
+rows plus `0006_fast_nitro` in the Wrangler D1 migrations journal. Do not run
+`admin-analytics/schema.sql` separately: its tables are already represented by
+`0006`, and running both would create an out-of-band schema. `PORTFOLIO_DB` is
+the existing portfolio database and deliberately has no `migrations_dir`; it
+must never be included in the admin migration command.
+
+The Sink-derived code is adapted from [miantiao-me/Sink](https://github.com/miantiao-me/Sink)
+and remains under its AGPL-3.0-only license and notices in `LICENSE`.

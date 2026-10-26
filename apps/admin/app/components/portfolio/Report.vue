@@ -1,6 +1,6 @@
 <!-- eslint-disable better-tailwindcss/no-unknown-classes, vue/singleline-html-element-content-newline -->
 <script setup lang="ts">
-type ReportName = 'overview' | 'traffic' | 'content' | 'engagement' | 'goals' | 'performance'
+type ReportName = 'overview' | 'traffic' | 'content' | 'engagement' | 'goals' | 'performance' | 'realtime' | 'history'
 type SourceState = 'live' | 'estimated' | 'partial' | 'unavailable' | 'not-instrumented' | 'stale'
 
 const props = withDefaults(defineProps<{
@@ -24,6 +24,30 @@ interface ChartPoint {
   raw: number
 }
 
+interface DrilldownItem {
+  label: string
+  value: string | number | null
+  detail?: string
+}
+
+interface DrilldownSection {
+  title: string
+  note?: string
+  items: DrilldownItem[]
+}
+
+interface HistoryEvent {
+  event_id?: string
+  event_type?: string
+  source?: string
+  path?: string
+  target?: string
+  shortlink_slug?: string
+  event_at?: string
+  country?: string
+  is_bot?: boolean
+}
+
 interface ReportPayload {
   hasData: boolean
   sourceState: SourceState
@@ -33,6 +57,13 @@ interface ReportPayload {
   metrics: Metric[]
   series: ChartPoint[]
   highlights: string[]
+  drilldowns: DrilldownSection[]
+  alerts: string[]
+  history?: {
+    events: HistoryEvent[]
+    hasMore: boolean
+    nextCursor: string | null
+  }
 }
 
 interface BackendReport {
@@ -56,7 +87,13 @@ interface BackendReport {
         has_data?: boolean
         reason?: string
       }
+      workers?: Record<string, unknown>
     }
+    returned?: number
+    has_more?: boolean
+    next_cursor?: string | null
+    raw_detail_cutoff?: string
+    alerts?: unknown[]
   }
 }
 
@@ -64,10 +101,38 @@ const payload = shallowRef<ReportPayload | null>(null)
 const loading = shallowRef(true)
 const error = shallowRef('')
 const refreshedAt = shallowRef('')
+const historyRange = ref('24h')
+const historySource = ref('')
+const historyEventType = ref('')
+const historyPath = ref('')
+const historyCursor = ref('')
 
 const endpoint = computed(() => props.report === 'overview'
   ? '/api/admin/overview'
   : `/api/admin/portfolio/${props.report === 'goals' ? 'conversions' : props.report}`)
+
+const reportURL = computed(() => {
+  if (props.report !== 'history')
+    return endpoint.value
+
+  const params = new URLSearchParams({ range: historyRange.value, limit: '50' })
+  if (historySource.value)
+    params.set('source', historySource.value)
+  if (historyEventType.value)
+    params.set('event_type', historyEventType.value)
+  if (historyPath.value.trim())
+    params.set('path', historyPath.value.trim())
+  if (historyCursor.value)
+    params.set('cursor', historyCursor.value)
+  return `${endpoint.value}?${params.toString()}`
+})
+
+const historyCSVURL = computed(() => {
+  const url = new URL(reportURL.value, 'https://admin.invalid')
+  url.searchParams.set('format', 'csv')
+  url.searchParams.delete('cursor')
+  return `${url.pathname}${url.search}`
+})
 
 const defaultMetrics = computed<Metric[]>(() => {
   const labels: Record<ReportName, string[]> = {
@@ -77,6 +142,8 @@ const defaultMetrics = computed<Metric[]>(() => {
     engagement: ['Events', 'Active time', 'Media events', 'Played time'],
     goals: ['Goals completed', 'Engagement', 'Career contact', 'Shortlink campaigns'],
     performance: ['Worker requests', 'Worker errors', 'CPU time', 'RUM vitals'],
+    realtime: ['Active visitors', 'Shortlink active', 'Recent events', 'Visitor estimate'],
+    history: ['Rows returned', 'Raw detail', 'Sources', 'Next page'],
   }
 
   return labels[props.report].map(label => ({ label }))
@@ -180,7 +247,7 @@ function metric(label: string, value: string | number | null, detail: string, st
   return { label, value, detail, state }
 }
 
-function sourceStateFor(response: BackendReport): SourceState {
+function sourceStateFor(response: BackendReport, report: ReportName): SourceState {
   const coverage = response.meta?.coverage
   if (coverage?.unavailable)
     return 'unavailable'
@@ -188,6 +255,8 @@ function sourceStateFor(response: BackendReport): SourceState {
     return 'stale'
   if (response.meta?.detail === 'daily_rollup')
     return 'partial'
+  if (report === 'history' && records(response.data?.events).length)
+    return 'live'
   if (coverage?.has_data)
     return 'live'
   return 'not-instrumented'
@@ -195,7 +264,9 @@ function sourceStateFor(response: BackendReport): SourceState {
 
 function chartSeries(data: Record<string, unknown>, report: ReportName): ChartPoint[] {
   const daily = records(data.daily)
-  const rawValues = daily.map(row => numberValue(report === 'overview' ? row.page_views ?? row.events : row.events))
+  const rawValues = daily.map(row => numberValue(
+    report === 'overview' ? row.page_views ?? row.events : row.events,
+  ))
   const points = daily.flatMap((row, index) => {
     const raw = rawValues[index] ?? null
     const day = typeof row.day === 'string' ? row.day : ''
@@ -208,10 +279,50 @@ function chartSeries(data: Record<string, unknown>, report: ReportName): ChartPo
   }))
 }
 
+function drilldownSection(title: string, items: DrilldownItem[], note?: string): DrilldownSection | null {
+  return items.length ? { title, items: items.slice(0, 12), note } : null
+}
+
+function valueLabel(value: unknown, fallback = 'Unknown') {
+  if (typeof value === 'string' && value.trim())
+    return value
+  if (typeof value === 'number' && Number.isFinite(value))
+    return String(value)
+  return fallback
+}
+
+function countValue(value: unknown) {
+  const number = numberValue(value)
+  return number === null ? null : Math.round(number)
+}
+
+function comparisonDetail(item: Record<string, unknown>, noun = 'events') {
+  const change = numberValue(item.change_percent)
+  const trend = typeof item.trend === 'string' && item.trend !== 'flat' ? item.trend : ''
+  const comparison = change === null
+    ? trend
+    : `${change > 0 ? '+' : ''}${Math.round(change)}%${trend ? ` ${trend}` : ''}`
+  return comparison ? `${noun} · ${comparison}` : noun
+}
+
+function historyEvent(value: Record<string, unknown>): HistoryEvent {
+  return {
+    event_id: typeof value.event_id === 'string' ? value.event_id : undefined,
+    event_type: typeof value.event_type === 'string' ? value.event_type : undefined,
+    source: typeof value.source === 'string' ? value.source : undefined,
+    path: typeof value.path === 'string' ? value.path : undefined,
+    target: typeof value.target === 'string' ? value.target : undefined,
+    shortlink_slug: typeof value.shortlink_slug === 'string' ? value.shortlink_slug : undefined,
+    event_at: typeof value.event_at === 'string' ? value.event_at : undefined,
+    country: typeof value.country === 'string' ? value.country : undefined,
+    is_bot: value.is_bot === true,
+  }
+}
+
 function normalizeReport(response: BackendReport, report: ReportName): ReportPayload {
   const data = record(response.data)
   const coverage = response.meta?.coverage
-  const sourceState = sourceStateFor(response)
+  const sourceState = sourceStateFor(response, report)
   const source = response.meta?.source || 'portfolio analytics'
   const detail = response.meta?.detail === 'daily_rollup'
     ? 'This period uses retained daily summaries; raw event detail has expired.'
@@ -219,9 +330,25 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
   const range = response.meta?.range?.preset || [response.meta?.range?.from, response.meta?.range?.to].filter(Boolean).join(' → ')
   const series = chartSeries(data, report)
   const metrics: Metric[] = []
+  const drilldowns: DrilldownSection[] = []
+  const alerts: string[] = []
   const highlights = Array.isArray(data.insights)
     ? data.insights.filter((item): item is string => typeof item === 'string')
     : []
+
+  for (const item of [
+    ...(Array.isArray(data.alerts) ? data.alerts : []),
+    ...(Array.isArray(response.meta?.alerts) ? response.meta.alerts : []),
+  ]) {
+    if (typeof item === 'string' && item.trim())
+      alerts.push(item)
+  }
+  if (coverage?.unavailable)
+    alerts.push('One or more analytics sources are unavailable for this window.')
+  if (coverage?.stale)
+    alerts.push('The latest trusted event is older than the freshness threshold.')
+  if (coverage?.truncated)
+    alerts.push('Raw detail has expired for part of this window; retained daily summaries are shown.')
 
   if (report === 'overview') {
     const goals = records(data.goals)
@@ -249,19 +376,101 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
     const topPath = paths[0]
     if (typeof topPath?.path === 'string' && numberValue(topPath.count) !== null)
       highlights.push(`Most active path: ${topPath.path} (${topPath.count} events).`)
+    const pathItems = paths.map(item => ({
+      label: valueLabel(item.path),
+      value: countValue(item.count),
+      detail: comparisonDetail(item),
+    }))
+    const referrerItems = referrers.map(item => ({
+      label: valueLabel(item.referrer),
+      value: countValue(item.count),
+      detail: 'events',
+    }))
+    const campaignItems = campaigns.map(item => ({
+      label: valueLabel(item.campaign),
+      value: countValue(item.count),
+      detail: 'events',
+    }))
+    const locationItems = records(data.locations).map(item => ({
+      label: [valueLabel(item.country), valueLabel(item.region, '')].filter(Boolean).join(' / '),
+      value: countValue(item.count),
+      detail: 'events',
+    }))
+    for (const section of [
+      drilldownSection('Top paths', pathItems),
+      drilldownSection('Referrers', referrerItems),
+      drilldownSection('Campaigns', campaignItems),
+      drilldownSection('Locations', locationItems, 'Country and region are coarse location fields.'),
+      drilldownSection('Landing pages', records(data.landing_pages).map(item => ({
+        label: valueLabel(item.path ?? item.page),
+        value: countValue(item.count ?? item.views),
+        detail: comparisonDetail(item, 'entry events'),
+      }))),
+      drilldownSection('Exit pages', records(data.exit_pages).map(item => ({
+        label: valueLabel(item.path ?? item.page),
+        value: countValue(item.count ?? item.views),
+        detail: comparisonDetail(item, 'exit events'),
+      }))),
+      drilldownSection('Devices', records(data.devices).map(item => ({
+        label: valueLabel(item.device ?? item.name),
+        value: countValue(item.count ?? item.events),
+        detail: 'events',
+      }))),
+      drilldownSection('Browsers', records(data.browsers).map(item => ({
+        label: valueLabel(item.browser ?? item.name),
+        value: countValue(item.count ?? item.events),
+        detail: 'events',
+      }))),
+      drilldownSection('Operating systems', records(data.operating_systems).map(item => ({
+        label: valueLabel(item.operating_system ?? item.os ?? item.name),
+        value: countValue(item.count ?? item.events),
+        detail: 'events',
+      }))),
+    ]) {
+      if (section)
+        drilldowns.push(section)
+    }
   }
 
   if (report === 'content') {
     const content = records(data.content)
-    const views = sum(content.map(item => item.views))
-    const completions = sum(content.map(item => item.completions))
-    const progress = sum(content.map(item => item.average_progress))
+    const pages = records(data.pages)
+    const contentRows = pages.length ? pages : content
+    const views = sum(contentRows.map(item => item.views ?? item.events))
+    const completions = sum(contentRows.map(item => item.completions))
+    const progress = sum(contentRows.map(item => item.average_progress))
     metrics.push(
-      metric('Content pages', content.length || null, 'Blog and article paths returned by the source.'),
+      metric('Content pages', contentRows.length || null, 'Blog and article paths returned by the source.'),
       metric('Views', formatNumber(views), 'Page views for content paths.'),
       metric('Completions', formatNumber(completions), 'Explicit article_complete events.'),
-      metric('Average progress', formatPercent(progress === null || !content.length ? null : progress / content.length), 'Mean reported article progress.', 'estimated'),
+      metric('Average progress', formatPercent(progress === null || !contentRows.length ? null : progress / contentRows.length), 'Mean reported article progress.', 'estimated'),
     )
+    const contentItems = contentRows.map(item => ({
+      label: valueLabel(item.title ?? item.path),
+      value: countValue(item.views ?? item.events),
+      detail: `${valueLabel(item.path)} · ${countValue(item.completions) ?? 0} completions · ${formatDuration(numberValue(item.active_ms)) ?? '—'} active · ${comparisonDetail(item, 'views').replace(/^\d+ /, '')}`,
+    }))
+    const section = drilldownSection('Content paths', contentItems)
+    if (section)
+      drilldowns.push(section)
+    const categories = records(data.category_comparisons ?? data.categories).map(item => ({
+      label: valueLabel(item.category_name ?? item.category ?? item.name ?? item.category_slug),
+      value: countValue(item.views ?? item.events ?? item.count),
+      detail: comparisonDetail(item, 'content views'),
+    }))
+    const categorySection = drilldownSection('Content categories', categories)
+    if (categorySection)
+      drilldowns.push(categorySection)
+    const catalog = record(data.content_catalog)
+    if (Object.keys(catalog).length) {
+      const catalogSection = drilldownSection('Content metadata', [{
+        label: 'Portfolio catalog',
+        value: catalog.available === true ? 'Available' : 'Unavailable',
+        detail: valueLabel(catalog.reason, catalog.source ? `Source: ${catalog.source}` : 'Metadata source did not return a status.'),
+      }])
+      if (catalogSection)
+        drilldowns.push(catalogSection)
+    }
   }
 
   if (report === 'engagement') {
@@ -273,6 +482,20 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
       metric('Media events', formatNumber(sum(media.map(item => item.events))), 'Media start, progress, and completion events.'),
       metric('Played time', formatDuration(sum(media.map(item => item.played_ms))), 'Reported media playback time.'),
     )
+    const eventItems = eventTypes.map(item => ({
+      label: valueLabel(item.event_type),
+      value: countValue(item.count),
+      detail: `${formatDuration(numberValue(item.active_ms)) ?? '—'} active`,
+    }))
+    const mediaItems = media.map(item => ({
+      label: valueLabel(item.media_id),
+      value: countValue(item.events),
+      detail: `${formatDuration(numberValue(item.played_ms)) ?? '—'} played`,
+    }))
+    for (const section of [drilldownSection('Event types', eventItems), drilldownSection('Media', mediaItems)]) {
+      if (section)
+        drilldowns.push(section)
+    }
   }
 
   if (report === 'goals') {
@@ -284,6 +507,20 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
       metric('Career contact', formatNumber(numberValue(findGoal('career_contact')?.conversions)), 'Contact open and interaction events.'),
       metric('Shortlink campaigns', formatNumber(numberValue(findGoal('shortlink_campaigns')?.conversions)), 'Sink events with a shortlink source.'),
     )
+    const goalItems = goals.map(goal => ({
+      label: valueLabel(goal.label ?? goal.id),
+      value: countValue(goal.conversions),
+      detail: goal.denominator_sessions != null
+        ? `${countValue(goal.sessions) ?? 0} sessions · ${Math.round(Number(goal.conversion_rate ?? 0) * 100)}% of ${countValue(goal.denominator_sessions)} ${valueLabel(goal.denominator_label, 'website_sessions')}`
+        : goal.denominator_clicks != null
+          ? `${countValue(goal.sessions) ?? 0} sessions · ${countValue(goal.denominator_clicks)} ${valueLabel(goal.denominator_label, 'shortlink_clicks')}`
+          : goal.conversion_rate == null
+            ? `${countValue(goal.sessions) ?? 0} sessions`
+            : `${Math.round(Number(goal.conversion_rate) * 100)}% of ${valueLabel(goal.denominator_label, 'website_sessions')}`,
+    }))
+    const section = drilldownSection('Goal definitions', goalItems, 'A conversion is only counted when its named event or source exists.')
+    if (section)
+      drilldowns.push(section)
   }
 
   if (report === 'performance') {
@@ -306,6 +543,88 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
     )
   }
 
+  if (report === 'overview') {
+    const goals = records(data.goals)
+    const goalItems = goals.map(goal => ({
+      label: valueLabel(goal.label ?? goal.id),
+      value: countValue(goal.conversions),
+      detail: 'conversions',
+    }))
+    const section = drilldownSection('Goals in this brief', goalItems)
+    if (section)
+      drilldowns.push(section)
+  }
+
+  const sourceRows = records(data.source_health ?? data.sources)
+  if (sourceRows.length) {
+    const sourceSection = drilldownSection('Source health', sourceRows.map(item => ({
+      label: valueLabel(item.name ?? item.source ?? item.id),
+      value: valueLabel(item.state ?? (item.available === false ? 'Unavailable' : 'Live')),
+      detail: valueLabel(item.reason ?? item.detail, 'Freshness and availability reported by the source.'),
+    })))
+    if (sourceSection)
+      drilldowns.push(sourceSection)
+  }
+  const workerHealth = record(coverage?.workers)
+  const sourceHealthItems = Object.entries(workerHealth).map(([name, status]) => {
+    const item = record(status)
+    return {
+      label: name,
+      value: valueLabel(item.available === false ? 'Unavailable' : item.has_data === false ? 'No data' : 'Live'),
+      detail: valueLabel(item.reason, valueLabel(item.source, 'Worker source')),
+    }
+  })
+  const rumHealth = record(coverage?.rum_vitals)
+  if (Object.keys(rumHealth).length) {
+    sourceHealthItems.push({
+      label: 'RUM vitals',
+      value: valueLabel(rumHealth.available === false ? 'Unavailable' : rumHealth.has_data === false ? 'No data' : 'Live'),
+      detail: valueLabel(rumHealth.reason, 'Cloudflare Web Analytics'),
+    })
+  }
+  const healthSection = drilldownSection('Source health', sourceHealthItems)
+  if (healthSection && !sourceRows.length)
+    drilldowns.push(healthSection)
+
+  if (report === 'realtime') {
+    const events = records(data.events)
+    const activeVisitors = numberValue(data.active_5m)
+    const shortlinkActive = numberValue(data.shortlink_active_5m)
+    metrics.push(
+      metric('Active visitors', formatNumber(activeVisitors), 'Estimated website visitors in the last five minutes.', 'estimated'),
+      metric('Shortlink active', formatNumber(shortlinkActive), 'Shortlink activity in the last five minutes.', 'estimated'),
+      metric('Recent events', events.length, 'Raw events returned for the five-minute window.'),
+      metric('Visitor estimate', valueLabel(record(data.visitor_estimates).website?.method, 'Unavailable'), 'Method declared by the source.', activeVisitors === null ? 'unavailable' : 'estimated'),
+    )
+    const eventItems = events.map(item => ({
+      label: `${valueLabel(item.event_type)} · ${valueLabel(item.path)}`,
+      value: valueLabel(item.source),
+      detail: typeof item.timestamp === 'string' ? formatUpdatedAt(item.timestamp) : 'recent',
+    }))
+    const section = drilldownSection('Recent activity', eventItems, 'This view refreshes every ten seconds while visible.')
+    if (section)
+      drilldowns.push(section)
+  }
+
+  let history: ReportPayload['history']
+  if (report === 'history') {
+    const events = records(data.events).map(historyEvent)
+    const cutoff = response.meta?.raw_detail_cutoff
+    metrics.push(
+      metric('Rows returned', events.length, 'Raw D1 events in the selected page.'),
+      metric('Raw detail', cutoff ? `Since ${formatUpdatedAt(cutoff)}` : 'Last 90 days', 'Raw detail is pruned after 90 days.', 'partial'),
+      metric('Sources', new Set(events.map(event => event.source).filter(Boolean)).size || null, 'Portfolio, Sink, and legacy source labels.'),
+      metric('Next page', response.meta?.has_more ? 'Available' : 'End', 'Cursor pagination keeps history bounded.'),
+    )
+    history = {
+      events,
+      hasMore: response.meta?.has_more === true || data.has_more === true,
+      nextCursor: typeof response.meta?.next_cursor === 'string'
+        ? response.meta.next_cursor
+        : typeof data.next_cursor === 'string' ? data.next_cursor : null,
+    }
+  }
+
   if (report === 'overview' && numberValue(data.active_visitors_5m) !== null)
     highlights.push('Active visitors are measured over the last five minutes.')
 
@@ -318,6 +637,9 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
     metrics: metrics.length ? metrics : defaultMetrics.value,
     series,
     highlights: [...new Set(highlights)],
+    drilldowns,
+    alerts: [...new Set(alerts)],
+    history,
   }
 }
 
@@ -332,7 +654,7 @@ async function loadReport() {
   loading.value = true
   error.value = ''
   try {
-    const response = await useAPI<BackendReport>(endpoint.value)
+    const response = await useAPI<BackendReport>(reportURL.value)
     payload.value = normalizeReport(response, props.report)
     refreshedAt.value = new Date().toISOString()
   }
@@ -345,15 +667,38 @@ async function loadReport() {
   }
 }
 
-onMounted(loadReport)
-watch(endpoint, loadReport)
+function resetHistoryAndLoad() {
+  historyCursor.value = ''
+  void loadReport()
+}
+
+function loadNextHistoryPage() {
+  const nextCursor = payload.value?.history?.nextCursor
+  if (!nextCursor)
+    return
+  historyCursor.value = nextCursor
+  void loadReport()
+}
+
+let realtimeTimer: ReturnType<typeof setInterval> | undefined
+
+onMounted(() => {
+  void loadReport()
+  if (props.report === 'realtime')
+    realtimeTimer = setInterval(() => void loadReport(), 10_000)
+})
+watch(reportURL, () => void loadReport())
+onBeforeUnmount(() => {
+  if (realtimeTimer)
+    clearInterval(realtimeTimer)
+})
 </script>
 
 <template>
   <section class="portfolio-report">
     <div class="portfolio-report__heading">
       <div>
-        <p class="portfolio-kicker">Private briefing / {{ report }}</p>
+        <p class="portfolio-kicker">{{ report === 'overview' ? 'Briefing' : title }}</p>
         <h1>{{ title }}</h1>
         <p class="portfolio-report__intro">{{ intro }}</p>
       </div>
@@ -366,33 +711,76 @@ watch(endpoint, loadReport)
     </div>
 
     <div class="portfolio-range-line">
-      <span>Detail window: 90 days</span>
-      <span>Summary window: 13 months</span>
+      <span>90-day detail · 13-month context</span>
       <span v-if="payload?.range">Source range: {{ payload.range }}</span>
       <span v-if="payload?.updatedAt">Updated {{ formatUpdatedAt(payload.updatedAt) }}</span>
       <span v-else-if="refreshedAt">Checked {{ formatUpdatedAt(refreshedAt) }}</span>
     </div>
+
+    <form v-if="report === 'history'" class="portfolio-report__filters" @submit.prevent="resetHistoryAndLoad">
+      <label>
+        <span>Raw range</span>
+        <select v-model="historyRange" @change="resetHistoryAndLoad">
+          <option value="24h">Last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+        </select>
+      </label>
+      <label>
+        <span>Source</span>
+        <select v-model="historySource" @change="resetHistoryAndLoad">
+          <option value="">All sources</option>
+          <option value="portfolio">Portfolio</option>
+          <option value="sink">Shortlinks</option>
+          <option value="legacy_page_event">Legacy page events</option>
+        </select>
+      </label>
+      <label>
+        <span>Event type</span>
+        <select v-model="historyEventType" @change="resetHistoryAndLoad">
+          <option value="">All event types</option>
+          <option value="page_view">Page view</option>
+          <option value="article_complete">Article complete</option>
+          <option value="outbound_click">Outbound click</option>
+          <option value="contact_open">Contact open</option>
+          <option value="media_complete">Media complete</option>
+        </select>
+      </label>
+      <label class="portfolio-report__filter-wide">
+        <span>Path</span>
+        <input v-model="historyPath" type="search" placeholder="/blog/example" @keydown.enter.prevent="resetHistoryAndLoad">
+      </label>
+      <a class="portfolio-button portfolio-button--quiet" :href="historyCSVURL" download>Export CSV</a>
+    </form>
 
     <div class="portfolio-metric-grid">
       <PortfolioMetricCard
         v-for="metricItem in metrics"
         :key="metricItem.label"
         v-bind="metricItem"
-        :state="metricItem.state ?? sourceState"
+        :state="metricItem.state"
       />
     </div>
 
     <div v-if="error" class="portfolio-state portfolio-state--error" role="alert">
       <strong>Analytics unavailable</strong>
       <span>{{ error }}</span>
-      <span>Values remain blank until a trusted source is configured.</span>
+      <span>Check the source connection to resume this report.</span>
     </div>
     <div v-else-if="loading" class="portfolio-state" role="status" aria-live="polite">
       Loading trusted report data…
     </div>
     <div v-else-if="!hasData" class="portfolio-state" role="status">
-      <strong>No report data returned</strong>
-      <span>This state is distinct from zero activity. Add the required event source before reporting a value.</span>
+      <strong>No trusted events returned</strong>
+      <span>There is no reportable activity in this window yet.</span>
+    </div>
+
+    <div v-if="payload?.alerts.length" class="portfolio-alerts" role="status">
+      <p class="portfolio-eyebrow">Attention</p>
+      <ul>
+        <li v-for="alert in payload.alerts" :key="alert">{{ alert }}</li>
+      </ul>
     </div>
 
     <div
@@ -406,7 +794,7 @@ watch(endpoint, loadReport)
           <p class="portfolio-eyebrow">Trend</p>
           <h2>Activity across the selected windows</h2>
         </div>
-        <span class="portfolio-panel__note">Source values are rendered without interpolation.</span>
+        <span class="portfolio-panel__note">Daily activity from the selected window.</span>
       </div>
       <div class="portfolio-sparkline" role="img" aria-label="Report trend chart">
         <div
@@ -422,16 +810,84 @@ watch(endpoint, loadReport)
       </div>
     </div>
 
+    <div v-if="payload?.drilldowns.length" class="portfolio-drilldown-grid">
+      <article v-for="section in payload.drilldowns" :key="section.title" class="portfolio-panel portfolio-panel--drilldown">
+        <div class="portfolio-panel__header">
+          <div>
+            <p class="portfolio-eyebrow">Drilldown</p>
+            <h2>{{ section.title }}</h2>
+          </div>
+          <span v-if="section.note" class="portfolio-panel__note">{{ section.note }}</span>
+        </div>
+        <div class="portfolio-table-wrap">
+          <table class="portfolio-table">
+            <thead>
+              <tr>
+                <th scope="col">Dimension</th>
+                <th scope="col">Value</th>
+                <th scope="col">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in section.items" :key="`${section.title}-${item.label}`">
+                <th scope="row">{{ item.label }}</th>
+                <td>{{ item.value ?? '—' }}</td>
+                <td>{{ item.detail || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+
+    <section v-if="payload?.history" class="portfolio-panel portfolio-panel--history">
+      <div class="portfolio-panel__header">
+        <div>
+          <p class="portfolio-eyebrow">Retained detail</p>
+          <h2>Event history</h2>
+        </div>
+        <span class="portfolio-panel__note">Raw D1 detail is retained for 90 days.</span>
+      </div>
+      <div class="portfolio-table-wrap">
+        <table class="portfolio-table portfolio-table--history">
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">Event</th>
+              <th scope="col">Path / slug</th>
+              <th scope="col">Source</th>
+              <th scope="col">Country</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="event in payload.history.events" :key="event.event_id">
+              <td>{{ event.event_at ? formatUpdatedAt(event.event_at) : '—' }}</td>
+              <th scope="row">{{ event.event_type || 'Unknown event' }}</th>
+              <td>{{ event.shortlink_slug ? `/${event.shortlink_slug}` : event.path || event.target || '—' }}</td>
+              <td>{{ event.source || '—' }}</td>
+              <td>{{ event.country || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="portfolio-history-actions">
+        <span class="portfolio-panel__note">{{ payload.history.events.length }} rows in this page.</span>
+        <button v-if="payload.history.hasMore" class="portfolio-button portfolio-button--quiet" type="button" @click="loadNextHistoryPage">
+          Load next page
+        </button>
+      </div>
+    </section>
+
     <div class="portfolio-panel portfolio-panel--notes">
       <div>
-        <p class="portfolio-eyebrow">Source honesty</p>
+        <p class="portfolio-eyebrow">Status</p>
         <h2>{{ payload?.sourceNote || 'Every metric must identify its source and freshness.' }}</h2>
       </div>
       <ul v-if="payload?.highlights.length">
         <li v-for="highlight in payload.highlights" :key="highlight">{{ highlight }}</li>
       </ul>
       <p v-else class="portfolio-panel__note">
-        Sessions use a declared inactivity window. Completions require a named start and completion event. Missing instrumentation stays unavailable instead of becoming a false zero.
+        Visitor and session estimates follow each source's declared method. Blank fields mean the source did not return a value.
       </p>
     </div>
   </section>

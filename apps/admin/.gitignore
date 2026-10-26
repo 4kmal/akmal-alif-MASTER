@@ -2,3 +2,8 @@
 .output/
 node_modules/
 *.log
+
+# Rebuilt from package sources by `pnpm build:assets`.
+public/admin/world.json
+public/admin/countries.geojson
+public/admin/sphere.bin

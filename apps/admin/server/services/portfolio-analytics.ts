@@ -2,7 +2,7 @@ import type { H3Event } from 'h3'
 // The analytics worker is owned by the portfolio root and is bundled into the
 // admin worker through this stable repo-relative import.
 import * as analyticsWorker from '@portfolio-analytics'
-import { createError, getQuery, readBody, sendWebResponse } from 'h3'
+import { createError, getHeader, getQuery, readBody, sendWebResponse } from 'h3'
 import { getRuntimeString } from '../utils/runtime-config'
 
 interface AnalyticsWorker {
@@ -63,12 +63,11 @@ export async function handlePortfolioReport(event: H3Event, report: string): Pro
     },
   })
   const response = await worker.handleAnalyticsRequest(request, workerEnvironment(event), executionContext(event))
-  if (!response.ok) {
-    throw createError({ status: response.status, statusText: await response.text() || 'Portfolio analytics request failed' })
-  }
-  return response.headers.get('content-type')?.includes('application/json')
-    ? response.json()
-    : { sourceState: 'unavailable', sourceNote: await response.text() }
+  // Forward the worker response directly. This preserves status, cache
+  // policy, Content-Disposition, X-Next-Cursor, and multiple Set-Cookie
+  // headers for history CSV and future report formats.
+  await sendWebResponse(event, response)
+  return undefined
 }
 
 export async function ingestPortfolioEvents(event: H3Event): Promise<void> {
@@ -81,10 +80,13 @@ export async function ingestPortfolioEvents(event: H3Event): Promise<void> {
   const headers = new Headers({ 'content-type': 'application/json' })
   const gatewayToken = getHeader(event, 'x-portfolio-gateway')
   const trustedMetadata = getHeader(event, 'x-portfolio-meta')
+  const visitorCookies = getHeader(event, 'cookie')
   if (gatewayToken)
     headers.set('x-portfolio-gateway', gatewayToken)
   if (trustedMetadata)
     headers.set('x-portfolio-meta', trustedMetadata)
+  if (visitorCookies)
+    headers.set('cookie', visitorCookies)
 
   const upstream = new Request(`${getRuntimeString(event, 'portfolioAdminOrigin', 'PORTFOLIO_ADMIN_ORIGIN')}/internal/events`, {
     method: 'POST',
