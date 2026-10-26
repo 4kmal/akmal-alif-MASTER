@@ -553,14 +553,24 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 }
 
 .tracklist-heading {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  margin-bottom: 12px;
 }
 
 .tracklist-heading .section-title {
-  margin-bottom: 12px;
+  grid-column: 2;
+  margin: 0;
+  text-align: center;
+}
+
+.tracklist-heading .tracklist-close {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  margin: 0;
 }
 
 .tracklist-close {
@@ -651,6 +661,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
 }
 
 .clock-widget-panel .profile-focus-title {
+  text-align: center;
   color: var(--portfolio-text);
   font-size: 0.78rem;
   font-weight: 700;

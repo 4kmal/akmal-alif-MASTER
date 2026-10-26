@@ -411,17 +411,22 @@ class PersistentMusicPlayer {
     }
 
     minimize() {
+        if (!this.currentTrack) return;
+        const restoreFocus = document.activeElement?.id === 'playerMinimizeBtn';
         this.isMinimized = true;
         this.saveState();
         this.updateFloatingPlayer();
         this.hideMainPlayer();
+        if (restoreFocus) document.querySelector('#floating-player .floating-expand')?.focus({ preventScroll: true });
     }
 
     maximize() {
+        const restoreFocus = document.activeElement?.classList.contains('floating-expand');
         this.isMinimized = false;
         this.saveState();
         this.hideFloatingPlayer();
         this.showMainPlayer();
+        if (restoreFocus) document.getElementById('playerMinimizeBtn')?.focus({ preventScroll: true });
     }
 
     createFloatingPlayer() {
@@ -447,7 +452,7 @@ class PersistentMusicPlayer {
                     <button class="floating-btn floating-prev">⏮</button>
                     <button class="floating-btn floating-play-pause">⏸</button>
                     <button class="floating-btn floating-next">⏭</button>
-                    <button class="floating-btn floating-expand">⬆</button>
+                    <button class="floating-btn floating-expand" type="button" aria-label="Restore music player" title="Restore music player">⬆</button>
                 </div>
             </div>
         `;

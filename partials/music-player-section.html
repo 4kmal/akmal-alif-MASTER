@@ -14,12 +14,8 @@
                     </div>
                 </div>
                 <div class="volume-control-container">
-                    <!-- Minimize button as icon -->
-                    <button class="player-minimize-btn" id="playerMinimizeBtn" title="Minimize">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    </button>
                     <div id="volumePercentage" class="volume-percentage">100%</div>
-                    <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="1" />
+                    <input type="range" id="volumeSlider" aria-label="Volume" min="0" max="1" step="0.01" value="1" />
                     <div class="volume-label">Volume</div>
                 </div>
             </div>
@@ -56,12 +52,15 @@
                     <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
                 </svg>
             </button>
+            <button class="control-btn control-btn-small player-minimize-btn" id="playerMinimizeBtn" type="button" title="Minimize" aria-label="Minimize music player">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg>
+            </button>
         </div>
         <div class="enhanced-progress-container enhanced-progress-top">
             <div class="waveform-container" id="waveformContainer">
                 <canvas id="waveform-canvas" width="500" height="60"></canvas>
                 <div class="waveform-overlay"></div>
-                <input type="range" id="progressBar" min="0" max="100" value="0" />
+                <input type="range" id="progressBar" aria-label="Seek track" min="0" max="100" value="0" />
                 <div class="progress-overlay">
                     <div class="progress-fill" id="progressFill"></div>
                 </div>

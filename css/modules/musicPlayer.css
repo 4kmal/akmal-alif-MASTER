@@ -14,10 +14,7 @@
 }
 
 .player-minimize-btn {
-    position: absolute;
-    top: -35px;
-    left: 50%;
-    transform: translateX(-50%);
+    position: static;
     background: rgba(255,255,255,0.7);
     border: none;
     border-radius: 50%;
@@ -601,11 +598,6 @@ body.dark .track-list {
         height: 36px;
         top: 24px;
     }
-    .player-minimize-btn {
-        width: 35px;
-        height: 30px;
-        top: -35px;
-    }
 }
 
 /* iPod + CD + Volume Layout (from akmal8, adapted) */
@@ -1090,4 +1082,4 @@ body.dark .track-list {
 /* Hide mobile player elements on desktop by default using a class, 
    then show them via the media query in styles.css using the ID. 
    Alternatively, since #mobile-music-player-container is display:none by default 
-   and only shown in the media query, its children will also be hidden. */ 
+   and only shown in the media query, its children will also be hidden. */

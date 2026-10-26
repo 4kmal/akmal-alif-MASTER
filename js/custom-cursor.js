@@ -1,10 +1,21 @@
-// Simple Dynamic SVG Cursor System for Akmal's Portfolio
+(() => {
+if (window.CustomCursor) return;
+
 class CustomCursor {
     constructor() {
+        if (window.customCursor?.isInitialized) return window.customCursor;
         this.cursor = null;
         this.cursorSvg = null;
         this.isInitialized = false;
         this.isTouch = ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+        this.listeners = [];
+        this.frame = null;
+        this.hasPosition = false;
+        this.destroyed = false;
+        this.motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+        this.reducedMotion = this.motionQuery?.matches || false;
+        this.x = this.y = this.targetX = this.targetY = 0;
+        this.animate = this.animate.bind(this);
         
         // SVG templates - embedded for reliability
         this.svgCache = {
@@ -61,23 +72,20 @@ class CustomCursor {
     }
     
     init() {
-        // Don't initialize on touch devices
-        if (this.isTouch) return;
+        if (this.isTouch || this.isInitialized || this.destroyed) return;
         
         // Create cursor elements
         this.createCursorElements();
         
-        // Hide default cursor
-        this.hideDefaultCursor();
-        
         this.isInitialized = true;
-        console.log('Simple dynamic cursor initialized');
+        window.customCursor = this;
     }
     
     createCursorElements() {
         // Create main cursor container
         this.cursor = document.createElement('div');
-        this.cursor.className = 'custom-cursor';
+        this.cursor.className = 'custom-cursor hidden';
+        this.cursor.setAttribute('aria-hidden', 'true');
         
         // Create SVG cursor element
         this.cursorSvg = document.createElement('div');
@@ -109,14 +117,18 @@ class CustomCursor {
         `;
         
         // Update cursor class for specific styling
-        this.cursor.className = `custom-cursor cursor-${type}`;
+        this.cursor.classList.remove('cursor-pointy', 'cursor-hand');
+        this.cursor.classList.add(`cursor-${type}`);
     }
     
     addCursorStyles() {
         const style = document.createElement('style');
         style.textContent = `
             /* Hide default cursor globally */
-            *, *:before, *:after {
+            html.custom-cursor-active,
+            html.custom-cursor-active *,
+            html.custom-cursor-active *::before,
+            html.custom-cursor-active *::after {
                 cursor: none !important;
             }
             
@@ -128,7 +140,7 @@ class CustomCursor {
                 width: 100%;
                 height: 100%;
                 pointer-events: none;
-                z-index: 9999;
+                z-index: 2147483647;
             }
             
             /* SVG cursor */
@@ -187,6 +199,7 @@ class CustomCursor {
             /* Hidden state */
             .custom-cursor.hidden {
                 opacity: 0;
+                visibility: hidden;
             }
             
             /* Animations */
@@ -222,98 +235,105 @@ class CustomCursor {
             }
         `;
         
+        style.textContent += '@media (prefers-reduced-motion: reduce) { .custom-cursor .cursor-svg { transform: none !important; transition: none !important; animation: none !important; } }';
+        this.styleElement = style;
         document.head.appendChild(style);
     }
     
-    hideDefaultCursor() {
-        document.documentElement.style.cursor = 'none';
-        document.body.style.cursor = 'none';
+    listen(target, type, callback) {
+        target.addEventListener(type, callback);
+        this.listeners.push(() => target.removeEventListener(type, callback));
     }
-    
+
     bindEvents() {
         if (this.isTouch || !this.isInitialized) return;
-        
-        // Mouse movement with smooth tracking
-        let mouseX = 0, mouseY = 0;
-        let cursorX = 0, cursorY = 0;
-        
-        document.addEventListener('mousemove', (e) => {
-            mouseX = e.clientX;
-            mouseY = e.clientY;
+        const move = (event) => this.updatePointer(event);
+        this.listen(document, 'pointermove', move);
+        this.listen(document, 'pointerenter', move);
+        this.listen(document, 'pointerleave', () => this.hideCursor());
+        this.listen(document, 'pointercancel', () => this.hideCursor());
+        this.listen(document, 'dragstart', () => this.hideCursor());
+        this.listen(document, 'dragend', () => this.hideCursor());
+        this.listen(document, 'pointerdown', (event) => {
+            if (event.pointerType === 'touch') this.hideCursor();
+            else this.setCursorState('click');
         });
-        
-        // Smooth cursor following animation
-        const updateCursorPosition = () => {
-            const dx = mouseX - cursorX;
-            const dy = mouseY - cursorY;
-            
-            cursorX += dx * 0.15; // Smooth following factor
-            cursorY += dy * 0.15;
-            
-            if (this.cursorSvg) {
-                this.cursorSvg.style.left = `${cursorX}px`;
-                this.cursorSvg.style.top = `${cursorY}px`;
-            }
-            
-            requestAnimationFrame(updateCursorPosition);
-        };
-        
-        updateCursorPosition();
-        
-        // Mouse enter/leave window
-        document.addEventListener('mouseenter', () => this.showCursor());
-        document.addEventListener('mouseleave', () => this.hideCursor());
-        
-        // Mouse states
-        document.addEventListener('mousedown', () => this.setCursorState('click'));
-        document.addEventListener('mouseup', () => this.removeCursorState('click'));
-        
-        // Hover states for interactive elements
-        this.bindHoverEvents();
-        
-        // Page visibility
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                this.hideCursor();
-            } else {
-                this.showCursor();
-            }
-        });
+        this.listen(document, 'pointerup', () => this.removeCursorState('click'));
+        this.listen(document, 'pointerover', (event) => this.updateHover(event.target));
+        this.listen(document, 'visibilitychange', () => this.hideCursor());
+        this.listen(window, 'blur', () => this.hideCursor());
+        this.listen(window, 'pagehide', () => this.hideCursor());
+        this.listen(window, 'pageshow', () => this.hideCursor());
+        if (this.motionQuery?.addEventListener) {
+            this.listen(this.motionQuery, 'change', (event) => {
+                this.reducedMotion = event.matches;
+                if (this.reducedMotion && this.hasPosition) {
+                    this.stopFrame();
+                    this.x = this.targetX;
+                    this.y = this.targetY;
+                    this.renderPosition();
+                }
+            });
+        }
     }
-    
-    bindHoverEvents() {
-        // Link-specific hover events (use hand cursor)
-        document.addEventListener('mouseover', (e) => {
-            if (e.target.matches('a, .nav-link')) {
-                this.setCursorType('hand');
-                this.setCursorState('hover');
-            }
-            // Other interactive elements (keep pointy cursor)
-            else if (e.target.matches('button, input, textarea, select, [role="button"], [tabindex], .clickable, .btn, .tool-card, .blog-card, .playground-tool-card, .playground-info-control, .playground-launch-button, .creative-letter')) {
-                this.setCursorType('pointy');
-                this.setCursorState('hover');
-            }
-            // Text elements
-            else if (e.target.matches('p, h1, h2, h3, h4, h5, h6, span, .post-excerpt') && !e.target.matches('a, button')) {
-                this.setCursorType('pointy');
-                this.setCursorState('text');
-            }
-        });
-        
-        document.addEventListener('mouseout', (e) => {
-            if (e.target.matches('a, .nav-link')) {
-                this.setCursorType('pointy');
-                this.removeCursorState('hover');
-            }
-            else if (e.target.matches('button, input, textarea, select, [role="button"], [tabindex], .clickable, .btn, .tool-card, .blog-card, .playground-tool-card, .playground-info-control, .playground-launch-button, .creative-letter')) {
-                this.removeCursorState('hover');
-            }
-            else if (e.target.matches('p, h1, h2, h3, h4, h5, h6, span, .post-excerpt') && !e.target.matches('a, button')) {
-                this.removeCursorState('text');
-            }
-        });
+
+    updatePointer(event) {
+        if (event.pointerType === 'touch' || event.target?.closest?.('dialog[open]')) {
+            this.hideCursor();
+            return;
+        }
+        if (this.destroyed || document.hidden ||
+            !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return;
+        this.targetX = event.clientX;
+        this.targetY = event.clientY;
+        if (!this.hasPosition || this.reducedMotion) {
+            this.x = this.targetX;
+            this.y = this.targetY;
+            this.renderPosition();
+        } else if (this.frame === null) {
+            this.frame = requestAnimationFrame(this.animate);
+        }
+        this.hasPosition = true;
+        this.updateHover(event.target);
+        this.showCursor();
     }
-    
+
+    animate() {
+        this.frame = null;
+        if (!this.hasPosition || this.destroyed) return;
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) {
+            this.x = this.targetX;
+            this.y = this.targetY;
+        } else {
+            this.x += dx * 0.15;
+            this.y += dy * 0.15;
+            this.frame = requestAnimationFrame(this.animate);
+        }
+        this.renderPosition();
+    }
+
+    renderPosition() {
+        this.cursorSvg.style.left = this.x + 'px';
+        this.cursorSvg.style.top = this.y + 'px';
+    }
+
+    stopFrame() {
+        if (this.frame !== null) cancelAnimationFrame(this.frame);
+        this.frame = null;
+    }
+
+    updateHover(target) {
+        const link = target?.closest?.('a, .nav-link');
+        const interactive = target?.closest?.('button, input, textarea, select, summary, [role="button"], [tabindex], .clickable, .btn, .tool-card, .blog-card, .playground-tool-card, .playground-info-control, .playground-launch-button, .creative-letter');
+        const text = target?.closest?.('p, h1, h2, h3, h4, h5, h6, span, .post-excerpt');
+        const type = link ? 'hand' : 'pointy';
+        if (type !== this.currentCursor) this.setCursorType(type);
+        this.cursor.classList.toggle('hover', Boolean(link || interactive));
+        this.cursor.classList.toggle('text', Boolean(text && !link && !interactive));
+    }
+
     setCursorState(state) {
         if (!this.cursor) return;
         this.cursor.classList.add(state);
@@ -325,13 +345,21 @@ class CustomCursor {
     }
     
     showCursor() {
-        if (!this.cursor) return;
-        this.cursor.classList.remove('hidden');
+        if (!this.cursor || !this.hasPosition || document.hidden || this.destroyed) return;
+        if (this.cursor.classList.contains('hidden')) this.cursor.classList.remove('hidden');
+        const root = document.documentElement;
+        if (!root.classList.contains('custom-cursor-active')) root.classList.add('custom-cursor-active');
     }
     
     hideCursor() {
         if (!this.cursor) return;
+        this.stopFrame();
+        this.hasPosition = false;
+        this.cursor.classList.remove('click');
         this.cursor.classList.add('hidden');
+        if (document.documentElement.classList.contains('custom-cursor-active')) {
+            document.documentElement.classList.remove('custom-cursor-active');
+        }
     }
     
     setLoadingState() {
@@ -343,26 +371,21 @@ class CustomCursor {
     }
     
     destroy() {
-        if (this.cursor) {
-            this.cursor.remove();
-        }
-        
-        // Restore default cursor
-        document.documentElement.style.cursor = '';
-        document.body.style.cursor = '';
-        
-        console.log('Dynamic cursor destroyed');
+        this.hideCursor();
+        this.listeners.splice(0).forEach((remove) => remove());
+        this.cursor?.remove();
+        this.styleElement?.remove();
+        this.isInitialized = false;
+        this.destroyed = true;
+        if (window.customCursor === this) window.customCursor = null;
     }
 }
 
-// Initialize custom cursor when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    // Only initialize if not on mobile/touch device
-    if (!('ontouchstart' in window || navigator.maxTouchPoints > 0)) {
-        window.customCursor = new CustomCursor();
-        console.log('Dynamic cursor system loaded');
-    }
-});
-
-// Export for manual initialization if needed
 window.CustomCursor = CustomCursor;
+const initialize = () => { if (!window.customCursor?.isInitialized) new CustomCursor(); };
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initialize, { once: true });
+} else {
+    initialize();
+}
+})();

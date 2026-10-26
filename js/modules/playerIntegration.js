@@ -181,6 +181,7 @@ class PlayerIntegration {
 
         // Click to seek on waveform
         waveformContainer.addEventListener('click', (e) => {
+            if (e.target === progressBar) return;
             const rect = waveformContainer.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const percentage = (x / rect.width) * 100;
@@ -189,33 +190,13 @@ class PlayerIntegration {
             this.updateProgressBar(percentage);
         });
 
-        // Progress bar scrubbing
-        let isScrubbing = false;
-        
-        progressBar.addEventListener('mousedown', () => {
-            isScrubbing = true;
-        });
-
-        progressBar.addEventListener('input', () => {
-            if (isScrubbing) {
-                const percentage = parseFloat(progressBar.value);
-                this.updateProgressBar(percentage);
-            }
-        });
-
-        progressBar.addEventListener('change', () => {
-            if (isScrubbing) {
-                const percentage = parseFloat(progressBar.value);
-                this.player.seek(percentage);
-                isScrubbing = false;
-            }
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (isScrubbing) {
-                isScrubbing = false;
-            }
-        });
+        const seekFromRange = () => {
+            const percentage = Number(progressBar.value);
+            this.player.seek(percentage);
+            this.updateProgressBar(percentage);
+        };
+        progressBar.addEventListener('input', seekFromRange);
+        progressBar.addEventListener('change', seekFromRange);
     }
 
     setupMinimizeButton() {
