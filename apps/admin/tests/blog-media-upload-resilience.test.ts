@@ -245,9 +245,15 @@ describe('resumable blog upload resilience', () => {
       upload: { id: task.uploadId, part_size: BLOG_MEDIA_PART_SIZE, parts: task.parts },
     })
     api.completeUpload.mockResolvedValueOnce({ asset: makeAsset('recovered', original) })
-    const recovered = await reloaded.recoverUpload(new File([new Uint8Array(BLOG_MEDIA_PART_SIZE)], 'reload.png', { type: 'image/png', lastModified: 9876 }))
+    const recoveryFile = new File([new Uint8Array(BLOG_MEDIA_PART_SIZE)], 'reload.png', { type: 'image/png', lastModified: 9876 })
+    const [recovered, duplicateRecovery] = await Promise.all([
+      reloaded.recoverUpload(recoveryFile),
+      reloaded.recoverUpload(recoveryFile),
+    ])
 
     expect(recovered?.status).toBe('complete')
+    expect(duplicateRecovery?.id).toBe(recovered?.id)
+    expect(reloaded.tasks.value.filter(item => item.id === recovered?.id)).toHaveLength(1)
     expect(reloaded.recoverableCount.value).toBe(0)
     expect(api.completeUpload).toHaveBeenCalledWith(task.uploadId, expect.any(Array))
   })

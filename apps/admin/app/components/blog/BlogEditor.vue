@@ -3,7 +3,7 @@
 import type { Editor } from '@tiptap/vue-3'
 import type { BlogDocxImportReview } from '@/composables/useBlogDocuments'
 import type { BlogAsset, BlogDraft, BlogMediaAttrs, BlogPostDetail, BlogRevision, LegacyConversionResult } from '@/utils/blog-studio'
-import { Archive, ArrowLeft, Check, Clock3, Download, ExternalLink, FileText, History, LoaderCircle, PanelRight, Play, RotateCcw, Save, Send, ShieldCheck, Upload, X } from '@lucide/vue'
+import { Archive, ArrowLeft, Check, Clock3, Download, ExternalLink, FileText, History, LoaderCircle, PanelRight, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Upload, X } from '@lucide/vue'
 import { EditorContent } from '@tiptap/vue-3'
 import { useBlogApi } from '@/composables/useBlogApi'
 import { useBlogAutosave } from '@/composables/useBlogAutosave'
@@ -12,6 +12,7 @@ import { useBlogEditor } from '@/composables/useBlogEditor'
 import { convertLegacyHtmlToTiptap } from '@/composables/useBlogLegacyConversion'
 import { preserveDraftEditsAfterServerSave, rebaseDraftOntoServer } from '@/composables/useBlogStudio'
 import { cloneDraft, createEmptyDraft, formatDate, isStaleDraftError } from '@/utils/blog-studio'
+import { getBlogPosterAssets } from './blog-media-library-state'
 import BlogModal from './BlogModal.vue'
 
 const route = useRoute()
@@ -51,6 +52,7 @@ const docxLoading = ref(false)
 let loadSequence = 0
 let conflictRequestSequence = 0
 let editSequence = 0
+let mediaAssetsRequestSequence = 0
 
 const autosave = useBlogAutosave(postId, draft, (saved) => {
   detail.value = saved
@@ -94,6 +96,11 @@ const saveLabel = computed(() => {
   return 'Saved privately'
 })
 const isStale = computed(() => autosave.state.value === 'stale')
+const posterAssets = computed(() => getBlogPosterAssets(mediaAssets.value))
+const selectedPosterAsset = computed(() => {
+  const posterId = selectedMediaAttrs.value?.posterAssetId
+  return posterId ? posterAssets.value.find(asset => asset.id === posterId) ?? null : null
+})
 
 function refreshSelectedMedia(instance: Editor | null = editor.value ?? null) {
   selectedMediaAttrs.value = instance ? editorState.selectedMedia() : null
@@ -477,18 +484,27 @@ async function restore(revision: BlogRevision) {
   }
 }
 
-async function openMediaDialog() {
-  mediaDialogOpen.value = true
+async function loadMediaAssets() {
+  const requestSequence = ++mediaAssetsRequestSequence
   mediaLoading.value = true
   try {
-    mediaAssets.value = (await api.listMedia()).assets
+    const result = await api.listMedia()
+    if (requestSequence === mediaAssetsRequestSequence)
+      mediaAssets.value = result.assets
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Could not load media.'
+    if (requestSequence === mediaAssetsRequestSequence)
+      error.value = reason instanceof Error ? reason.message : 'Could not load media.'
   }
   finally {
-    mediaLoading.value = false
+    if (requestSequence === mediaAssetsRequestSequence)
+      mediaLoading.value = false
   }
+}
+
+async function openMediaDialog() {
+  mediaDialogOpen.value = true
+  await loadMediaAssets()
 }
 
 function insertAsset(asset: BlogAsset) {
@@ -587,6 +603,7 @@ async function exportDocx() {
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void load()
+  void loadMediaAssets()
 })
 watch(postId, (value, previous) => {
   if (value && value !== previous)
@@ -717,9 +734,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                     class="blog-field"
                   ><span>Alt text</span><input :value="selectedMediaAttrs.alt" @input="updateSelectedMedia('alt', ($event.target as HTMLInputElement).value)"></label><label
                     class="blog-field"
-                  ><span>Caption</span><input :value="selectedMediaAttrs.caption" @input="updateSelectedMedia('caption', ($event.target as HTMLInputElement).value)"></label><label
+                  ><span>Caption</span><input :value="selectedMediaAttrs.caption" @input="updateSelectedMedia('caption', ($event.target as HTMLInputElement).value)"></label><template v-if="selectedMediaAttrs.kind === 'video'"><label
                     class="blog-field"
-                  ><span>Poster asset ID</span><input :value="selectedMediaAttrs.posterAssetId ?? ''" @input="updateSelectedMedia('posterAssetId', ($event.target as HTMLInputElement).value)"></label>
+                  ><span>Poster frame</span><select :value="selectedMediaAttrs.posterAssetId ?? ''" @change="updateSelectedMedia('posterAssetId', ($event.target as HTMLSelectElement).value)"><option value="">No poster</option><option v-for="asset in posterAssets" :key="asset.id" :value="asset.id">{{ asset.name }} · {{ asset.kind }}</option></select></label><p v-if="selectedPosterAsset" class="blog-inspector__media-note">
+                    Using {{ selectedPosterAsset.name }} as the video poster.
+                  </p><p v-else class="blog-inspector__media-note">
+                    Choose a ready image or GIF asset. Generate named posters in the media library first.
+                  </p><button type="button" class="blog-text-button" :disabled="mediaLoading" @click="loadMediaAssets">
+                    <RefreshCw :size="14" :class="{ 'blog-spin': mediaLoading }" /> {{ mediaLoading ? 'Refreshing…' : 'Refresh poster choices' }}
+                  </button></template>
                 </template><p
                   v-else class="blog-inspector__empty"
                 >

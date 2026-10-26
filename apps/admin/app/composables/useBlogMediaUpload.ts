@@ -377,7 +377,7 @@ export function useBlogMediaUpload(onComplete?: (asset: BlogAsset) => void) {
     await Promise.all(Array.from({ length: BLOG_MEDIA_MAX_CONCURRENT_PARTS }, () => worker()))
   }
 
-  async function upload(file: File, derivedFrom: string[] = []) {
+  async function upload(file: File, derivedFrom: string[] = [], onTask?: (task: MediaUploadTask) => void) {
     const task: MediaUploadTask = {
       id: crypto.randomUUID(),
       uploadId: '',
@@ -392,6 +392,7 @@ export function useBlogMediaUpload(onComplete?: (asset: BlogAsset) => void) {
       derivedFrom: [...derivedFrom],
     }
     tasks.value.unshift(task)
+    onTask?.(task)
     const operation = beginOperation(task)
     try {
       if (file.size > BLOG_MEDIA_MAX_SOURCE_BYTES)
@@ -504,6 +505,13 @@ export function useBlogMediaUpload(onComplete?: (asset: BlogAsset) => void) {
     const entry = findRecoverableUpload(file, entryId)
     if (!entry)
       return null
+    const existingTask = tasks.value.find(task => task.id === entry.id)
+    if (existingTask) {
+      existingTask.file = file
+      if (!operations.has(existingTask.id) && ['paused', 'error'].includes(existingTask.status))
+        await resume(existingTask)
+      return existingTask
+    }
     const task: MediaUploadTask = {
       id: entry.id,
       uploadId: entry.uploadId,

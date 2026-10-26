@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type { MediaClip, BlogMediaProject as SharedMediaProject } from '#shared/blog-media-project'
+import type { BlogMediaSelectionToken } from './blog-media-library-state'
 import type { BlogAsset, BlogMediaProject } from '@/utils/blog-studio'
 import { Check, ChevronDown, Crop, FlipHorizontal, FlipVertical, FolderOpen, Image, LoaderCircle, Pause, Play, RotateCcw, RotateCw, Save, Scissors, Trash2, Upload, Video, WandSparkles, X } from '@lucide/vue'
 import { useBlogApi } from '@/composables/useBlogApi'
 import { useBlogMediaUpload } from '@/composables/useBlogMediaUpload'
 import { formatBytes, formatDate } from '@/utils/blog-studio'
+import { createBlogMediaSelectionGuard, isValidBlogClipIndex } from './blog-media-library-state'
 
 type Clip = MediaClip
 type MediaProjectDocument = SharedMediaProject
@@ -37,6 +39,9 @@ const appendAssetId = ref('')
 const gifFramePreviews = ref<Record<number, string>>({})
 const lastExport = ref<{ url: string, filename: string, mime: string } | null>(null)
 const splitAtMs = ref(0)
+const activeUploadTaskId = ref<string | null>(null)
+const activeUploadMessage = ref('Uploading derived media…')
+const selectionGuard = createBlogMediaSelectionGuard()
 
 const currentClip = computed(() => project.value?.clips[activeClip.value] ?? null)
 const previewAsset = computed(() => assets.value.find(asset => asset.id === currentClip.value?.asset_id) ?? selectedAsset.value)
@@ -46,6 +51,7 @@ const sourceBytes = computed(() => {
   return assets.value.filter(asset => ids.has(asset.id)).reduce((total, asset) => total + asset.size, 0)
 })
 const isOverSourceLimit = computed(() => sourceBytes.value > 250 * 1024 * 1024)
+const generatedPosterAsset = computed(() => posterAssetId.value ? assets.value.find(asset => asset.id === posterAssetId.value) ?? null : null)
 const previewStyle = computed(() => {
   const clip = currentClip.value
   const crop = clip?.crop
@@ -85,19 +91,29 @@ async function load() {
 async function selectAsset(asset: BlogAsset) {
   if (operation.value)
     return
+  const token = selectionGuard.begin(asset.id)
   clearFramePreviews()
   error.value = ''
   selectedAsset.value = asset
   selectedProjectId.value = null
+  project.value = null
   activeClip.value = 0
+  posterAssetId.value = ''
+  appendAssetId.value = ''
+  lastExport.value && URL.revokeObjectURL(lastExport.value.url)
+  lastExport.value = null
   try {
     const media = await import('@/utils/blog-media')
-    project.value = media.createMediaProject(asset.kind, asset) as MediaProjectDocument
+    if (!selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null))
+      return
+    const nextProject = media.createMediaProject(asset.kind, asset) as MediaProjectDocument
+    project.value = nextProject
     if (asset.kind === 'gif')
-      await decodeFrames()
+      await decodeFrames(true, token, asset, nextProject)
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Could not create the media project.'
+    if (selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null))
+      error.value = reason instanceof Error ? reason.message : 'Could not create the media project.'
   }
 }
 
@@ -106,41 +122,52 @@ async function selectProject(saved: BlogMediaProject) {
     return
   clearFramePreviews()
   error.value = ''
+  const nextProject = structuredClone(saved.document) as MediaProjectDocument
+  const sourceId = nextProject?.clips[0]?.asset_id ?? null
+  const sourceAsset = assets.value.find(asset => asset.id === sourceId) ?? null
+  const token = selectionGuard.begin(sourceAsset?.id ?? null)
   selectedProjectId.value = saved.id
   projectVersion.value = saved.version
-  project.value = structuredClone(saved.document) as MediaProjectDocument
-  const sourceId = project.value?.clips[0]?.asset_id
-  selectedAsset.value = assets.value.find(asset => asset.id === sourceId) ?? null
+  selectedAsset.value = sourceAsset
+  project.value = nextProject
   activeClip.value = 0
+  posterAssetId.value = ''
+  appendAssetId.value = ''
+  lastExport.value && URL.revokeObjectURL(lastExport.value.url)
+  lastExport.value = null
   if (project.value.kind === 'gif') {
     try {
-      await decodeFrames(false)
+      await decodeFrames(false, token, sourceAsset, nextProject)
     }
     catch (reason) {
-      error.value = reason instanceof Error ? reason.message : 'Could not read the source frames.'
+      if (selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null))
+        error.value = reason instanceof Error ? reason.message : 'Could not read the source frames.'
     }
   }
 }
 
-async function decodeFrames(resetSelection = true) {
-  if (!selectedAsset.value || !project.value || selectedAsset.value.kind !== 'gif')
+async function decodeFrames(resetSelection: boolean, token: BlogMediaSelectionToken, asset: BlogAsset | null, document: MediaProjectDocument) {
+  if (!asset || !document || asset.kind !== 'gif')
     return
   const active = await getProcessor()
-  if (!active)
+  if (!active || !selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null) || project.value !== document)
     return
   try {
-    const decoded = await active.decodeGif(selectedAsset.value.id)
+    const decoded = await active.decodeGif(asset.id)
+    if (!selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null) || project.value !== document)
+      return
     clearFramePreviews()
     gifFramePreviews.value = Object.fromEntries(decoded.frames.map(frame => [frame.source_index, URL.createObjectURL(frame.blob)]))
     if (resetSelection) {
-      project.value.frames = decoded.frames.map(frame => ({ source_index: frame.source_index, delay_ms: frame.delay_ms, enabled: true }))
-      project.value.output.width = Math.max(2, Math.floor(Math.min(decoded.width, 720) / 2) * 2)
-      project.value.output.height = Math.max(2, Math.floor(Math.min(decoded.height, 720) / 2) * 2)
-      project.value.output.fps = 15
+      document.frames = decoded.frames.map(frame => ({ source_index: frame.source_index, delay_ms: frame.delay_ms, enabled: true }))
+      document.output.width = Math.max(2, Math.floor(Math.min(decoded.width, 720) / 2) * 2)
+      document.output.height = Math.max(2, Math.floor(Math.min(decoded.height, 720) / 2) * 2)
+      document.output.fps = 15
     }
   }
   finally {
-    operation.value = null
+    if (selectionGuard.isCurrent(token, selectedAsset.value?.id ?? null))
+      operation.value = null
   }
 }
 
@@ -163,6 +190,43 @@ async function getProcessor() {
     onProgress: (progress: { stage: string, ratio: number | null, message: string }) => { operation.value = progress },
   }) as unknown as NonNullable<typeof processor.value>
   return processor.value
+}
+
+function syncUploadOperation() {
+  if (!activeUploadTaskId.value)
+    return
+  const task = uploadTasks.value.find(item => item.id === activeUploadTaskId.value)
+  if (!task)
+    return
+  if (['queued', 'uploading'].includes(task.status)) {
+    operation.value = {
+      stage: 'upload',
+      ratio: task.totalBytes ? task.uploadedBytes / task.totalBytes : null,
+      message: activeUploadMessage.value,
+    }
+  }
+}
+
+watch(uploadTasks, syncUploadOperation, { deep: true })
+
+async function uploadDerived(file: File, sourceIds: string[], message: string) {
+  activeUploadMessage.value = message
+  activeUploadTaskId.value = null
+  return upload.upload(file, sourceIds, (task) => {
+    activeUploadTaskId.value = task.id
+    syncUploadOperation()
+  })
+}
+
+function cancelOperation() {
+  processor.value?.cancel()
+  const task = activeUploadTaskId.value ? uploadTasks.value.find(item => item.id === activeUploadTaskId.value) : null
+  if (task)
+    void upload.cancel(task)
+}
+
+function isAbortError(reason: unknown) {
+  return (reason instanceof DOMException && reason.name === 'AbortError') || (reason instanceof Error && reason.name === 'AbortError')
 }
 
 function updateProject(mutator: (document: MediaProjectDocument) => void) {
@@ -216,21 +280,35 @@ async function renderProject() {
       URL.revokeObjectURL(lastExport.value.url)
     lastExport.value = { url: URL.createObjectURL(output.blob), filename: output.filename, mime: output.mime_type }
     const file = new File([output.blob], output.filename, { type: output.mime_type })
-    const result = await upload.upload(file, sourceIds)
+    const result = await uploadDerived(file, sourceIds, 'Uploading derived media…')
+    activeUploadTaskId.value = null
+    if (result.status === 'cancelled') {
+      notice.value = 'Derived export kept locally; its upload was cancelled.'
+      return
+    }
     if (result.status !== 'complete')
       throw new Error(result.error || 'The export is ready locally. Resume its upload in Transfers or download the file below.')
     if (output.poster) {
       const posterFile = new File([output.poster], `${sourceName}-poster.png`, { type: 'image/png' })
-      const posterTask = await upload.upload(posterFile, sourceIds)
+      const posterTask = await uploadDerived(posterFile, sourceIds, 'Uploading generated poster…')
+      activeUploadTaskId.value = null
       posterAssetId.value = posterTask.status === 'complete' ? posterTask.asset?.id ?? '' : ''
+      if (posterTask.status === 'cancelled') {
+        notice.value = 'Derived media uploaded; poster upload was cancelled.'
+        return
+      }
     }
     notice.value = 'Derived media uploaded as a new immutable asset'
     await load()
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Could not render this project.'
+    if (isAbortError(reason))
+      notice.value = 'Media render cancelled.'
+    else
+      error.value = reason instanceof Error ? reason.message : 'Could not render this project.'
   }
   finally {
+    activeUploadTaskId.value = null
     operation.value = null
   }
 }
@@ -245,14 +323,21 @@ async function generatePoster() {
   operation.value = { stage: 'poster', ratio: null, message: 'Preparing selected poster…' }
   try {
     const blob = await active.poster(asset.id, Math.max(0, posterTimeMs.value))
-    const task = await upload.upload(new File([blob], `${asset.name}-poster.png`, { type: 'image/png' }), [asset.id])
+    const task = await uploadDerived(new File([blob], `${asset.name}-poster.png`, { type: 'image/png' }), [asset.id], 'Uploading generated poster…')
+    activeUploadTaskId.value = null
     posterAssetId.value = task.status === 'complete' ? task.asset?.id ?? '' : ''
-    notice.value = posterAssetId.value ? 'Poster generated as a private derived asset' : 'Poster upload did not complete'
+    notice.value = posterAssetId.value
+      ? 'Poster generated as a private derived asset'
+      : task.status === 'cancelled' ? 'Poster export kept locally; its upload was cancelled.' : 'Poster upload did not complete'
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Could not generate a poster.'
+    if (isAbortError(reason))
+      notice.value = 'Poster render cancelled.'
+    else
+      error.value = reason instanceof Error ? reason.message : 'Could not generate a poster.'
   }
   finally {
+    activeUploadTaskId.value = null
     operation.value = null
   }
 }
@@ -295,11 +380,19 @@ function removeClip() {
   activeClip.value = Math.max(0, activeClip.value - 1)
 }
 
+function selectClip(index: number) {
+  if (project.value && isValidBlogClipIndex(index, project.value.clips.length))
+    activeClip.value = index
+}
+
 function updateClip<Key extends keyof Clip>(key: Key, value: Clip[Key]) {
+  const nextValue = key === 'rate'
+    ? Math.min(2, Math.max(0.5, Number(value))) as Clip[Key]
+    : value
   updateProject((document) => {
     const clip = document.clips[activeClip.value]
     if (clip)
-      clip[key] = value
+      clip[key] = nextValue
   })
 }
 
@@ -620,7 +713,7 @@ onBeforeUnmount(() => {
           <LoaderCircle
             :size="17" class="blog-spin"
           /><span>{{ operation.message || operation.stage }}</span><span v-if="operation.ratio !== null">{{ Math.round(operation.ratio * 100) }}%</span><button
-            type="button" class="blog-text-button" @click="processor?.cancel()"
+            type="button" class="blog-text-button" @click="cancelOperation"
           >
             <X :size="14" /> Cancel
           </button>
@@ -705,6 +798,12 @@ onBeforeUnmount(() => {
                     <Trash2 :size="15" />
                   </button>
                 </div>
+              </div><div class="blog-clip-list" role="listbox" aria-label="Video clips">
+                <button
+                  v-for="(clip, index) in project.clips" :key="clip.id" type="button" role="option" class="blog-clip-option" :class="{ 'is-selected': activeClip === index }" :aria-selected="activeClip === index" @click="selectClip(index)"
+                >
+                  <strong>Clip {{ index + 1 }}</strong><span>{{ assets.find(asset => asset.id === clip.asset_id)?.name || clip.asset_id }}</span><small>{{ clip.in_ms }}–{{ clip.out_ms }} ms · {{ clip.rate }}×</small>
+                </button>
               </div><div
                 class="blog-range-grid"
               >
@@ -716,7 +815,7 @@ onBeforeUnmount(() => {
                   class="blog-field"
                 ><span>Out point (ms)</span><input :value="currentClip?.out_ms" type="number" min="1" @input="updateClip('out_ms', Number(($event.target as HTMLInputElement).value))"></label><label
                   class="blog-field"
-                ><span>Playback rate</span><input :value="currentClip?.rate" type="number" min="0.25" max="4" step="0.05" @input="updateClip('rate', Number(($event.target as HTMLInputElement).value))"></label><label
+                ><span>Playback rate</span><input :value="currentClip?.rate" type="number" min="0.5" max="2" step="0.05" @input="updateClip('rate', Number(($event.target as HTMLInputElement).value))"></label><label
                   class="blog-toggle"
                 ><input :checked="currentClip?.muted" type="checkbox" @change="updateClip('muted', ($event.target as HTMLInputElement).checked)"><span>Mute audio</span></label><label
                   class="blog-field"
@@ -811,7 +910,11 @@ onBeforeUnmount(() => {
                     <Image :size="15" /> Generate poster
                   </button>
                 </div>
-              </div>
+              </div><div v-if="generatedPosterAsset" class="blog-generated-poster">
+                <img :src="generatedPosterAsset.source_url" :alt="generatedPosterAsset.name"><div><strong>{{ generatedPosterAsset.name }}</strong><span>Ready in Assets. Choose it from a video block’s Poster frame field in the post editor.</span></div>
+              </div><p v-else class="blog-panel__note">
+                Generated posters are saved as named private image assets and can be selected from a video block in the post editor.
+              </p>
             </div><div
               class="blog-control-section"
             >
