@@ -4,7 +4,8 @@ import { getRuntimeBoolean, getRuntimeString } from '../utils/runtime-config'
 
 export default eventHandler(async (event) => {
   const isAnalyticsIngest = event.path === '/internal/events'
-  if (!event.path.startsWith('/api/') && !isAnalyticsIngest)
+  const isRuntimeRequest = event.path === '/runtime' || event.path.startsWith('/runtime/')
+  if (!event.path.startsWith('/api/') && !isAnalyticsIngest && !isRuntimeRequest)
     return
 
   const adminEmail = getRuntimeString(event, 'adminEmail', 'ADMIN_EMAIL')
@@ -53,11 +54,12 @@ export default eventHandler(async (event) => {
     || event.path.startsWith('/api/portfolio/')
     || event.path === '/api/internal'
     || event.path.startsWith('/api/internal/')
+    || isRuntimeRequest
 
   // Local browser QA uses an explicit opt-in and never reaches a production
   // origin. Keep the local path useful without putting a bearer token in the
   // dashboard bundle or localStorage.
-  if (isLocal && allowLocalAdmin && event.path.startsWith('/api/')) {
+  if (isLocal && allowLocalAdmin && (event.path.startsWith('/api/') || isRuntimeRequest)) {
     if (!isLocalRequestAllowed(event, requestUrl)) {
       throw createError({ status: 403, statusText: 'Local admin requests must use the same origin' })
     }

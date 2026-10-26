@@ -4,6 +4,7 @@
 interface __BaseEnv_Env {
 	KV: KVNamespace;
 	R2: R2Bucket;
+	PORTFOLIO_MEDIA: R2Bucket;
 	DB: D1Database;
 	PORTFOLIO_DB: D1Database;
 	ANALYTICS: AnalyticsEngineDataset;

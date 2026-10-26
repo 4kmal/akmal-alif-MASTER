@@ -18,6 +18,12 @@
       "database_name": "akmalalif-admin-local",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "drizzle"
+    },
+    {
+      "binding": "PORTFOLIO_DB",
+      "database_name": "akmalalif-portfolio-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../migrations"
     }
   ],
   "kv_namespaces": [
@@ -31,6 +37,10 @@
     {
       "binding": "R2",
       "bucket_name": "akmalalif-admin-local"
+    },
+    {
+      "binding": "PORTFOLIO_MEDIA",
+      "bucket_name": "akmalalif-portfolio-media-local"
     }
   ],
   "vars": {

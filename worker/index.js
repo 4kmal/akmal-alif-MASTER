@@ -316,7 +316,52 @@ async function handleStatic(request, env, url) {
     return errorResponse(500, 'Static asset binding unavailable');
   }
 
-  return env.ASSETS.fetch(assetRequest(request, staticAssetPath(url.pathname)));
+  const assetResponse = await env.ASSETS.fetch(assetRequest(request, staticAssetPath(url.pathname)));
+  if (assetResponse.status !== 404 || !isDynamicBlogPath(url.pathname)) {
+    return assetResponse;
+  }
+
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice('/blog/'.length));
+  } catch {
+    return assetResponse;
+  }
+  const published = await publishedPostForSlug(env, slug);
+  if (!published) {
+    return assetResponse;
+  }
+
+  const template = await env.ASSETS.fetch(assetRequest(request, '/blog/article-template.html'));
+  if (!template.ok) {
+    return assetResponse;
+  }
+
+  return new Response(template.body, {
+    status: template.status,
+    statusText: template.statusText,
+    headers: new Headers(template.headers),
+  });
+}
+
+function isDynamicBlogPath(pathname) {
+  return pathname.startsWith('/blog/')
+    && !pathname.endsWith('/')
+    && !pathname.endsWith('.html')
+    && pathname.slice('/blog/'.length).length > 0
+    && !pathname.slice('/blog/'.length).includes('/');
+}
+
+async function publishedPostForSlug(env, slug) {
+  if (!env.DB || typeof env.DB.prepare !== 'function') {
+    return null;
+  }
+  return env.DB.prepare(`
+    SELECT p.id, p.slug, p.title, p.excerpt, p.content_html, p.published_at
+    FROM blog_posts AS p
+    WHERE p.slug = ? AND p.status = 'published' AND p.published_at <= ?
+    LIMIT 1
+  `).bind(slug, new Date().toISOString()).first();
 }
 
 function mediaKeyForRequest(url) {
@@ -527,8 +572,55 @@ async function handleMedia(request, env, key) {
   return new Response(object.body, { status: 206, headers });
 }
 
+async function handlePublishedBlogMedia(request, env, assetId) {
+  if (!env.DB || typeof env.DB.prepare !== 'function') {
+    return mediaNotFound();
+  }
+  const row = await env.DB.prepare(`
+    SELECT a.object_key
+    FROM blog_assets AS a
+    WHERE a.id = ?
+      AND a.status = 'ready'
+      AND EXISTS (
+        SELECT 1
+        FROM blog_post_asset_refs AS r
+        INNER JOIN blog_posts AS p ON p.id = r.post_id
+        WHERE r.asset_id = a.id
+          AND r.scope = 'published'
+          AND p.status = 'published'
+          AND p.published_at <= ?
+      )
+    LIMIT 1
+  `).bind(assetId, new Date().toISOString()).first();
+  if (!row || typeof row.object_key !== 'string') {
+    return mediaNotFound();
+  }
+  return handleMedia(request, env, row.object_key);
+}
+
+async function handleBlogSettings(request, env) {
+  if (request.method !== 'GET') {
+    return methodNotAllowed('GET');
+  }
+  let motion = 'once';
+  try {
+    const row = await env.DB.prepare("SELECT value FROM blog_settings WHERE key = 'artwork_motion' LIMIT 1").first();
+    if (row?.value === 'off') {
+      motion = 'off';
+    }
+  } catch {
+    // Older databases default to the existing once-per-session behavior until
+    // the additive studio migration is applied.
+  }
+  return jsonResponse({ artwork_motion: motion }, 200, { 'Cache-Control': 'public, max-age=60' });
+}
+
 async function handleApi(request, env, url) {
   const pathname = url.pathname;
+
+  if (pathname === '/api/blog/settings' || pathname === '/api/blog/settings/') {
+    return handleBlogSettings(request, env);
+  }
 
   if (pathname === '/api/blog/categories' || pathname === '/api/blog/categories/') {
     return handleCategories(request, env);
@@ -575,6 +667,22 @@ export async function handleRequest(request, env, ctx) {
 
   if (url.pathname.startsWith('/api/')) {
     return handleApi(request, env, url);
+  }
+
+  let decodedPathname;
+  try {
+    decodedPathname = decodeURIComponent(url.pathname);
+  } catch {
+    return errorResponse(400, 'Malformed media URL');
+  }
+  if (decodedPathname.startsWith('/media/blog/')) {
+    const assetId = decodedPathname.slice('/media/blog/'.length);
+    if (!assetId) {
+      return mediaNotFound();
+    }
+    if (!assetId.includes('/')) {
+      return handlePublishedBlogMedia(request, env, assetId);
+    }
   }
 
   const media = mediaKeyForRequest(url);

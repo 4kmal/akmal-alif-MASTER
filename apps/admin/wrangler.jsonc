@@ -64,13 +64,18 @@
     {
       "binding": "PORTFOLIO_DB",
       "database_name": "akmalalif-portfolio",
-      "database_id": "675ccbd5-f4aa-4ad6-b292-0d8fac7c54d5"
+      "database_id": "675ccbd5-f4aa-4ad6-b292-0d8fac7c54d5",
+      "migrations_dir": "../../migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "R2",
       "bucket_name": "akmalalif-admin-data"
+    },
+    {
+      "binding": "PORTFOLIO_MEDIA",
+      "bucket_name": "akmalalif-portfolio-media"
     }
   ],
   "services": [

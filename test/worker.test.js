@@ -5,7 +5,10 @@ import test from 'node:test';
 
 import { fetch as workerFetch } from '../worker/index.js';
 
-const migrationSql = readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8');
+const migrationSql = [
+  readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'),
+  readFileSync(new URL('../migrations/0002_blog_studio.sql', import.meta.url), 'utf8'),
+].join('\n');
 
 class SQLiteStatement {
   constructor(statement) {
@@ -406,6 +409,22 @@ test('clean routes redirect or rewrite to exact assets while preserving query st
   assert.deepEqual(assets.requests.at(-1), { method: 'GET', pathname: '/missing/index.html', search: '?x=1' });
 });
 
+test('published blog slugs use the shared article shell while missing slugs stay 404', async (t) => {
+  const { database, d1 } = createDatabase(blogFixtures());
+  t.after(() => database.close());
+  const assets = new FakeAssets({ '/blog/article-template.html': '<html><body data-blog-template>template</body></html>' });
+  const env = environment(d1, assets);
+
+  const article = await workerFetch(request('/blog/new-post'), env);
+  assert.equal(article.status, 200);
+  assert.equal(await article.text(), '<html><body data-blog-template>template</body></html>');
+  assert.deepEqual(assets.requests.at(-1), { method: 'GET', pathname: '/blog/article-template.html', search: '' });
+
+  const missing = await workerFetch(request('/blog/does-not-exist'), env);
+  assert.equal(missing.status, 404);
+  assert.deepEqual(assets.requests.at(-1), { method: 'GET', pathname: '/blog/does-not-exist.html', search: '' });
+});
+
 test('R2 media paths support metadata, conditional requests, full and ranged GET/HEAD, and missing objects', async (t) => {
   const { database, d1 } = createDatabase();
   t.after(() => database.close());
@@ -428,6 +447,12 @@ test('R2 media paths support metadata, conditional requests, full and ranged GET
       bytes: new TextEncoder().encode('font'),
       etag: 'font',
       httpEtag: '"font"',
+      uploaded: new Date('2025-01-01T00:00:00.000Z'),
+    },
+    'blog/legacy/demo.mp4': {
+      bytes: new TextEncoder().encode('legacy'),
+      contentType: 'video/mp4',
+      etag: 'legacy',
       uploaded: new Date('2025-01-01T00:00:00.000Z'),
     },
   });
@@ -486,7 +511,42 @@ test('R2 media paths support metadata, conditional requests, full and ranged GET
   assert.equal(font.status, 200);
   assert.equal(font.headers.get('Content-Type'), 'font/woff2');
 
+  const legacyBlogMedia = await workerFetch(request('/media/blog/legacy/demo.mp4'), env);
+  assert.equal(legacyBlogMedia.status, 200);
+  assert.equal(await legacyBlogMedia.text(), 'legacy');
+
   const missing = await workerFetch(request('/media/nope.bin'), env);
   assert.equal(missing.status, 404);
   assert.equal(await missing.text(), 'Not Found');
+});
+
+test('new blog media is public only while referenced by a published post', async (t) => {
+  const { database, d1 } = createDatabase(blogFixtures());
+  t.after(() => database.close());
+  const media = new FakeR2({
+    'blog/originals/asset-one/photo.png': {
+      bytes: new TextEncoder().encode('private-until-published'),
+      contentType: 'image/png',
+      etag: 'asset-one',
+      httpEtag: '"asset-one"',
+    },
+  });
+  database.prepare(`
+    INSERT INTO blog_assets (id, name, mime_type, kind, size, object_key, source_object_key, status, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?)
+  `).run('asset-one', 'photo.png', 'image/png', 'image', 23, 'blog/originals/asset-one/photo.png', 'blog/originals/asset-one/photo.png', 'owner');
+  database.prepare(`INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) VALUES (?, ?, 'published')`).run('post-new-post', 'asset-one');
+  const env = environment(d1, new FakeAssets(), media);
+
+  const publicAsset = await workerFetch(request('/media/blog/asset-one'), env);
+  assert.equal(publicAsset.status, 200);
+  assert.equal(await publicAsset.text(), 'private-until-published');
+
+  const guessed = await workerFetch(request('/media/blog/asset-missing'), env);
+  assert.equal(guessed.status, 404);
+  assert.equal(media.calls.filter(call => call.operation === 'head' && call.key === 'asset-missing').length, 0);
+
+  database.prepare(`UPDATE blog_posts SET status = 'draft' WHERE id = ?`).run('post-new-post');
+  const unpublished = await workerFetch(request('/media/blog/asset-one'), env);
+  assert.equal(unpublished.status, 404);
 });
