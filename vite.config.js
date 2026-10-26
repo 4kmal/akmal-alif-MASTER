@@ -131,8 +131,14 @@ export default defineConfig(({ mode }) => {
     {
       name: 'local-clean-url-rewrites',
       configureServer(server) {
-        server.middlewares.use((req, _res, next) => {
+        server.middlewares.use((req, res, next) => {
           const url = req.url?.split('?')[0] ?? '';
+
+          if (/^\/blog\/[^/.]+\/$/.test(url)) {
+            res.writeHead(308, { Location: `${url.slice(0, -1)}${req.url.slice(url.length)}` });
+            res.end();
+            return;
+          }
 
           if (url === '/blogs' || url === '/blogs/') {
             req.url = req.url?.replace(/^\/blogs\/?/, '/blog.html');

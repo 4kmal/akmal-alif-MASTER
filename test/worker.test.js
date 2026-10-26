@@ -421,6 +421,12 @@ test('published blog slugs use the shared article shell while missing slugs stay
   assert.equal(await article.text(), '<html><body data-blog-template>template</body></html>');
   assert.deepEqual(assets.requests.at(-1), { method: 'GET', pathname: '/blog/article-template.html', search: '' });
 
+  for (const method of ['GET', 'HEAD']) {
+    const canonical = await workerFetch(request('/blog/new-post/?source=share', { method }), env);
+    assert.equal(canonical.status, 308);
+    assert.equal(canonical.headers.get('Location'), 'https://www.akmalalif.com/blog/new-post?source=share');
+  }
+
   const missing = await workerFetch(request('/blog/does-not-exist'), env);
   assert.equal(missing.status, 404);
   assert.deepEqual(assets.requests.at(-1), { method: 'GET', pathname: '/blog/does-not-exist.html', search: '' });

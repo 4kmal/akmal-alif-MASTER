@@ -250,6 +250,13 @@ function cleanRedirectTarget(pathname) {
     return '/blogs';
   }
 
+  if (pathname.startsWith('/blog/') && pathname.endsWith('/')) {
+    const slug = pathname.slice('/blog/'.length, -1);
+    if (slug && !slug.includes('/')) {
+      return `/blog/${slug}`;
+    }
+  }
+
   if (pathname.startsWith('/blog/') && pathname.endsWith('.html')) {
     const slug = pathname.slice('/blog/'.length, -'.html'.length);
     if (slug && !slug.includes('/')) {

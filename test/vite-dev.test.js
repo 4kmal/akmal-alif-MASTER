@@ -62,6 +62,12 @@ test('frontend preview serves clean routes and only forwards public reads', asyn
     assert.match(await response.text(), /data-blog-content/);
   });
 
+  await t.test('canonicalizes shared article URLs with a trailing slash', async () => {
+    const response = await fetch(`${origin}/blog/newly-published-studio-post/?source=share`, { redirect: 'manual' });
+    assert.equal(response.status, 308);
+    assert.equal(response.headers.get('Location'), '/blog/newly-published-studio-post?source=share');
+  });
+
   await t.test('forwards public API reads and their query strings', async () => {
     const response = await fetch(`${origin}/api/profile-metrics?check=1`);
     assert.equal(response.status, 200);
