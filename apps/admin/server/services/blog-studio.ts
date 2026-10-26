@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import { getHeader, getRequestWebStream, getRouterParam, readBody } from 'h3'
-import { BLOG_MAX_CANONICAL_BYTES, BLOG_SCHEMA_VERSION, blogByteLength, renderTiptapDocument, sanitizeLegacyBlogHtml, snapshotDraft } from '../utils/blog-content'
+import { BLOG_MAX_CANONICAL_BYTES, BLOG_SCHEMA_VERSION, blogByteLength, legacyMediaKind, legacyMediaPathsFromHtml, normalizeLegacyMediaPath, renderTiptapDocument, sanitizeLegacyBlogHtml, snapshotDraft } from '../utils/blog-content'
 import { getRuntimeString } from '../utils/runtime-config'
 
 export const BLOG_UPLOAD_PART_SIZE = 10 * 1024 * 1024
@@ -89,6 +89,22 @@ function first<T = Record<string, unknown>>(result: unknown): T | null {
 function changes(result: unknown): number {
   const value = result as { meta?: { changes?: number }, changes?: number } | null
   return Number(value?.meta?.changes ?? value?.changes ?? 0)
+}
+
+function auditInsert(
+  db: D1Like,
+  actor: string,
+  action: string,
+  entityId: string | null,
+  details: Record<string, unknown>,
+  condition?: string,
+  conditionParams: unknown[] = [],
+) {
+  const where = condition ? ` WHERE ${condition}` : ''
+  return db.prepare(`
+    INSERT INTO blog_audit_records (actor, action, entity_id, details_json, created_at)
+    SELECT ?, ?, ?, ?, ?${where}
+  `).bind(actor, action, entityId, JSON.stringify(details), new Date().toISOString(), ...conditionParams)
 }
 
 function requireDb(event: H3Event): D1Like {
@@ -188,7 +204,7 @@ export function parseJsonBody<T extends Record<string, unknown>>(event: H3Event)
   }
   const requestBody = getRequestWebStream(event)
   const bodyPromise = requestBody && typeof (requestBody as ReadableStream).getReader === 'function'
-    ? readJsonStream(requestBody as ReadableStream)
+    ? readJsonStream<T>(requestBody as ReadableStream)
     : readBody<T>(event)
   return bodyPromise.then((body) => {
     if (!body || typeof body !== 'object' || Array.isArray(body))
@@ -206,7 +222,7 @@ export function parseJsonBody<T extends Record<string, unknown>>(event: H3Event)
   })
 }
 
-async function readJsonStream(stream: ReadableStream): Promise<Record<string, unknown>> {
+async function readJsonStream<T extends Record<string, unknown>>(stream: ReadableStream): Promise<T> {
   const reader = stream.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
@@ -239,7 +255,7 @@ async function readJsonStream(stream: ReadableStream): Promise<Record<string, un
   }
   if (!body || typeof body !== 'object' || Array.isArray(body))
     throw createError({ statusCode: 400, statusMessage: 'Request body must be a JSON object' })
-  return body as Record<string, unknown>
+  return body as T
 }
 
 function concatBytes(chunks: Uint8Array[], size: number): Uint8Array {
@@ -444,7 +460,7 @@ function mediaIdsFromDocument(value: unknown, result: string[] = []): string[] {
     const attrs = record.attrs as Record<string, unknown>
     for (const key of ['assetId', 'posterAssetId']) {
       const assetId = attrs[key]
-      if (typeof assetId === 'string' && !result.includes(assetId))
+      if (typeof assetId === 'string' && !assetId.startsWith('legacy:') && !result.includes(assetId))
         result.push(assetId)
     }
   }
@@ -454,7 +470,7 @@ function mediaIdsFromDocument(value: unknown, result: string[] = []): string[] {
 }
 
 function mediaIdsFromHtml(value: string, result: string[] = []): string[] {
-  const pattern = /\/media\/blog\/(\w[-\w]*)/g
+  const pattern = /\/media\/blog\/([\w-]+)(?=[?#"'\s>]|$)/g
   for (const match of value.matchAll(pattern)) {
     const assetId = match[1]
     if (assetId && !result.includes(assetId))
@@ -463,8 +479,20 @@ function mediaIdsFromHtml(value: string, result: string[] = []): string[] {
   return result
 }
 
-async function mediaResolver(db: D1Like, actor: string) {
+async function mediaResolver(db: D1Like, actor: string, approvedLegacyPaths: Set<string> = new Set()) {
   return async (assetId: string) => {
+    if (assetId.startsWith('legacy:')) {
+      const path = normalizeLegacyMediaPath(assetId.slice('legacy:'.length))
+      if (!path || !approvedLegacyPaths.has(path))
+        return null
+      return {
+        id: assetId,
+        kind: legacyMediaKind(path),
+        name: path.split(/[/?#]/).pop() || 'legacy media',
+        publicUrl: path,
+        sourceUrl: path,
+      }
+    }
     const row = first<{
       id: string
       kind: 'image' | 'gif' | 'video'
@@ -489,7 +517,22 @@ async function mediaResolver(db: D1Like, actor: string) {
   }
 }
 
-async function draftInputFromBody(db: D1Like, actor: string, body: Record<string, unknown>, current?: BlogDraft): Promise<DraftInput> {
+async function approvedLegacyMediaPaths(db: D1Like, postId?: string): Promise<Set<string>> {
+  if (!postId)
+    return new Set()
+  const row = first<{ snapshot_json: string }>(await db.prepare('SELECT snapshot_json FROM blog_post_revisions WHERE post_id = ? AND kind = \'original\' ORDER BY created_at ASC, id ASC LIMIT 1').bind(postId).all())
+  if (!row)
+    return new Set()
+  try {
+    const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>
+    return legacyMediaPathsFromHtml(snapshot.content_html)
+  }
+  catch {
+    return new Set()
+  }
+}
+
+async function draftInputFromBody(db: D1Like, actor: string, body: Record<string, unknown>, current?: BlogDraft, postId?: string): Promise<DraftInput> {
   const title = stringField(body.title ?? current?.title, 'title', 300)
   const slug = slugField(body.slug ?? current?.slug)
   const excerpt = stringField(body.excerpt ?? current?.excerpt ?? '', 'excerpt', 2_000, false)
@@ -515,17 +558,20 @@ async function draftInputFromBody(db: D1Like, actor: string, body: Record<string
   let assetIds: string[] = []
   if (contentJson) {
     assetIds = mediaIdsFromDocument(contentJson)
-    const resolveMedia = await mediaResolver(db, actor)
+    const resolveMedia = await mediaResolver(db, actor, await approvedLegacyMediaPaths(db, postId))
     contentHtml = await renderTiptapDocument(contentJson, { mode: 'public', resolveMedia })
   }
   else {
-    contentHtml = sanitizeLegacyBlogHtml(body.content_html === undefined ? current?.content_html ?? '' : body.content_html)
+    const suppliedContentHtml = body.content_html === undefined ? current?.content_html ?? '' : body.content_html
+    const unchangedLegacyHtml = current && typeof suppliedContentHtml === 'string' && suppliedContentHtml === current.content_html
+    contentHtml = unchangedLegacyHtml ? suppliedContentHtml : sanitizeLegacyBlogHtml(suppliedContentHtml)
     assetIds = mediaIdsFromHtml(contentHtml)
   }
   const coverImageUrl = safeCoverUrl(body.cover_image_url === undefined ? current?.cover_image_url : body.cover_image_url)
   const coverAssetMatch = /^\/media\/blog\/(\w[-\w]*)$/.exec(coverImageUrl ?? '')
-  if (coverAssetMatch && !assetIds.includes(coverAssetMatch[1]))
-    assetIds.push(coverAssetMatch[1])
+  const coverAssetId = coverAssetMatch?.[1]
+  if (coverAssetId && !assetIds.includes(coverAssetId))
+    assetIds.push(coverAssetId)
   if (blogByteLength(contentHtml) > BLOG_MAX_CANONICAL_BYTES)
     throw createError({ statusCode: 400, statusMessage: 'Rendered content is too large' })
   for (const assetId of assetIds) {
@@ -739,6 +785,7 @@ export async function createBlogPost(event: H3Event, body: Record<string, unknow
     statements.push(db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) VALUES (?, ?)').bind(id, tagId))
   for (const assetId of initial.asset_ids)
     statements.push(db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) VALUES (?, ?, \'draft\')').bind(id, assetId))
+  statements.push(auditInsert(db, actor, 'post.create', id, { status: 'draft', version: 1 }))
   await db.batch(statements)
   return loadDetail(db, id)
 }
@@ -764,7 +811,7 @@ export async function updateBlogDraft(event: H3Event, postId: string): Promise<B
     conflict(current.draft.version, current)
   if (current.post.published_version != null && body.slug !== undefined && slugField(body.slug) !== current.post.slug)
     throw createError({ statusCode: 409, statusMessage: 'Published slugs are immutable' })
-  const next = await draftInputFromBody(db, actor, body, current.draft)
+  const next = await draftInputFromBody(db, actor, body, current.draft, postId)
   const nextVersion = version + 1
   const token = crypto.randomUUID()
   const now = new Date().toISOString()
@@ -781,6 +828,7 @@ export async function updateBlogDraft(event: H3Event, postId: string): Promise<B
     ...next.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...next.asset_ids.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    auditInsert(db, actor, 'post.draft', postId, { status: 'draft', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
   const result = await db.batch(statements)
   if (changes(result[0]) !== 1)
@@ -799,7 +847,10 @@ export async function checkpointBlogPost(event: H3Event, postId: string): Promis
   const id = crypto.randomUUID().replaceAll('-', '')
   const now = new Date().toISOString()
   const snapshot = snapshotDraft({ ...detail.draft, updated_at: now })
-  await db.prepare('INSERT INTO blog_post_revisions (id, post_id, version, kind, snapshot_json, created_at, created_by) VALUES (?, ?, ?, \'checkpoint\', ?, ?, ?)').bind(id, postId, version, snapshot, now, actor).run()
+  await db.batch([
+    db.prepare('INSERT INTO blog_post_revisions (id, post_id, version, kind, snapshot_json, created_at, created_by) VALUES (?, ?, ?, \'checkpoint\', ?, ?, ?)').bind(id, postId, version, snapshot, now, actor),
+    auditInsert(db, actor, 'post.checkpoint', postId, { status: 'checkpoint', version }),
+  ])
   return { revision: { id, post_id: postId, version, kind: 'checkpoint', created_at: now } }
 }
 
@@ -831,7 +882,7 @@ export async function restoreBlogPost(event: H3Event, postId: string): Promise<B
   catch {
     throw createError({ statusCode: 500, statusMessage: 'Revision snapshot is invalid' })
   }
-  const restored = await draftInputFromBody(db, actor, snapshot, current.draft)
+  const restored = await draftInputFromBody(db, actor, snapshot, current.draft, postId)
   if (current.post.published_version != null && restored.slug !== current.post.slug)
     throw createError({ statusCode: 409, statusMessage: 'Published slugs are immutable' })
   const nextVersion = version + 1
@@ -843,6 +894,7 @@ export async function restoreBlogPost(event: H3Event, postId: string): Promise<B
     ...restored.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...restored.asset_ids.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    auditInsert(db, actor, 'post.restore', postId, { status: 'draft', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
   const result = await db.batch(statements)
   if (changes(result[0]) !== 1)
@@ -880,6 +932,7 @@ export async function publishBlogPost(event: H3Event, postId: string): Promise<B
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'published\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...draftAssetIds.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'published\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
     db.prepare('INSERT INTO blog_post_revisions (post_id, version, kind, snapshot_json, created_at, created_by) SELECT ?, ?, \'publish\', ?, ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)').bind(postId, nextVersion, revisionSnapshot, now, actor, postId, token, nextVersion),
+    auditInsert(db, actor, 'post.publish', postId, { status: 'published', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
   const result = await db.batch(statements.filter(Boolean) as D1PreparedStatement[])
   if (changes(result[0]) !== 1)
@@ -894,8 +947,12 @@ export async function setBlogPostStatus(event: H3Event, postId: string): Promise
   const status = body.status
   if (status !== 'draft' && status !== 'archived')
     throw createError({ statusCode: 400, statusMessage: 'status must be draft or archived' })
-  const result = await db.prepare('UPDATE blog_posts SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?').bind(status, actor, new Date().toISOString(), postId).run()
-  if (changes(result) !== 1) {
+  const now = new Date().toISOString()
+  const result = await db.batch([
+    db.prepare('UPDATE blog_posts SET status = ?, updated_by = ?, updated_at = ? WHERE id = ?').bind(status, actor, now, postId),
+    auditInsert(db, actor, 'post.status', postId, { status }, 'changes() = 1'),
+  ])
+  if (changes(result[0]) !== 1) {
     const current = await loadDetail(db, postId)
     if (current.post.status === 'published')
       throw createError({ statusCode: 409, statusMessage: 'Unpublish before changing the published status' })
@@ -908,7 +965,7 @@ export async function previewBlogPost(event: H3Event, postId: string): Promise<s
   const db = requireDb(event)
   const detail = await loadDetail(db, postId)
   const content = detail.draft.content_json
-    ? await renderTiptapDocument(detail.draft.content_json, { mode: 'preview', resolveMedia: await mediaResolver(db, actor) })
+    ? await renderTiptapDocument(detail.draft.content_json, { mode: 'preview', resolveMedia: await mediaResolver(db, actor, await approvedLegacyMediaPaths(db, postId)) })
     : sanitizeLegacyBlogHtml(detail.draft.content_html)
   const title = detail.draft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   const description = detail.draft.excerpt.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -933,7 +990,11 @@ export async function updateBlogSettings(event: H3Event): Promise<{ artwork_moti
   const body = await parseJsonBody<Record<string, unknown>>(event)
   if (body.artwork_motion !== 'once' && body.artwork_motion !== 'off')
     throw createError({ statusCode: 400, statusMessage: 'artwork_motion must be once or off' })
-  await db.prepare(`INSERT INTO blog_settings (key, value, updated_at, updated_by) VALUES ('artwork_motion', ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(body.artwork_motion, new Date().toISOString(), actor).run()
+  const now = new Date().toISOString()
+  await db.batch([
+    db.prepare(`INSERT INTO blog_settings (key, value, updated_at, updated_by) VALUES ('artwork_motion', ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(body.artwork_motion, now, actor),
+    auditInsert(db, actor, 'settings.update', 'artwork_motion', { status: 'updated' }),
+  ])
   return getBlogSettings(event)
 }
 
@@ -948,7 +1009,7 @@ export async function getBlogTaxonomy(event: H3Event) {
 }
 
 export async function createBlogTaxonomy(event: H3Event) {
-  blogActor(event)
+  const actor = blogActor(event)
   const db = requireDb(event)
   const body = await parseJsonBody<Record<string, unknown>>(event)
   if (body.kind !== 'category' && body.kind !== 'tag')
@@ -959,10 +1020,16 @@ export async function createBlogTaxonomy(event: H3Event) {
   const now = new Date().toISOString()
   if (body.kind === 'category') {
     const sortOrder = integerField(body.sort_order, 'sort_order', -1_000_000, 1_000_000, 0)
-    await db.prepare('INSERT INTO blog_categories (id, slug, name, description, color_class, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').bind(id, slug, name, nullableString(body.description, 'description', 500), nullableString(body.color_class, 'color_class', 80), sortOrder, now, now).run()
+    await db.batch([
+      db.prepare('INSERT INTO blog_categories (id, slug, name, description, color_class, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').bind(id, slug, name, nullableString(body.description, 'description', 500), nullableString(body.color_class, 'color_class', 80), sortOrder, now, now),
+      auditInsert(db, actor, 'taxonomy.create', id, { status: 'created' }),
+    ])
   }
   else {
-    await db.prepare('INSERT INTO blog_tags (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(id, slug, name, now, now).run()
+    await db.batch([
+      db.prepare('INSERT INTO blog_tags (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(id, slug, name, now, now),
+      auditInsert(db, actor, 'taxonomy.create', id, { status: 'created' }),
+    ])
   }
   return getBlogTaxonomy(event)
 }
@@ -1036,7 +1103,9 @@ export async function initBlogUpload(event: H3Event): Promise<Record<string, unk
   const size = integerField(body.size, 'size', 1, BLOG_MAX_SOURCE_SIZE)
   const width = body.width == null ? null : integerField(body.width, 'width', 1, 8_000)
   const height = body.height == null ? null : integerField(body.height, 'height', 1, 8_000)
-  const durationMs = body.duration_ms == null ? null : integerField(body.duration_ms, 'duration_ms', 1, 300_000)
+  const durationMs = body.duration_ms == null
+    ? null
+    : integerField(body.duration_ms, 'duration_ms', kind === 'image' ? 0 : 1, 300_000)
   const derivedFrom = body.derived_from ?? []
   if (!Array.isArray(derivedFrom) || derivedFrom.length > 32)
     throw createError({ statusCode: 400, statusMessage: 'derived_from must be an array' })
@@ -1056,6 +1125,7 @@ export async function initBlogUpload(event: H3Event): Promise<Record<string, unk
     await db.batch([
       db.prepare('INSERT INTO blog_assets (id, name, mime_type, kind, size, width, height, duration_ms, object_key, source_object_key, derived_from, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'uploading\', ?, ?)').bind(assetId, filename, mimeType, kind, size, width, height, durationMs, objectKey, objectKey, JSON.stringify(sourceIds), actor, now),
       db.prepare('INSERT INTO blog_uploads (id, asset_id, r2_upload_id, object_key, part_size, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, \'active\', ?, ?)').bind(uploadId, assetId, multipart.uploadId, objectKey, BLOG_UPLOAD_PART_SIZE, actor, now),
+      auditInsert(db, actor, 'media.upload.init', assetId, { status: 'uploading', upload_id: uploadId }),
     ])
   }
   catch (error) {
@@ -1089,7 +1159,7 @@ export async function getBlogUpload(event: H3Event, uploadId: string) {
 export async function putBlogUploadPart(event: H3Event, uploadId: string, partNumber: number) {
   if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > BLOG_MAX_UPLOAD_PARTS)
     throw createError({ statusCode: 400, statusMessage: 'Upload part is invalid' })
-  const { db, row } = await uploadRow(event, uploadId)
+  const { actor, db, row } = await uploadRow(event, uploadId)
   if (row.status !== 'active')
     throw createError({ statusCode: 409, statusMessage: 'Upload is no longer active' })
   const requestLength = Number(getHeader(event, 'content-length') || 0)
@@ -1130,12 +1200,31 @@ export async function putBlogUploadPart(event: H3Event, uploadId: string, partNu
   if (observedLength !== requestLength)
     throw createError({ statusCode: 400, statusMessage: 'Upload part size does not match Content-Length' })
   const etag = String(uploaded.etag)
-  await db.prepare('INSERT INTO blog_upload_parts (upload_id, part_number, etag, size) VALUES (?, ?, ?, ?) ON CONFLICT(upload_id, part_number) DO UPDATE SET etag = excluded.etag, size = excluded.size').bind(uploadId, partNumber, etag, requestLength).run()
+  await db.batch([
+    db.prepare('INSERT INTO blog_upload_parts (upload_id, part_number, etag, size) VALUES (?, ?, ?, ?) ON CONFLICT(upload_id, part_number) DO UPDATE SET etag = excluded.etag, size = excluded.size').bind(uploadId, partNumber, etag, requestLength),
+    auditInsert(db, actor, 'media.upload.part', String(row.asset_id), { status: 'active', upload_id: uploadId }),
+  ])
   return { part_number: partNumber, etag }
 }
 
 export async function completeBlogUpload(event: H3Event, uploadId: string) {
-  const { db, row } = await uploadRow(event, uploadId)
+  const { actor, db, row } = await uploadRow(event, uploadId)
+  if (row.status === 'completed') {
+    return {
+      asset: assetResponse(event, {
+        id: row.asset_id,
+        name: row.name,
+        mime_type: row.mime_type,
+        kind: row.kind,
+        size: row.size,
+        width: row.width,
+        height: row.height,
+        duration_ms: row.duration_ms,
+        derived_from: row.derived_from,
+        created_at: row.asset_created_at,
+      }),
+    }
+  }
   if (row.status !== 'active')
     throw createError({ statusCode: 409, statusMessage: 'Upload is no longer active' })
   const body = await parseJsonBody<Record<string, unknown>>(event)
@@ -1165,6 +1254,7 @@ export async function completeBlogUpload(event: H3Event, uploadId: string) {
   const result = await db.batch([
     db.prepare('UPDATE blog_uploads SET status = \'completed\' WHERE id = ? AND status = \'active\'').bind(uploadId),
     db.prepare('UPDATE blog_assets SET status = \'ready\' WHERE id = ? AND status = \'uploading\'').bind(row.asset_id),
+    auditInsert(db, actor, 'media.upload.complete', String(row.asset_id), { status: 'completed', upload_id: uploadId }, 'EXISTS (SELECT 1 FROM blog_uploads WHERE id = ? AND status = \'completed\')', [uploadId]),
   ])
   if (changes(result[0]) !== 1)
     throw createError({ statusCode: 409, statusMessage: 'Upload completion raced another request' })
@@ -1172,7 +1262,7 @@ export async function completeBlogUpload(event: H3Event, uploadId: string) {
 }
 
 export async function abortBlogUpload(event: H3Event, uploadId: string) {
-  const { db, row } = await uploadRow(event, uploadId)
+  const { actor, db, row } = await uploadRow(event, uploadId)
   if (row.status === 'completed')
     throw createError({ statusCode: 409, statusMessage: 'Completed uploads are immutable' })
   const bucket = requirePortfolioMedia(event)
@@ -1180,6 +1270,7 @@ export async function abortBlogUpload(event: H3Event, uploadId: string) {
   await db.batch([
     db.prepare('UPDATE blog_uploads SET status = \'aborted\' WHERE id = ? AND status = \'active\'').bind(uploadId),
     db.prepare('UPDATE blog_assets SET status = \'aborted\' WHERE id = ? AND status = \'uploading\'').bind(row.asset_id),
+    auditInsert(db, actor, 'media.upload.abort', String(row.asset_id), { status: 'aborted', upload_id: uploadId }, 'EXISTS (SELECT 1 FROM blog_uploads WHERE id = ? AND status = \'aborted\')', [uploadId]),
   ])
   return { aborted: true }
 }
@@ -1245,7 +1336,10 @@ export async function createMediaProject(event: H3Event) {
   await validateProjectAssets(db, actor, document)
   const id = crypto.randomUUID().replaceAll('-', '')
   const now = new Date().toISOString()
-  await db.prepare('INSERT INTO blog_media_projects (id, version, title, document, created_by, updated_at) VALUES (?, 1, ?, ?, ?, ?)').bind(id, title, serialized, actor, now).run()
+  await db.batch([
+    db.prepare('INSERT INTO blog_media_projects (id, version, title, document, created_by, updated_at) VALUES (?, 1, ?, ?, ?, ?)').bind(id, title, serialized, actor, now),
+    auditInsert(db, actor, 'media.project.create', id, { status: 'created', version: 1 }),
+  ])
   return { project: { id, version: 1, title, document, updated_at: now } }
 }
 
@@ -1259,8 +1353,11 @@ export async function updateMediaProject(event: H3Event, projectId: string) {
   await validateProjectAssets(db, actor, body.document)
   const nextVersion = version + 1
   const now = new Date().toISOString()
-  const result = await db.prepare('UPDATE blog_media_projects SET version = ?, title = ?, document = ?, updated_at = ? WHERE id = ? AND created_by = ? AND version = ?').bind(nextVersion, title, serialized, now, projectId, actor, version).run()
-  if (changes(result) !== 1) {
+  const result = await db.batch([
+    db.prepare('UPDATE blog_media_projects SET version = ?, title = ?, document = ?, updated_at = ? WHERE id = ? AND created_by = ? AND version = ?').bind(nextVersion, title, serialized, now, projectId, actor, version),
+    auditInsert(db, actor, 'media.project.update', projectId, { status: 'updated', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_media_projects WHERE id = ? AND created_by = ? AND version = ?)', [projectId, actor, nextVersion]),
+  ])
+  if (changes(result[0]) !== 1) {
     const current = first<{ version: number }>(await db.prepare('SELECT version FROM blog_media_projects WHERE id = ? AND created_by = ?').bind(projectId, actor).all())
     if (!current)
       throw createError({ statusCode: 404, statusMessage: 'Project not found' })

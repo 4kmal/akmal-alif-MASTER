@@ -19,6 +19,7 @@ import {
 const migrationSql = [
   readFileSync(new URL('../../../migrations/0001_initial.sql', import.meta.url), 'utf8'),
   readFileSync(new URL('../../../migrations/0002_blog_studio.sql', import.meta.url), 'utf8'),
+  readFileSync(new URL('../../../migrations/0003_blog_audit.sql', import.meta.url), 'utf8'),
 ].join('\n')
 
 class SQLiteStatement {
@@ -172,6 +173,9 @@ describe('blog studio persistence', () => {
       const current = database.prepare('SELECT version FROM blog_post_drafts WHERE post_id = ?').get(created.post.id).version
       const restored = await restoreBlogPost(eventFor(d1, bucket, 'POST', '/restore', { version: current, revision_id: checkpoint.revision.id }), created.post.id)
       expect(restored.draft.title).toBe('Private draft')
+      const audits = database.prepare('SELECT action, details_json FROM blog_audit_records WHERE entity_id = ? ORDER BY rowid ASC').all(created.post.id)
+      expect(audits.map(row => row.action)).toEqual(['post.create', 'post.checkpoint', 'post.draft', 'post.draft', 'post.restore'])
+      expect(audits.map(row => row.details_json).join('')).not.toContain('Second body')
     }
     finally {
       database.close()
@@ -185,9 +189,13 @@ describe('blog studio persistence', () => {
         filename: 'photo.png',
         mime_type: 'image/png',
         size: 4,
+        duration_ms: 0,
       }))
+      expect(upload.asset.duration_ms).toBe(0)
       await putBlogUploadPart(eventFor(d1, bucket, 'PUT', '/parts/1', new Uint8Array([1, 2, 3, 4])), upload.upload.id, 1)
       const completed = await completeBlogUpload(eventFor(d1, bucket, 'POST', '/complete', { parts: [{ part_number: 1, etag: 'etag-1' }] }), upload.upload.id)
+      const retried = await completeBlogUpload(eventFor(d1, bucket, 'POST', '/complete', { parts: [{ part_number: 1, etag: 'etag-1' }] }), upload.upload.id)
+      expect(retried.asset.id).toBe(completed.asset.id)
       const assetId = completed.asset.id
       const created = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
         title: 'Publishable',
@@ -220,6 +228,62 @@ describe('blog studio persistence', () => {
 
       const unpublished = await setBlogPostStatus(eventFor(d1, bucket, 'POST', '/status', { status: 'draft' }), created.post.id)
       expect(unpublished.post.status).toBe('draft')
+      const postActions = database.prepare('SELECT action FROM blog_audit_records WHERE entity_id = ? ORDER BY rowid ASC').all(created.post.id).map(row => row.action)
+      expect(postActions).toEqual(expect.arrayContaining(['post.create', 'post.draft', 'post.publish', 'post.status']))
+      const uploadActions = database.prepare('SELECT action FROM blog_audit_records WHERE entity_id = ? ORDER BY rowid ASC').all(assetId).map(row => row.action)
+      expect(uploadActions).toEqual(['media.upload.init', 'media.upload.part', 'media.upload.complete'])
+    }
+    finally {
+      database.close()
+    }
+  })
+
+  it('preserves untouched legacy HTML and restricts legacy conversion to original media paths', async () => {
+    const { database, d1, bucket } = databaseFixture()
+    try {
+      const created = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
+        title: 'Legacy article',
+        slug: 'legacy-article',
+        excerpt: 'Legacy excerpt',
+        content_html: '<h2 id="chapter-1">Legacy heading</h2><p><img src="/assets/legacy.png" alt="Legacy"></p>',
+      })
+      const originalHtml = created.draft.content_html
+      const metadataOnly = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: created.draft.version,
+        title: 'Legacy article renamed',
+      }), created.post.id)
+      expect(metadataOnly.draft.content_json).toBeNull()
+      expect(metadataOnly.draft.content_html).toBe(originalHtml)
+      expect(metadataOnly.draft.content_html).toContain('id="chapter-1"')
+
+      const converted = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: metadataOnly.draft.version,
+        content_json: {
+          type: 'doc',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Converted body' }] },
+            { type: 'blogMedia', attrs: { assetId: 'legacy:/assets/legacy.png', kind: 'image', src: 'https://forged.invalid/legacy.png', alt: 'Legacy', width: 100, align: 'center' } },
+          ],
+        },
+      }), created.post.id)
+      expect(converted.draft.content_html).toContain('src="/assets/legacy.png"')
+      expect(converted.draft.content_html).not.toContain('forged.invalid')
+
+      await expect(updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: converted.draft.version,
+        content_json: {
+          type: 'doc',
+          content: [{ type: 'blogMedia', attrs: { assetId: 'legacy:/assets/not-approved.png', kind: 'image', alt: 'Nope', width: 100, align: 'center' } }],
+        },
+      }), created.post.id)).rejects.toMatchObject({ statusCode: 400 })
+
+      await expect(updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: converted.draft.version,
+        content_json: {
+          type: 'doc',
+          content: [{ type: 'blogMedia', attrs: { assetId: 'legacy:/media/blog/originals/private.png', kind: 'image', alt: 'Nope', width: 100, align: 'center' } }],
+        },
+      }), created.post.id)).rejects.toMatchObject({ statusCode: 400 })
     }
     finally {
       database.close()
@@ -267,6 +331,7 @@ describe('blog studio persistence', () => {
       }))
       expect(project.project.version).toBe(1)
       expect(database.prepare('SELECT document FROM blog_media_projects WHERE id = ?').get(project.project.id).document).toContain('schema_version')
+      expect(database.prepare('SELECT action FROM blog_audit_records WHERE entity_id = ?').get(project.project.id).action).toBe('media.project.create')
     }
     finally {
       database.close()

@@ -108,13 +108,13 @@ function styleFromAttributes(attrs: Record<string, unknown> | undefined): string
     return ''
   const styles: string[] = []
   const textAlign = attrs.textAlign
-  if (textAlign !== undefined) {
+  if (textAlign !== undefined && textAlign !== null) {
     const value = text(textAlign, 'textAlign', 16)
     if (!['left', 'center', 'right', 'justify'].includes(value))
       fail('Unsupported text alignment')
     styles.push(`text-align:${value}`)
   }
-  if (attrs.lineHeight !== undefined) {
+  if (attrs.lineHeight !== undefined && attrs.lineHeight !== null) {
     const value = Number(attrs.lineHeight)
     if (!Number.isFinite(value) || value < 1 || value > 3)
       fail('Unsupported line height')
@@ -269,7 +269,10 @@ async function renderNode(node: TiptapNode, state: RenderState, depth: number, o
       if (!Number.isInteger(level) || level < 1 || level > 6)
         fail('Heading level must be between 1 and 6')
       const style = styleFromAttributes(attrs)
-      return `${openTag(`h${level}`, style ? { style } : {}) + await children()}</h${level}>`
+      const id = attrs?.id == null ? undefined : text(attrs.id, 'heading id', 128)
+      if (id && !/^\w[\w.:-]{0,127}$/.test(id))
+        fail('Unsupported heading id')
+      return `${openTag(`h${level}`, { id, style: style || undefined }) + await children()}</h${level}>`
     }
     case 'blockquote':
       return `<blockquote>${await children()}</blockquote>`
@@ -285,6 +288,8 @@ async function renderNode(node: TiptapNode, state: RenderState, depth: number, o
       return '<hr>'
     case 'bulletList':
       return `<ul>${await children()}</ul>`
+    case 'taskList':
+      return `<ul class="task-list" data-type="taskList">${await children()}</ul>`
     case 'orderedList': {
       const start = attrs?.start == null ? undefined : Number(attrs.start)
       if (start !== undefined && (!Number.isInteger(start) || start < 1 || start > 10_000))
@@ -293,6 +298,12 @@ async function renderNode(node: TiptapNode, state: RenderState, depth: number, o
     }
     case 'listItem':
       return `<li>${await children()}</li>`
+    case 'taskItem': {
+      const checked = attrs?.checked == null ? false : attrs.checked
+      if (typeof checked !== 'boolean')
+        fail('Task item checked state is invalid')
+      return `<li class="task-item" data-type="taskItem" data-checked="${checked ? 'true' : 'false'}"><input type="checkbox" disabled${checked ? ' checked' : ''}>${await children()}</li>`
+    }
     case 'table':
       return `<table><tbody>${await children()}</tbody></table>`
     case 'tableRow':
@@ -379,10 +390,90 @@ export async function renderTiptapDocument(document: unknown, options: RenderBlo
   return html
 }
 
-const LEGACY_MEDIA_PATH = /^\/(?:assets|blog|media)\/[\w.~!$&'()*+,;=:@%/-]+$/
+const LEGACY_MEDIA_PATH = /^\/(?:assets|blog|media)\/[\w.~!$&'()*+,;=:@%/?#-]+$/
+
+function decodeLegacyPath(value: string): string | null {
+  let decoded = value
+  for (let index = 0; index < 3; index += 1) {
+    try {
+      const next = decodeURIComponent(decoded)
+      if (next === decoded)
+        return decoded
+      decoded = next
+    }
+    catch {
+      return null
+    }
+  }
+  return decoded
+}
+
+export function normalizeLegacyMediaPath(value: unknown): string | null {
+  if (typeof value !== 'string')
+    return null
+  const candidate = value.trim()
+  if (!candidate || !candidate.startsWith('/') || candidate.startsWith('//') || candidate.includes('\\') || Array.from(candidate).some(character => character.charCodeAt(0) < 32))
+    return null
+  if (!LEGACY_MEDIA_PATH.test(candidate))
+    return null
+  const decoded = decodeLegacyPath(candidate)
+  if (!decoded)
+    return null
+  const decodedPath = decoded.split(/[?#]/, 1)[0]
+  if (!decodedPath)
+    return null
+  if (!/^\/(?:assets|blog|media)\//.test(decodedPath) || decodedPath.split('/').includes('..'))
+    return null
+  if (decodedPath === '/media/blog/originals' || decodedPath.startsWith('/media/blog/originals/'))
+    return null
+  return candidate
+}
+
+export function legacyMediaKind(value: string): 'image' | 'gif' | 'video' {
+  const pathname = value.split(/[?#]/, 1)[0] || ''
+  const extension = pathname.toLowerCase().split('.').pop() || ''
+  if (extension === 'gif')
+    return 'gif'
+  if (['mp4', 'webm', 'mov', 'm4v', 'ogv', 'ogg'].includes(extension))
+    return 'video'
+  return 'image'
+}
+
+export function legacyMediaPathsFromHtml(value: unknown): Set<string> {
+  if (typeof value !== 'string')
+    return new Set()
+  const paths = new Set<string>()
+  const attributes = /\b(?:src|poster)\s*=\s*["']([^"']+)["']/gi
+  for (const match of value.matchAll(attributes)) {
+    const candidate = match[1]
+    if (!candidate)
+      continue
+    const path = normalizeLegacyMediaPath(candidate)
+    if (path)
+      paths.add(path)
+  }
+  return paths
+}
+
+function normalizeHeadingId(value: unknown): string | null {
+  if (typeof value !== 'string')
+    return null
+  const id = value.trim()
+  return /^\w[\w.:-]{0,127}$/.test(id) ? id : null
+}
+
+function sanitizeHeadingTag(tagName: string, attribs: Record<string, string>) {
+  const safeAttribs = { ...attribs }
+  const id = normalizeHeadingId(safeAttribs.id)
+  if (id)
+    safeAttribs.id = id
+  else
+    delete safeAttribs.id
+  return { tagName, attribs: safeAttribs }
+}
 
 function legacyMediaAttribute(value: unknown): boolean {
-  return typeof value === 'string' && LEGACY_MEDIA_PATH.test(value)
+  return normalizeLegacyMediaPath(value) !== null
 }
 
 export function sanitizeLegacyBlogHtml(value: unknown): string {
@@ -410,6 +501,7 @@ export function sanitizeLegacyBlogHtml(value: unknown): string {
       'hr',
       'i',
       'img',
+      'input',
       'li',
       'ol',
       'p',
@@ -431,6 +523,15 @@ export function sanitizeLegacyBlogHtml(value: unknown): string {
     allowedAttributes: {
       'a': ['href', 'target', 'rel'],
       'img': ['src', 'alt', 'width', 'height', 'loading', 'decoding'],
+      'input': ['type', 'checked', 'disabled'],
+      'h1': ['id'],
+      'h2': ['id'],
+      'h3': ['id'],
+      'h4': ['id'],
+      'h5': ['id'],
+      'h6': ['id'],
+      'ul': ['data-type'],
+      'li': ['data-type', 'data-checked'],
       'video': ['src', 'poster', 'controls', 'preload', 'width', 'height'],
       'source': ['src', 'type'],
       '*': ['class'],
@@ -439,7 +540,7 @@ export function sanitizeLegacyBlogHtml(value: unknown): string {
     disallowedTagsMode: 'discard',
     transformTags: {
       img: (_tagName, attribs) => {
-        if (LEGACY_MEDIA_PATH.test(attribs.src || ''))
+        if (legacyMediaAttribute(attribs.src))
           return { tagName: 'img', attribs }
         const safeAttribs = { ...attribs }
         delete safeAttribs.src
@@ -454,12 +555,24 @@ export function sanitizeLegacyBlogHtml(value: unknown): string {
         return { tagName: 'video', attribs: safeAttribs }
       },
       source: (_tagName, attribs) => {
-        if (LEGACY_MEDIA_PATH.test(attribs.src || ''))
+        if (legacyMediaAttribute(attribs.src))
           return { tagName: 'source', attribs }
         const safeAttribs = { ...attribs }
         delete safeAttribs.src
         return { tagName: 'source', attribs: safeAttribs }
       },
+      input: (_tagName, attribs) => {
+        const safeAttribs: Record<string, string> = { type: 'checkbox', disabled: 'disabled' }
+        if (attribs.checked !== undefined)
+          safeAttribs.checked = 'checked'
+        return { tagName: 'input', attribs: safeAttribs }
+      },
+      h1: (_tagName, attribs) => sanitizeHeadingTag('h1', attribs),
+      h2: (_tagName, attribs) => sanitizeHeadingTag('h2', attribs),
+      h3: (_tagName, attribs) => sanitizeHeadingTag('h3', attribs),
+      h4: (_tagName, attribs) => sanitizeHeadingTag('h4', attribs),
+      h5: (_tagName, attribs) => sanitizeHeadingTag('h5', attribs),
+      h6: (_tagName, attribs) => sanitizeHeadingTag('h6', attribs),
     },
   })
   if (blogByteLength(html) > BLOG_MAX_CANONICAL_BYTES)

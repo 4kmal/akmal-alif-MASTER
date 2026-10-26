@@ -383,7 +383,30 @@ function mediaKeyForRequest(url) {
     return null;
   }
 
+  if (key === 'blog/originals' || key.startsWith('blog/originals/')) {
+    return null;
+  }
+
   return { key };
+}
+
+function isPrivateBlogOriginalPath(pathname) {
+  let candidate = pathname;
+  for (let index = 0; index < 3; index += 1) {
+    if (candidate === '/media/blog/originals' || candidate.startsWith('/media/blog/originals/')) {
+      return true;
+    }
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) {
+        break;
+      }
+      candidate = decoded;
+    } catch {
+      break;
+    }
+  }
+  return false;
 }
 
 function mediaContentType(key) {
@@ -674,6 +697,9 @@ export async function handleRequest(request, env, ctx) {
     decodedPathname = decodeURIComponent(url.pathname);
   } catch {
     return errorResponse(400, 'Malformed media URL');
+  }
+  if (isPrivateBlogOriginalPath(decodedPathname)) {
+    return mediaNotFound();
   }
   if (decodedPathname.startsWith('/media/blog/')) {
     const assetId = decodedPathname.slice('/media/blog/'.length);

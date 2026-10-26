@@ -8,6 +8,7 @@ import { fetch as workerFetch } from '../worker/index.js';
 const migrationSql = [
   readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'),
   readFileSync(new URL('../migrations/0002_blog_studio.sql', import.meta.url), 'utf8'),
+  readFileSync(new URL('../migrations/0003_blog_audit.sql', import.meta.url), 'utf8'),
 ].join('\n');
 
 class SQLiteStatement {
@@ -541,6 +542,18 @@ test('new blog media is public only while referenced by a published post', async
   const publicAsset = await workerFetch(request('/media/blog/asset-one'), env);
   assert.equal(publicAsset.status, 200);
   assert.equal(await publicAsset.text(), 'private-until-published');
+
+  const callsBeforeOriginalGuess = media.calls.length;
+  for (const path of [
+    '/media/blog/originals/asset-one/photo.png',
+    '/media/blog/%6friginals/asset-one/photo.png',
+    '/media/blog/%256friginals/asset-one/photo.png',
+  ]) {
+    const originalGuess = await workerFetch(request(path), env);
+    assert.equal(originalGuess.status, 404);
+    assert.equal(await originalGuess.text(), 'Not Found');
+  }
+  assert.equal(media.calls.length, callsBeforeOriginalGuess);
 
   const guessed = await workerFetch(request('/media/blog/asset-missing'), env);
   assert.equal(guessed.status, 404);

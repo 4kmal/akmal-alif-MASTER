@@ -58,12 +58,48 @@ describe('blog content boundaries', () => {
     })).rejects.toMatchObject({ statusCode: 400 })
   })
 
+  it('renders Tiptap defaults, authored heading ids, and task lists', async () => {
+    const html = await renderTiptapDocument({
+      type: 'doc',
+      content: [
+        {
+          type: 'heading',
+          attrs: { level: 2, id: 'chapter-1', textAlign: null, lineHeight: null, indent: 0 },
+          content: [{ type: 'text', text: 'Chapter one' }],
+        },
+        {
+          type: 'taskList',
+          content: [{
+            type: 'taskItem',
+            attrs: { checked: true },
+            content: [{
+              type: 'paragraph',
+              attrs: { textAlign: null, lineHeight: null, indent: 0 },
+              content: [{ type: 'text', text: 'Ship it' }],
+            }],
+          }],
+        },
+      ],
+    })
+
+    expect(html).toContain('<h2 id="chapter-1">Chapter one</h2>')
+    expect(html).toContain('<ul class="task-list" data-type="taskList">')
+    expect(html).toContain('<li class="task-item" data-type="taskItem" data-checked="true"><input type="checkbox" disabled checked><p>Ship it</p></li>')
+  })
+
   it('sanitizes legacy HTML and removes external media sources', () => {
     const html = sanitizeLegacyBlogHtml('<p onclick="alert(1)">ok</p><script>alert(1)</script><img src="/assets/legacy.png" onerror="alert(2)"><video src="https://attacker.invalid/a.mp4" poster="https://attacker.invalid/p.png"></video>')
     expect(html).toContain('<p>ok</p>')
     expect(html).toContain('src="/assets/legacy.png"')
     expect(html).not.toContain('<script')
     expect(html).not.toContain('attacker.invalid')
+  })
+
+  it('preserves safe legacy heading ids and task-list controls', () => {
+    const html = sanitizeLegacyBlogHtml('<h2 id="chapter-1">Chapter one</h2><h2 id="bad id">Bad id</h2><ul data-type="taskList"><li data-type="taskItem" data-checked="true"><input type="checkbox" checked disabled>Done</li></ul>')
+    expect(html).toContain('<h2 id="chapter-1">Chapter one</h2>')
+    expect(html).toContain('<h2>Bad id</h2>')
+    expect(html).toContain('<input type="checkbox" disabled="disabled" checked="checked" />')
   })
 })
 
