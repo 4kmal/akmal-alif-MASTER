@@ -71,6 +71,22 @@ const CAMPAIGN_FIELDS = [
   'utm_content',
 ];
 
+const GOAL_DEFINITIONS = [
+  { id: 'linkedin', label: 'LinkedIn', targetHost: 'linkedin.com', types: new Set(['outbound_click']), sessionConversion: true, websiteOnly: true },
+  { id: 'github', label: 'GitHub', targetHost: 'github.com', types: new Set(['outbound_click']), sessionConversion: true, websiteOnly: true },
+  { id: 'outbound', label: 'Outbound clicks', types: new Set(['outbound_click']), sessionConversion: true, websiteOnly: true },
+  { id: 'contact', label: 'Contact intent', types: new Set(['contact_open', 'contact_interaction']), sessionConversion: true, websiteOnly: true },
+  { id: 'download', label: 'Downloads', types: new Set(['download_start']), sessionConversion: true, websiteOnly: true },
+  { id: 'playground', label: 'Playground opens', types: new Set(['playground_open']), sessionConversion: true, websiteOnly: true },
+  { id: 'article', label: 'Article completions', types: new Set(['article_complete']), sessionConversion: true, websiteOnly: true },
+  { id: 'media', label: 'Media completions', types: new Set(['media_complete']), sessionConversion: true, websiteOnly: true },
+  // Keep these response entries for existing consumers while the named goals
+  // above provide the report's default conversion vocabulary.
+  { id: 'engagement', label: 'Engagement', types: new Set(['article_complete', 'media_complete', 'playground_open']), sessionConversion: true, websiteOnly: true },
+  { id: 'career_contact', label: 'Contact intent', types: new Set(['contact_open', 'contact_interaction']), sessionConversion: true, websiteOnly: true },
+  { id: 'shortlink_campaigns', label: 'Shortlink campaigns', source: 'sink' },
+];
+
 const INSERT_EVENT_SQL = [
   '  INSERT OR IGNORE INTO portfolio_analytics_events (',
   '    event_id, event_type, source_event_type, path, target, progress,',
@@ -88,8 +104,8 @@ const REPORT_EVENT_SELECT = [
   '    event_id, event_type, source_event_type, path, target, progress,',
   '    active_ms, media_id, media_kind, played_ms, duration_ms, referrer,',
   '    campaign_json, shortlink_slug, source, source_event_id, event_at,',
-  '    received_at, visitor_key, session_key, session_started_at,',
-  '    country, region, city, timezone, latitude, longitude, colo, is_bot',
+  '    received_at, visitor_key, session_key, session_started_at, user_agent,',
+    '    country, region, city, timezone, latitude, longitude, colo, is_bot',
   '  FROM portfolio_analytics_events'
 ].join('\n');
 
@@ -1109,45 +1125,48 @@ function dailyBuckets(rows) {
     }));
 }
 
-function buildGoals(rows) {
-  const definitions = [
-    {
-      id: 'engagement',
-      label: 'Engagement',
-      types: new Set(['article_complete', 'media_complete', 'playground_open']),
-    },
-    {
-      id: 'career_contact',
-      label: 'Contact intent',
-      types: new Set(['contact_open', 'contact_interaction']),
-      sessionConversion: true,
-    },
-    {
-      id: 'shortlink_campaigns',
-      label: 'Shortlink campaigns',
-      types: new Set(),
-      source: 'sink',
-    },
-  ];
+function targetMatchesHost(target, expectedHost) {
+  if (!target) return false;
+  try {
+    const hostname = new URL(target, 'https://www.akmalalif.com').hostname.toLowerCase();
+    return hostname === expectedHost || hostname.endsWith('.' + expectedHost);
+  } catch {
+    return false;
+  }
+}
 
-  const denominatorSessions = distinctCount(rows, 'session_key');
-  return definitions.map((definition) => {
-    const matching = rows.filter((row) => (
-      (definition.source ? row.source === definition.source || row.shortlink_slug : definition.types.has(row.event_type))
-    ));
-    const conversions = definition.sessionConversion
-      ? distinctCount(matching, 'session_key')
-      : matching.length;
-    return {
-      id: definition.id,
-      label: definition.label,
-      conversions,
-      sessions: distinctCount(matching, 'session_key'),
-      ...visitorSummaryFields(matching),
-      denominator_sessions: denominatorSessions,
-      conversion_rate: denominatorSessions ? conversions / denominatorSessions : null,
-    };
-  });
+function goalMatchesRow(row, definition) {
+  if (definition.source && row.source !== definition.source) return false;
+  if (definition.websiteOnly && row.source === 'sink') return false;
+  if (definition.targetHost && !targetMatchesHost(row.target, definition.targetHost)) return false;
+  return !definition.types || definition.types.has(row.event_type);
+}
+
+function goalResult(definition, matching, denominatorSessions) {
+  const convertedSessions = distinctCount(matching.filter((row) => row.source !== 'sink'), 'session_key');
+  const conversions = definition.sessionConversion ? convertedSessions : matching.length;
+  const shortlink = definition.source === 'sink';
+  return {
+    id: definition.id,
+    label: definition.label,
+    conversions,
+    sessions: distinctCount(matching, 'session_key'),
+    ...visitorSummaryFields(matching),
+    denominator_sessions: shortlink ? null : denominatorSessions,
+    denominator_clicks: shortlink ? matching.length : null,
+    denominator_label: shortlink ? 'shortlink_clicks' : 'website_sessions',
+    conversion_rate: shortlink ? null : (denominatorSessions ? conversions / denominatorSessions : null),
+    available: true,
+  };
+}
+
+function buildGoals(rows) {
+  const denominatorSessions = distinctCount(websiteRows(rows), 'session_key');
+  return GOAL_DEFINITIONS.map((definition) => goalResult(
+    definition,
+    rows.filter((row) => goalMatchesRow(row, definition)),
+    denominatorSessions,
+  ));
 }
 
 function buildInsights(rows, goals) {
@@ -1234,6 +1253,111 @@ function topCounts(rows, value) {
     .slice(0, 50);
 }
 
+function sortedCountRows(counts, value) {
+  return [...counts.entries()]
+    .map(([key, count]) => ({ [value]: key, count }))
+    .sort((left, right) => right.count - left.count || left[value].localeCompare(right[value]))
+    .slice(0, 50);
+}
+
+function countMap(rows, value) {
+  const counts = new Map();
+  for (const row of rows) {
+    const item = row[value];
+    if (item) counts.set(item, (counts.get(item) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function dailyCountMap(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    if (row.dimension_value) {
+      counts.set(row.dimension_value, (counts.get(row.dimension_value) ?? 0) + Number(row.event_count ?? 0));
+    }
+  }
+  return counts;
+}
+
+function periodChange(current, previous) {
+  if (previous == null) {
+    return {
+      previous_count: null,
+      change: null,
+      change_percent: null,
+      trend: null,
+    };
+  }
+  const change = current - previous;
+  return {
+    previous_count: previous,
+    change,
+    change_percent: previous ? Math.round((change / previous) * 10000) / 100 : null,
+    trend: change > 0 ? 'rising' : change < 0 ? 'falling' : 'flat',
+  };
+}
+
+function comparisonCountRows(current, previous, value, previousAvailable = true) {
+  const keys = new Set(previousAvailable ? [...current.keys(), ...previous.keys()] : [...current.keys()]);
+  return [...keys]
+    .map((key) => ({
+      [value]: key,
+      count: current.get(key) ?? 0,
+      ...periodChange(current.get(key) ?? 0, previousAvailable ? (previous.get(key) ?? 0) : null),
+    }))
+    .sort((left, right) => right.count - left.count || (right.previous_count ?? 0) - (left.previous_count ?? 0) || left[value].localeCompare(right[value]))
+    .slice(0, 50);
+}
+
+function classifyUserAgent(value) {
+  const userAgent = String(value ?? '').toLowerCase();
+  if (!userAgent) return null;
+
+  let device = 'desktop';
+  if (/bot|crawler|spider|slurp|headless|lighthouse|facebookexternalhit|semrush|ahrefs/.test(userAgent)) {
+    device = 'bot';
+  } else if (/ipad|tablet|playbook|silk/.test(userAgent)) {
+    device = 'tablet';
+  } else if (/mobile|iphone|ipod|android/.test(userAgent)) {
+    device = 'mobile';
+  }
+
+  let browser = 'Other';
+  if (/edg\//.test(userAgent)) browser = 'Edge';
+  else if (/opr\//.test(userAgent)) browser = 'Opera';
+  else if (/samsungbrowser\//.test(userAgent)) browser = 'Samsung Internet';
+  else if (/chrome\//.test(userAgent) || /crios\//.test(userAgent)) browser = 'Chrome';
+  else if (/firefox\//.test(userAgent) || /fxios\//.test(userAgent)) browser = 'Firefox';
+  else if (/safari\//.test(userAgent)) browser = 'Safari';
+
+  let operatingSystem = 'Other';
+  if (/windows/.test(userAgent)) operatingSystem = 'Windows';
+  else if (/android/.test(userAgent)) operatingSystem = 'Android';
+  else if (/iphone|ipad|ipod/.test(userAgent)) operatingSystem = 'iOS';
+  else if (/mac os|macintosh/.test(userAgent)) operatingSystem = 'macOS';
+  else if (/linux/.test(userAgent)) operatingSystem = 'Linux';
+
+  return { device, browser, operating_system: operatingSystem };
+}
+
+function buildUserAgentDimensions(rows) {
+  const devices = new Map();
+  const browsers = new Map();
+  const operatingSystems = new Map();
+  for (const row of rows) {
+    const classified = classifyUserAgent(row.user_agent);
+    if (!classified) continue;
+    devices.set(classified.device, (devices.get(classified.device) ?? 0) + 1);
+    browsers.set(classified.browser, (browsers.get(classified.browser) ?? 0) + 1);
+    operatingSystems.set(classified.operating_system, (operatingSystems.get(classified.operating_system) ?? 0) + 1);
+  }
+  return {
+    devices: sortedCountRows(devices, 'device'),
+    browsers: sortedCountRows(browsers, 'browser'),
+    operating_systems: sortedCountRows(operatingSystems, 'operating_system'),
+  };
+}
+
 function campaignLabel(campaign) {
   if (!campaign) {
     return null;
@@ -1265,7 +1389,30 @@ function buildLocations(rows) {
     .slice(0, 100);
 }
 
-function buildTraffic(rows) {
+function buildSessionPages(rows) {
+  const sessions = new Map();
+  for (const row of websiteRows(rows).filter((item) => item.event_type === 'page_view' && item.session_key)) {
+    const session = sessions.get(row.session_key) ?? [];
+    session.push(row);
+    sessions.set(row.session_key, session);
+  }
+
+  const landing = new Map();
+  const exit = new Map();
+  for (const session of sessions.values()) {
+    session.sort((left, right) => left.event_at - right.event_at || left.event_id.localeCompare(right.event_id));
+    const first = session[0]?.path;
+    const last = session.at(-1)?.path;
+    if (first) landing.set(first, (landing.get(first) ?? 0) + 1);
+    if (last) exit.set(last, (exit.get(last) ?? 0) + 1);
+  }
+  return {
+    landing_pages: sortedCountRows(landing, 'path'),
+    exit_pages: sortedCountRows(exit, 'path'),
+  };
+}
+
+function buildTraffic(rows, previousRows = [], previousPathRows = [], previousAvailable = false) {
   const campaigns = new Map();
   for (const row of rows) {
     const label = campaignLabel(row.campaign);
@@ -1273,8 +1420,11 @@ function buildTraffic(rows) {
       campaigns.set(label, (campaigns.get(label) ?? 0) + 1);
     }
   }
+  const currentPaths = countMap(rows, 'path');
+  const previousPaths = previousRows.length ? countMap(previousRows, 'path') : dailyCountMap(previousPathRows);
+  const sessionPages = buildSessionPages(rows);
   return {
-    paths: topCounts(rows, 'path'),
+    paths: comparisonCountRows(currentPaths, previousPaths, 'path', previousAvailable),
     referrers: topCounts(rows, 'referrer'),
     locations: buildLocations(rows),
     campaigns: [...campaigns.entries()]
@@ -1282,6 +1432,8 @@ function buildTraffic(rows) {
       .sort((left, right) => right.count - left.count || left.campaign.localeCompare(right.campaign))
       .slice(0, 50),
     daily: dailyBuckets(rows),
+    ...sessionPages,
+    ...buildUserAgentDimensions(rows),
   };
 }
 
@@ -1322,6 +1474,229 @@ function buildContent(rows) {
       active_ms: bucket.active_ms,
     }))
     .sort((left, right) => right.views - left.views || left.path.localeCompare(right.path));
+}
+
+async function loadPortfolioCatalog(env, now) {
+  const database = env?.PORTFOLIO_DB;
+  if (!database || typeof database.prepare !== 'function') {
+    return { available: false, source: 'PORTFOLIO_DB', posts: [], reason: 'Portfolio content database is unavailable.' };
+  }
+
+  try {
+    const result = await database.prepare([
+      'SELECT p.slug, p.title, p.canonical_path,',
+      '       c.slug AS category_slug, c.name AS category_name',
+      'FROM blog_posts AS p',
+      'LEFT JOIN blog_categories AS c ON c.id = p.category_id',
+      "WHERE p.status = 'published' AND p.published_at <= ?",
+      'ORDER BY p.published_at DESC, p.slug ASC',
+    ].join('\n')).bind(new Date(now).toISOString()).all();
+    const posts = rowsFromResult(result).map((row) => ({
+      slug: cleanText(row.slug, 256),
+      title: cleanText(row.title, 512),
+      canonical_path: cleanText(row.canonical_path, MAX_PATH_LENGTH),
+      category_slug: cleanText(row.category_slug, 128),
+      category_name: cleanText(row.category_name, 256),
+    })).filter((row) => row.slug);
+    return { available: true, source: 'PORTFOLIO_DB', posts };
+  } catch {
+    return { available: false, source: 'PORTFOLIO_DB', posts: [], reason: 'Portfolio content metadata is unavailable.' };
+  }
+}
+
+function catalogForPath(catalog, path) {
+  if (!catalog?.posts?.length) return null;
+  return catalog.posts.find((post) => (
+    path === '/blog/' + post.slug || path === post.canonical_path
+  )) ?? null;
+}
+
+function buildPagePerformance(rows, previousRows, catalog, previousAvailable = false) {
+  const pages = new Map();
+  const addRows = (sourceRows, destination) => {
+    for (const row of websiteRows(sourceRows)) {
+      const bucket = destination.get(row.path) ?? {
+        path: row.path,
+        views: 0,
+        sessions: new Set(),
+        visitors: createVisitorSketch(),
+        completions: 0,
+        progress_events: 0,
+        progress_total: 0,
+        active_ms: 0,
+      };
+      if (row.event_type === 'page_view') bucket.views += 1;
+      if (row.session_key) bucket.sessions.add(row.session_key);
+      if (row.visitor_key) addVisitorToSketch(bucket.visitors, row.visitor_key);
+      if (row.event_type === 'article_complete') bucket.completions += 1;
+      if (row.event_type === 'article_progress') {
+        bucket.progress_events += 1;
+        bucket.progress_total += row.progress ?? 0;
+      }
+      bucket.active_ms += row.active_ms ?? 0;
+      destination.set(row.path, bucket);
+    }
+  };
+  addRows(rows, pages);
+  const previous = new Map();
+  addRows(previousRows, previous);
+  const keys = new Set([...pages.keys(), ...previous.keys()]);
+  return [...keys]
+    .map((path) => {
+      const current = pages.get(path) ?? { path, views: 0, sessions: new Set(), visitors: createVisitorSketch(), completions: 0, progress_events: 0, progress_total: 0, active_ms: 0 };
+      const prior = previous.get(path) ?? null;
+      const metadata = catalogForPath(catalog, path);
+      return {
+        path,
+        title: metadata?.title ?? null,
+        category: metadata?.category_slug ? {
+          slug: metadata.category_slug,
+          name: metadata.category_name,
+        } : null,
+        views: current.views,
+        sessions: current.sessions.size,
+        unique_visitors: estimateSketch(current.visitors),
+        completions: current.completions,
+        progress_events: current.progress_events,
+        average_progress: current.progress_events
+          ? Math.round((current.progress_total / current.progress_events) * 100) / 100
+          : null,
+        active_ms: current.active_ms,
+        ...periodChange(current.views, previousAvailable ? (prior?.views ?? 0) : null),
+      };
+    })
+    .sort((left, right) => right.views - left.views || right.previous_count - left.previous_count || left.path.localeCompare(right.path))
+    .slice(0, 500);
+}
+
+function buildCategoryComparisons(rows, previousRows, catalog, previousAvailable = false) {
+  const build = (sourceRows) => {
+    const categories = new Map();
+    for (const row of websiteRows(sourceRows).filter((item) => item.path.startsWith('/blog/') || catalogForPath(catalog, item.path))) {
+      const metadata = catalogForPath(catalog, row.path);
+      const key = metadata?.category_slug ?? 'uncategorized';
+      const bucket = categories.get(key) ?? {
+        category_slug: key,
+        category_name: metadata?.category_name ?? 'Uncategorized',
+        views: 0,
+        completions: 0,
+        active_ms: 0,
+        progress_events: 0,
+        progress_total: 0,
+        sessions: new Set(),
+        visitors: createVisitorSketch(),
+      };
+      if (row.event_type === 'page_view') bucket.views += 1;
+      if (row.event_type === 'article_complete') bucket.completions += 1;
+      if (row.event_type === 'article_progress') {
+        bucket.progress_events += 1;
+        bucket.progress_total += row.progress ?? 0;
+      }
+      if (row.session_key) bucket.sessions.add(row.session_key);
+      if (row.visitor_key) addVisitorToSketch(bucket.visitors, row.visitor_key);
+      bucket.active_ms += row.active_ms ?? 0;
+      categories.set(key, bucket);
+    }
+    return categories;
+  };
+  const current = build(rows);
+  const previous = build(previousRows);
+  const keys = new Set([...current.keys(), ...previous.keys()]);
+  return [...keys]
+    .map((key) => {
+      const bucket = current.get(key) ?? {
+        category_slug: key,
+        category_name: previous.get(key)?.category_name ?? 'Uncategorized',
+        views: 0,
+        completions: 0,
+        active_ms: 0,
+        progress_events: 0,
+        progress_total: 0,
+        sessions: new Set(),
+        visitors: createVisitorSketch(),
+      };
+      const prior = previous.get(key) ?? null;
+      return {
+        category_slug: bucket.category_slug,
+        category_name: bucket.category_name,
+        views: bucket.views,
+        sessions: bucket.sessions.size,
+        unique_visitors: estimateSketch(bucket.visitors),
+        completions: bucket.completions,
+        progress_events: bucket.progress_events,
+        average_progress: bucket.progress_events
+          ? Math.round((bucket.progress_total / bucket.progress_events) * 100) / 100
+          : null,
+        active_ms: bucket.active_ms,
+        ...periodChange(bucket.views, previousAvailable ? (prior?.views ?? 0) : null),
+      };
+    })
+    .sort((left, right) => right.views - left.views || right.previous_count - left.previous_count || left.category_slug.localeCompare(right.category_slug));
+}
+
+function buildDailyPagePerformance(pathRows, previousPathRows, catalog, previousAvailable = false) {
+  return comparisonCountRows(dailyCountMap(pathRows), dailyCountMap(previousPathRows), 'path', previousAvailable)
+    .map((row) => {
+      const metadata = catalogForPath(catalog, row.path);
+      return {
+        path: row.path,
+        title: metadata?.title ?? null,
+        category: metadata?.category_slug ? {
+          slug: metadata.category_slug,
+          name: metadata.category_name,
+        } : null,
+        events: row.count,
+        views: null,
+        sessions: null,
+        unique_visitors: null,
+        completions: null,
+        progress_events: null,
+        average_progress: null,
+        active_ms: null,
+        previous_events: row.previous_count,
+        change: row.change,
+        change_percent: row.change_percent,
+        trend: row.trend,
+      };
+    });
+}
+
+function buildDailyCategoryComparisons(pathRows, previousPathRows, catalog, previousAvailable = false) {
+  const group = (rows) => {
+    const counts = new Map();
+    for (const row of rows) {
+      const metadata = catalogForPath(catalog, row.dimension_value);
+      const key = metadata?.category_slug ?? 'uncategorized';
+      const current = counts.get(key) ?? {
+        category_slug: key,
+        category_name: metadata?.category_name ?? 'Uncategorized',
+        count: 0,
+      };
+      current.count += Number(row.event_count ?? 0);
+      counts.set(key, current);
+    }
+    return counts;
+  };
+  const current = group(pathRows);
+  const previous = group(previousPathRows);
+  const keys = new Set(previousAvailable ? [...current.keys(), ...previous.keys()] : [...current.keys()]);
+  return [...keys]
+    .map((key) => {
+      const item = current.get(key) ?? {
+        category_slug: key,
+        category_name: previous.get(key)?.category_name ?? 'Uncategorized',
+        count: 0,
+      };
+      const prior = previousAvailable ? (previous.get(key)?.count ?? 0) : null;
+      return {
+        category_slug: item.category_slug,
+        category_name: item.category_name,
+        events: item.count,
+        previous_events: prior,
+        ...periodChange(item.count, prior),
+      };
+    })
+    .sort((left, right) => right.events - left.events || right.previous_events - left.previous_events || left.category_slug.localeCompare(right.category_slug));
 }
 
 function buildEngagement(rows) {
@@ -1776,9 +2151,12 @@ function summarizeDaily(rows) {
   const websiteVisitorSketch = createVisitorSketch();
   const shortlinkVisitorSketch = createVisitorSketch();
   const sessionSketch = createVisitorSketch();
+  const websiteSessionSketch = createVisitorSketch();
   let events = 0;
   let legacySessions = 0;
   let hasSessionSketch = false;
+  let hasWebsiteSessionSketch = false;
+  let legacyWebsiteSessions = 0;
   let hasWebsiteVisitors = false;
   let hasShortlinkVisitors = false;
   let activeMs = 0;
@@ -1798,11 +2176,18 @@ function summarizeDaily(rows) {
     if (row.has_session_sketch && sketchHasValues(row.session_sketch)) {
       hasSessionSketch = true;
       mergeVisitorSketch(sessionSketch, row.session_sketch);
+      if (row.source !== 'sink' && row.source !== 'legacy_page_event') {
+        hasWebsiteSessionSketch = true;
+        mergeVisitorSketch(websiteSessionSketch, row.session_sketch);
+      }
+    } else if (row.source !== 'sink' && row.source !== 'legacy_page_event') {
+      legacyWebsiteSessions += row.session_count;
     }
   }
   return {
     events,
     sessions: hasSessionSketch ? Math.round(estimateVisitorSketch(sessionSketch)) : legacySessions,
+    website_sessions: hasWebsiteSessionSketch ? Math.round(estimateVisitorSketch(websiteSessionSketch)) : legacyWebsiteSessions,
     active_ms: activeMs,
     unique_visitors: hasWebsiteVisitors ? Math.round(estimateVisitorSketch(websiteVisitorSketch)) : null,
     shortlink_unique_visitors: hasShortlinkVisitors
@@ -1897,31 +2282,17 @@ function dailySummaryBuckets(rows, eventRows = []) {
     }));
 }
 
-function goalsFromDaily(eventRows, denominatorSessions) {
-  const definitions = [
-    {
-      id: 'engagement',
-      label: 'Engagement',
-      types: new Set(['article_complete', 'media_complete', 'playground_open']),
-    },
-    {
-      id: 'career_contact',
-      label: 'Contact intent',
-      types: new Set(['contact_open', 'contact_interaction']),
-      sessionConversion: true,
-    },
-    {
-      id: 'shortlink_campaigns',
-      label: 'Shortlink campaigns',
-      source: 'sink',
-    },
-  ];
-  return definitions.map((definition) => {
-    const matching = eventRows.filter((row) => (
-      definition.source
-        ? row.source === definition.source
-        : definition.types.has(row.dimension_value)
-    ));
+function goalsFromDaily(eventRows, denominatorSessions, goalRows = []) {
+  return GOAL_DEFINITIONS.map((definition) => {
+    const specificGoalRows = goalRows.filter((row) => row.dimension_value === definition.id);
+    const matching = specificGoalRows.length
+      ? specificGoalRows
+      : eventRows.filter((row) => (
+        definition.source
+          ? row.source === definition.source
+          : definition.types?.has(row.dimension_value)
+      ));
+    const targetUnavailable = !!definition.targetHost && !specificGoalRows.length;
     const websiteVisitorSketch = createVisitorSketch();
     const shortlinkVisitorSketch = createVisitorSketch();
     let hasWebsiteVisitors = false;
@@ -1950,7 +2321,7 @@ function goalsFromDaily(eventRows, denominatorSessions) {
     const sessions = hasSessionSketch
       ? Math.round(estimateVisitorSketch(sessionSketch))
       : fallbackSessions;
-    const conversions = definition.sessionConversion ? sessions : eventCount;
+    const conversions = targetUnavailable ? null : (definition.sessionConversion ? sessions : eventCount);
     const websiteVisitors = hasWebsiteVisitors
       ? Math.round(estimateVisitorSketch(websiteVisitorSketch))
       : null;
@@ -1961,7 +2332,7 @@ function goalsFromDaily(eventRows, denominatorSessions) {
       id: definition.id,
       label: definition.label,
       conversions,
-      sessions,
+      sessions: targetUnavailable ? null : sessions,
       unique_visitors: websiteVisitors != null && shortlinkVisitors != null
         ? null
         : (websiteVisitors ?? shortlinkVisitors),
@@ -1978,13 +2349,18 @@ function goalsFromDaily(eventRows, denominatorSessions) {
       visitor_method: websiteVisitors != null && shortlinkVisitors != null
         ? 'Mixed sources; estimates are not combined'
         : (shortlinkVisitors != null || definition.source === 'sink' ? 'IP estimate' : 'Browser identifier'),
-      denominator_sessions: denominatorSessions,
-      conversion_rate: denominatorSessions ? conversions / denominatorSessions : null,
+      denominator_sessions: definition.source === 'sink' ? null : denominatorSessions,
+      denominator_clicks: definition.source === 'sink' ? eventCount : null,
+      denominator_label: definition.source === 'sink' ? 'shortlink_clicks' : 'website_sessions',
+      conversion_rate: targetUnavailable || definition.source === 'sink'
+        ? null
+        : (denominatorSessions ? conversions / denominatorSessions : null),
+      available: !targetUnavailable,
     };
   });
 }
 
-function summaryFromDaily(allRows, eventRows) {
+function summaryFromDaily(allRows, eventRows, goalRows = []) {
   const summary = summarizeDaily(allRows);
   return {
     ...summary,
@@ -1994,7 +2370,7 @@ function summaryFromDaily(allRows, eventRows) {
     article_completions: eventRows
       .filter((row) => row.dimension_value === 'article_complete')
       .reduce((sum, row) => sum + row.event_count, 0),
-    goals: goalsFromDaily(eventRows, summary.sessions),
+    goals: goalsFromDaily(eventRows, summary.website_sessions ?? summary.sessions, goalRows),
     daily: dailySummaryBuckets(allRows, eventRows),
   };
 }
@@ -2345,20 +2721,27 @@ async function reportData(route, db, range, env, now, url) {
     ? await queryEvents(db, range.from, range.to, includeBots)
     : [];
   let priorSummary = null;
+  let priorRows = [];
+  let priorPathRows = [];
   if (range.priorFrom >= rawCutoff) {
-    priorSummary = comparisonSummary(await queryEvents(db, range.priorFrom, range.priorTo, includeBots));
+    priorRows = await queryEvents(db, range.priorFrom, range.priorTo, includeBots);
+    priorSummary = comparisonSummary(priorRows);
   } else if (range.priorTo >= summaryCutoff) {
     const priorFrom = Math.max(range.priorFrom, summaryCutoff);
     const priorDaily = await queryDaily(db, priorFrom, range.priorTo);
     const priorEventDaily = await queryDaily(db, priorFrom, range.priorTo, 'event_type');
-    priorSummary = comparisonFromDaily(summaryFromDaily(priorDaily, priorEventDaily));
+    const priorGoalDaily = await queryDaily(db, priorFrom, range.priorTo, 'goal');
+    priorSummary = comparisonFromDaily(summaryFromDaily(priorDaily, priorEventDaily, priorGoalDaily));
+    priorPathRows = await queryDaily(db, priorFrom, range.priorTo, 'path');
   }
 
   if (!detailAvailable) {
     const availableFrom = Math.max(range.from, summaryCutoff);
     const daily = await queryDaily(db, availableFrom, range.to);
     const eventDaily = await queryDaily(db, availableFrom, range.to, 'event_type');
-    const summary = summaryFromDaily(daily, eventDaily);
+    const goalDaily = await queryDaily(db, availableFrom, range.to, 'goal');
+    const pathRows = await queryDaily(db, availableFrom, range.to, 'path');
+    const summary = summaryFromDaily(daily, eventDaily, goalDaily);
     const meta = reportMeta(range, daily, trackingStartedAt, now, {
       detail: 'daily_rollup',
       coverage: {
@@ -2379,20 +2762,41 @@ async function reportData(route, db, range, env, now, url) {
       };
     }
     if (route === 'traffic') {
-      const pathRows = await queryDaily(db, availableFrom, range.to, 'path');
       const campaignRows = await queryDaily(db, availableFrom, range.to, 'campaign');
+      const currentPaths = dailyCountMap(pathRows);
+      const previousPaths = dailyCountMap(priorPathRows);
       return {
         data: {
-          paths: pathRows.map((row) => ({
-            path: row.dimension_value,
-            count: row.event_count,
-          })),
+          paths: comparisonCountRows(currentPaths, previousPaths, 'path', Boolean(priorSummary)),
           referrers: [],
+          locations: [],
           campaigns: campaignRows.map((row) => ({
             campaign: row.dimension_value,
             count: row.event_count,
           })),
           daily: summary.daily,
+          landing_pages: [],
+          exit_pages: [],
+          devices: [],
+          browsers: [],
+          operating_systems: [],
+        },
+        meta,
+      };
+    }
+    if (route === 'content') {
+      const catalog = await loadPortfolioCatalog(env, now);
+      return {
+        data: {
+          content: [],
+          pages: buildDailyPagePerformance(pathRows, priorPathRows, catalog, Boolean(priorSummary)),
+          category_comparisons: buildDailyCategoryComparisons(pathRows, priorPathRows, catalog, Boolean(priorSummary)),
+          content_catalog: {
+            available: catalog.available,
+            source: catalog.source,
+            reason: catalog.reason ?? null,
+            detail: 'daily_rollup_path_events',
+          },
         },
         meta,
       };
@@ -2453,9 +2857,23 @@ async function reportData(route, db, range, env, now, url) {
     case 'overview':
       return { data: buildOverview(rows, range, now, priorSummary), meta };
     case 'traffic':
-      return { data: buildTraffic(rows), meta };
-    case 'content':
-      return { data: { content: buildContent(rows) }, meta };
+      return { data: buildTraffic(rows, priorRows, priorPathRows, Boolean(priorSummary)), meta };
+    case 'content': {
+      const catalog = await loadPortfolioCatalog(env, now);
+      return {
+        data: {
+          content: buildContent(rows),
+          pages: buildPagePerformance(rows, priorRows, catalog, Boolean(priorSummary)),
+          category_comparisons: buildCategoryComparisons(rows, priorRows, catalog, Boolean(priorSummary)),
+          content_catalog: {
+            available: catalog.available,
+            source: catalog.source,
+            reason: catalog.reason ?? null,
+          },
+        },
+        meta,
+      };
+    }
     case 'engagement':
       return { data: buildEngagement(rows), meta };
     case 'conversions':
@@ -2697,6 +3115,11 @@ function dailyAggregate(rows, aggregates = new Map()) {
     if (row.shortlink_slug) {
       add(row, 'shortlink', row.shortlink_slug);
     }
+    for (const definition of GOAL_DEFINITIONS) {
+      if (goalMatchesRow(row, definition)) {
+        add(row, 'goal', definition.id);
+      }
+    }
   }
   return aggregates;
 }
@@ -2729,7 +3152,7 @@ async function pruneAndRollup(db, now) {
   let cursorId = '';
   while (true) {
     const result = await db.prepare([
-      'SELECT event_id, event_type, path, active_ms, campaign_json, shortlink_slug,',
+      'SELECT event_id, event_type, path, target, active_ms, campaign_json, shortlink_slug,',
       '       source, event_at, session_key, visitor_key, is_bot',
       'FROM portfolio_analytics_events',
       'WHERE event_at >= ? AND event_at <= ?',

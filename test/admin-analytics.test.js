@@ -112,6 +112,38 @@ function environment(d1, extra = {}) {
   };
 }
 
+function insertAnalyticsEvent(database, {
+  id,
+  type,
+  path,
+  target = null,
+  referrer = null,
+  eventAt = now,
+  visitor = null,
+  session = null,
+  userAgent = null,
+  source = 'portfolio',
+}) {
+  database.prepare([
+    'INSERT INTO portfolio_analytics_events (',
+    'event_id, event_type, path, target, referrer, source, event_at, received_at,',
+    'visitor_key, session_key, user_agent, is_bot',
+    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+  ].join('\n')).run(
+    id,
+    type,
+    path,
+    target,
+    referrer,
+    source,
+    eventAt,
+    eventAt,
+    visitor,
+    session,
+    userAgent,
+  );
+}
+
 test('schema creates prefixed raw, daily, and state tables', () => {
   const { database } = createDatabase();
   try {
@@ -520,6 +552,170 @@ test('reports expose deterministic overview, content, conversions, realtime, and
     assert.equal(performanceData.data.cloudflare, null);
   } finally {
     database.close();
+  }
+});
+
+test('traffic adds trusted audience buckets, session landing and exit pages, and path period changes', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    insertAnalyticsEvent(database, {
+      id: 'traffic-home',
+      type: 'page_view',
+      path: '/',
+      visitor: 'visitor-1',
+      session: 'session-1',
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1',
+      eventAt: now - 10_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'traffic-linkedin',
+      type: 'outbound_click',
+      path: '/work',
+      target: 'https://www.linkedin.com/in/akmal',
+      visitor: 'visitor-1',
+      session: 'session-1',
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1',
+      eventAt: now - 9_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'traffic-blog',
+      type: 'page_view',
+      path: '/blog/hello',
+      visitor: 'visitor-2',
+      session: 'session-2',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/129.0.0.0 Safari/537.36',
+      eventAt: now - 8_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'traffic-download',
+      type: 'download_start',
+      path: '/resume',
+      target: '/assets/resume.pdf',
+      visitor: 'visitor-2',
+      session: 'session-2',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/129.0.0.0 Safari/537.36',
+      eventAt: now - 7_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'traffic-prior-home',
+      type: 'page_view',
+      path: '/',
+      visitor: 'visitor-old',
+      session: 'session-old',
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0',
+      eventAt: now - 25 * 60 * 60 * 1000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'traffic-prior-old',
+      type: 'page_view',
+      path: '/old',
+      visitor: 'visitor-old',
+      session: 'session-old',
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0',
+      eventAt: now - 25 * 60 * 60 * 1000 + 1,
+    });
+
+    const response = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/traffic?range=24h'),
+      environment(d1),
+    );
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(result.data.devices.find((item) => item.device === 'mobile').count, 2);
+    assert.equal(result.data.browsers.find((item) => item.browser === 'Chrome').count, 2);
+    assert.equal(result.data.operating_systems.find((item) => item.operating_system === 'iOS').count, 2);
+    assert.equal(result.data.landing_pages.find((item) => item.path === '/')?.count, 1);
+    assert.equal(result.data.exit_pages.find((item) => item.path === '/blog/hello')?.count, 1);
+    assert.equal(result.data.paths.find((item) => item.path === '/')?.trend, 'flat');
+    assert.equal(result.data.paths.find((item) => item.path === '/old')?.trend, 'falling');
+    const linkedin = (await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/conversions?range=24h'),
+      environment(d1),
+    )).json();
+    const goals = (await linkedin).data.goals;
+    const linkedinGoal = goals.find((goal) => goal.id === 'linkedin');
+    const downloadGoal = goals.find((goal) => goal.id === 'download');
+    assert.equal(linkedinGoal.conversions, 1);
+    assert.equal(linkedinGoal.denominator_sessions, 2);
+    assert.equal(linkedinGoal.conversion_rate, 0.5);
+    assert.equal(downloadGoal.conversions, 1);
+    assert.equal(downloadGoal.denominator_label, 'website_sessions');
+  } finally {
+    database.close();
+  }
+});
+
+test('content report joins published portfolio metadata for page and category comparisons', async () => {
+  const { database, d1 } = createDatabase();
+  const catalogDatabase = new DatabaseSync(':memory:');
+  const catalog = new SQLiteD1(catalogDatabase);
+  catalogDatabase.exec([
+    'CREATE TABLE blog_categories (id TEXT PRIMARY KEY, slug TEXT, name TEXT);',
+    'CREATE TABLE blog_posts (slug TEXT PRIMARY KEY, title TEXT, canonical_path TEXT, category_id TEXT, status TEXT, published_at TEXT);',
+    "INSERT INTO blog_categories VALUES ('cat-ml', 'machine-learning', 'Machine Learning');",
+    "INSERT INTO blog_posts VALUES ('hello', 'Hello article', NULL, 'cat-ml', 'published', '2026-10-01T00:00:00.000Z');",
+  ].join('\n'));
+  try {
+    insertAnalyticsEvent(database, {
+      id: 'content-view',
+      type: 'page_view',
+      path: '/blog/hello',
+      visitor: 'visitor-content',
+      session: 'session-content',
+      eventAt: now - 8_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'content-progress',
+      type: 'article_progress',
+      path: '/blog/hello',
+      visitor: 'visitor-content',
+      session: 'session-content',
+      eventAt: now - 7_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'content-complete',
+      type: 'article_complete',
+      path: '/blog/hello',
+      visitor: 'visitor-content',
+      session: 'session-content',
+      eventAt: now - 6_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'content-about',
+      type: 'page_view',
+      path: '/about',
+      visitor: 'visitor-about',
+      session: 'session-about',
+      eventAt: now - 5_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'content-prior',
+      type: 'page_view',
+      path: '/blog/hello',
+      visitor: 'visitor-old',
+      session: 'session-old',
+      eventAt: now - 25 * 60 * 60 * 1000,
+    });
+
+    const response = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/content?range=24h'),
+      environment(d1, { PORTFOLIO_DB: catalog }),
+    );
+    const result = await response.json();
+    const page = result.data.pages.find((item) => item.path === '/blog/hello');
+    const category = result.data.category_comparisons.find((item) => item.category_slug === 'machine-learning');
+    assert.equal(response.status, 200);
+    assert.equal(result.data.content_catalog.available, true);
+    assert.equal(page.title, 'Hello article');
+    assert.equal(page.category.slug, 'machine-learning');
+    assert.equal(page.views, 1);
+    assert.equal(page.previous_count, 1);
+    assert.equal(page.trend, 'flat');
+    assert.equal(category.views, 1);
+    assert.equal(category.completions, 1);
+  } finally {
+    database.close();
+    catalogDatabase.close();
   }
 });
 
