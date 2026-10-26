@@ -22,6 +22,12 @@ const EditorStyle = Extension.create({
           lineHeight: { default: null, parseHTML: (element: HTMLElement) => element.style.lineHeight || null, renderHTML: (attributes: { lineHeight?: string | null }) => attributes.lineHeight ? { style: `line-height:${attributes.lineHeight}` } : {} },
         },
       },
+      {
+        types: ['heading'],
+        attributes: {
+          id: { default: null, parseHTML: (element: HTMLElement) => element.getAttribute('id'), renderHTML: (attributes: { id?: string | null }) => attributes.id ? { id: attributes.id } : {} },
+        },
+      },
     ]
   },
 })

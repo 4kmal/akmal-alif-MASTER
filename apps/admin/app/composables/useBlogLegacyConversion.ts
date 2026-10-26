@@ -2,6 +2,8 @@ import type { JSONContent } from '@tiptap/vue-3'
 import type { LegacyConversionIssue, LegacyConversionResult } from '@/utils/blog-studio'
 
 const UNSUPPORTED_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form', 'canvas', 'svg'])
+const BLOCK_NODE_TYPES = new Set(['blockquote', 'codeBlock', 'heading', 'horizontalRule', 'orderedList', 'paragraph', 'table', 'bulletList', 'blogMedia'])
+const STRUCTURAL_TAGS = new Set(['address', 'aside', 'footer', 'header', 'main', 'nav'])
 
 function issueFor(issues: LegacyConversionIssue[], tag: string, message: string) {
   const existing = issues.find(issue => issue.tag === tag)
@@ -30,7 +32,7 @@ function convertElement(element: Element, issues: LegacyConversionIssue[]): JSON
       issueFor(issues, 'img', 'Image without a source was skipped.')
       return []
     }
-    return [{ type: 'blogMedia', attrs: { assetId: `legacy:${src}`, kind: 'image', src, alt: element.getAttribute('alt') ?? '', caption: '', width: 100, align: 'left' } }]
+    return [{ type: 'blogMedia', attrs: { assetId: element.getAttribute('data-asset-id') || `legacy:${src}`, kind: 'image', src, alt: element.getAttribute('alt') ?? '', caption: '', width: 100, align: 'left' } }]
   }
   if (tag === 'video') {
     const src = element.getAttribute('src') ?? element.querySelector('source')?.getAttribute('src') ?? ''
@@ -38,7 +40,7 @@ function convertElement(element: Element, issues: LegacyConversionIssue[]): JSON
       issueFor(issues, 'video', 'Video without a source was skipped.')
       return []
     }
-    return [{ type: 'blogMedia', attrs: { assetId: `legacy:${src}`, kind: 'video', src, alt: '', caption: '', width: 100, align: 'left' } }]
+    return [{ type: 'blogMedia', attrs: { assetId: element.getAttribute('data-asset-id') || `legacy:${src}`, kind: 'video', src, alt: '', caption: '', width: 100, align: 'left' } }]
   }
   const children = Array.from(element.childNodes).flatMap((child) => {
     if (child.nodeType === Node.TEXT_NODE) {
@@ -59,20 +61,39 @@ function convertElement(element: Element, issues: LegacyConversionIssue[]): JSON
   if (tag === 'p' || tag === 'div' || tag === 'section' || tag === 'article') {
     if (children.some(child => child.type === 'blogMedia'))
       return children
+    if (children.some(child => BLOCK_NODE_TYPES.has(child.type ?? ''))) {
+      issueFor(issues, 'structure', `Block content inside <${tag}> was flattened into separate editor blocks.`)
+      return children
+    }
     return [{ type: 'paragraph', content: children.length ? children : undefined }]
   }
-  if (/^h[1-6]$/.test(tag))
-    return [{ type: 'heading', attrs: { level: Number(tag.slice(1)) }, content: children.length ? children : undefined }]
+  if (/^h[1-6]$/.test(tag)) {
+    const attrs: Record<string, string | number> = { level: Number(tag.slice(1)) }
+    const id = element.getAttribute('id')
+    if (id)
+      attrs.id = id
+    return [{ type: 'heading', attrs, content: children.length ? children : undefined }]
+  }
   if (tag === 'blockquote')
     return [{ type: 'blockquote', content: [{ type: 'paragraph', content: children.length ? children : undefined }] }]
   if (tag === 'pre')
     return [{ type: 'codeBlock', content: [{ type: 'text', text: element.textContent ?? '' }] }]
   if (tag === 'table') {
-    const rows = Array.from(element.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr')).map((row) => {
-      const cells = Array.from(row.children).filter(cell => ['th', 'td'].includes(cell.tagName.toLowerCase())).map(cell => ({
-        type: cell.tagName.toLowerCase() === 'th' ? 'tableHeader' : 'tableCell',
-        content: [{ type: 'paragraph', content: [{ type: 'text', text: cell.textContent?.trim() ?? '' }] }],
-      }))
+    if (element.querySelector(':scope > caption, :scope > colgroup, :scope > tfoot, [rowspan], [colspan], table table'))
+      issueFor(issues, 'table', 'Table captions, spans, footers or nested tables are flattened before applying the conversion.')
+    const rows = Array.from(element.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr, :scope > tr')).map((row) => {
+      const cells = Array.from(row.children).filter(cell => ['th', 'td'].includes(cell.tagName.toLowerCase())).map((cell) => {
+        const converted = convertElement(cell, issues)
+        const blocks = converted.filter(child => BLOCK_NODE_TYPES.has(child.type ?? ''))
+        const inline = converted.filter(child => !BLOCK_NODE_TYPES.has(child.type ?? ''))
+        if (blocks.length && inline.length)
+          issueFor(issues, 'table', 'Mixed inline and block content in a table cell was flattened into block content.')
+        const content = blocks.length ? blocks : [{ type: 'paragraph', content: inline.length ? inline : undefined }]
+        return {
+          type: cell.tagName.toLowerCase() === 'th' ? 'tableHeader' : 'tableCell',
+          content,
+        }
+      })
       return { type: 'tableRow', content: cells }
     })
     if (rows.length)
@@ -82,7 +103,30 @@ function convertElement(element: Element, issues: LegacyConversionIssue[]): JSON
   }
   if (tag === 'ul' || tag === 'ol') {
     const type = tag === 'ol' ? 'orderedList' : 'bulletList'
-    const items = Array.from(element.children).filter(child => child.tagName.toLowerCase() === 'li').map(item => ({ type: 'listItem', content: [{ type: 'paragraph', content: convertElement(item, issues) }] }))
+    const items = Array.from(element.children).filter(child => child.tagName.toLowerCase() === 'li').map((item) => {
+      const converted = convertElement(item, issues)
+      const itemContent: JSONContent[] = []
+      let inline: JSONContent[] = []
+      for (const child of converted) {
+        const isList = child.type === 'bulletList' || child.type === 'orderedList'
+        const isBlock = BLOCK_NODE_TYPES.has(child.type ?? '')
+        if (isList || isBlock) {
+          if (inline.length) {
+            itemContent.push({ type: 'paragraph', content: inline })
+            inline = []
+          }
+          itemContent.push(child)
+        }
+        else {
+          inline.push(child)
+        }
+      }
+      if (inline.length)
+        itemContent.push({ type: 'paragraph', content: inline })
+      if (!itemContent.length || itemContent[0]?.type !== 'paragraph')
+        itemContent.unshift({ type: 'paragraph' })
+      return { type: 'listItem', content: itemContent }
+    })
     return [{ type, content: items }]
   }
   if (tag === 'li')
@@ -93,6 +137,10 @@ function convertElement(element: Element, issues: LegacyConversionIssue[]): JSON
   if (tag === 'strong' || tag === 'b' || tag === 'em' || tag === 'i' || tag === 'u' || tag === 's' || tag === 'del' || tag === 'sub' || tag === 'sup' || tag === 'mark') {
     const mark = tag === 'strong' || tag === 'b' ? 'bold' : tag === 'u' ? 'underline' : tag === 's' || tag === 'del' ? 'strike' : tag === 'sub' ? 'subscript' : tag === 'sup' ? 'superscript' : tag === 'mark' ? 'highlight' : 'italic'
     return children.map(child => ({ ...child, marks: [...(child.marks ?? []), { type: mark }] }))
+  }
+  if (STRUCTURAL_TAGS.has(tag)) {
+    issueFor(issues, 'structure', `<${tag}> is reduced to its content because the editor has no matching structural node.`)
+    return children
   }
   return children
 }

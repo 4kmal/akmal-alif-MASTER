@@ -31,6 +31,8 @@ const mediaAssets = ref<BlogAsset[]>([])
 const mediaLoading = ref(false)
 const selectedMediaAttrs = ref<BlogMediaAttrs | null>(null)
 const legacyReview = ref<LegacyConversionResult | null>(null)
+const legacyReviewOpen = ref(false)
+const legacyLocked = ref(false)
 const originalLegacyHtml = ref('')
 const staleReviewOpen = ref(false)
 const isPublishing = ref(false)
@@ -38,6 +40,7 @@ const statusNotice = ref('')
 const docxInput = ref<HTMLInputElement | null>(null)
 const docxReview = ref<BlogDocxImportReview | null>(null)
 const docxLoading = ref(false)
+let loadSequence = 0
 
 const autosave = useBlogAutosave(postId, draft, (saved) => {
   detail.value = saved
@@ -46,7 +49,7 @@ const autosave = useBlogAutosave(postId, draft, (saved) => {
 const editorState = useBlogEditor({
   content: { type: 'doc', content: [{ type: 'paragraph' }] },
   onUpdate(editor) {
-    if (!draft.value || loading.value)
+    if (!draft.value || loading.value || legacyLocked.value)
       return
     draft.value.content_json = editor.getJSON()
     draft.value.content_html = editor.getHTML()
@@ -86,32 +89,58 @@ function setDraftField<Key extends keyof BlogDraft>(key: Key, value: BlogDraft[K
   autosave.markChanged()
 }
 
+async function refreshRevisions() {
+  const requestedPostId = postId.value
+  const result = await api.listRevisions(requestedPostId)
+  if (requestedPostId === postId.value)
+    revisions.value = result.revisions
+}
+
 async function load() {
+  const requestedPostId = postId.value
+  const requestSequence = ++loadSequence
   loading.value = true
   error.value = ''
   try {
-    const [result, tax] = await Promise.all([api.getPost(postId.value), api.getTaxonomy()])
+    const [result, tax] = await Promise.all([api.getPost(requestedPostId), api.getTaxonomy()])
+    if (requestedPostId !== postId.value || requestSequence !== loadSequence)
+      return
     detail.value = result
     draft.value = result.draft
     taxonomy.value = tax
+    const isLegacy = result.draft.content_json === null
+    legacyLocked.value = isLegacy
+    originalLegacyHtml.value = isLegacy ? result.draft.content_html : ''
+    legacyReview.value = isLegacy ? convertLegacyHtmlToTiptap(result.draft.content_html) : null
+    legacyReviewOpen.value = Boolean(legacyReview.value)
     editor.value?.commands.setContent(result.draft.content_json ?? result.draft.content_html ?? { type: 'doc', content: [{ type: 'paragraph' }] }, { emitUpdate: false })
-    originalLegacyHtml.value = result.draft.content_json === null ? result.draft.content_html : ''
-    if (result.draft.content_json === null && result.draft.content_html)
-      legacyReview.value = convertLegacyHtmlToTiptap(result.draft.content_html)
+    editor.value?.setEditable(!isLegacy)
     refreshSelectedMedia()
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Could not load this post.'
+    if (requestedPostId === postId.value && requestSequence === loadSequence)
+      error.value = reason instanceof Error ? reason.message : 'Could not load this post.'
   }
   finally {
-    loading.value = false
+    if (requestSequence === loadSequence)
+      loading.value = false
   }
 }
 
 async function saveCheckpoint() {
-  const result = await autosave.checkpoint()
-  if (result)
+  error.value = ''
+  try {
+    const result = await autosave.checkpoint()
+    if (!result) {
+      error.value = autosave.lastError.value || 'Could not save the checkpoint.'
+      return
+    }
     statusNotice.value = `Checkpoint ${result.revision.version} saved`
+    await refreshRevisions()
+  }
+  catch (reason: unknown) {
+    error.value = reason instanceof Error ? reason.message : 'Could not save the checkpoint.'
+  }
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -127,20 +156,32 @@ function applyLegacyConversion() {
   editor.value?.commands.setContent(legacyReview.value.document, { emitUpdate: false })
   draft.value.content_json = legacyReview.value.document
   draft.value.content_html = editor.value?.getHTML() ?? draft.value.content_html
+  legacyLocked.value = false
+  editor.value?.setEditable(true)
+  legacyReviewOpen.value = false
   legacyReview.value = null
   statusNotice.value = 'Legacy content converted. Review before saving.'
   autosave.markChanged()
 }
 
 function keepOriginalLegacy() {
-  legacyReview.value = null
+  legacyReviewOpen.value = false
+  legacyLocked.value = true
+  editor.value?.setEditable(false)
+  draft.value.content_json = null
+  draft.value.content_html = originalLegacyHtml.value
   statusNotice.value = 'Original legacy HTML kept. Convert later from the review banner.'
+}
+
+function reopenLegacyReview() {
+  if (legacyReview.value)
+    legacyReviewOpen.value = true
 }
 
 async function reloadCurrent() {
   staleReviewOpen.value = false
+  autosave.resetForReload()
   await load()
-  autosave.state.value = 'saved'
 }
 
 function keepRecoveryCopy() {
@@ -159,15 +200,19 @@ async function publish() {
     return
   if (!window.confirm('Publish this version to the public portfolio?'))
     return
+  const publishingPostId = postId.value
   isPublishing.value = true
   try {
     const saved = await autosave.save()
-    if (!saved || autosave.state.value !== 'saved')
+    if (publishingPostId !== postId.value || !saved || autosave.state.value !== 'saved')
       return
-    const result = await api.publishPost(postId.value, draft.value.version)
+    const result = await api.publishPost(publishingPostId, saved.draft.version)
+    if (publishingPostId !== postId.value)
+      return
     detail.value = result
     draft.value = result.draft
     statusNotice.value = 'Published'
+    await refreshRevisions()
   }
   catch (reason: unknown) {
     if (isStaleDraftError(reason)) {
@@ -184,11 +229,27 @@ async function publish() {
 }
 
 async function updateStatus(status: 'draft' | 'archived') {
+  const updatingPostId = postId.value
   try {
-    const result = await api.setPostStatus(postId.value, status)
+    const saved = await autosave.save()
+    if (updatingPostId !== postId.value || !saved || autosave.state.value !== 'saved') {
+      error.value = autosave.lastError.value || 'Save the current draft before changing its status.'
+      return
+    }
+    const result = await api.setPostStatus(updatingPostId, status)
+    if (updatingPostId !== postId.value)
+      return
     detail.value = result
     draft.value = result.draft
+    const isLegacy = result.draft.content_json === null
+    legacyLocked.value = isLegacy
+    originalLegacyHtml.value = isLegacy ? result.draft.content_html : ''
+    legacyReview.value = isLegacy ? convertLegacyHtmlToTiptap(result.draft.content_html) : null
+    legacyReviewOpen.value = Boolean(legacyReview.value)
+    editor.value?.commands.setContent(result.draft.content_json ?? result.draft.content_html, { emitUpdate: false })
+    editor.value?.setEditable(!isLegacy)
     statusNotice.value = status === 'archived' ? 'Post archived' : 'Post restored to drafts'
+    await refreshRevisions()
   }
   catch (reason: unknown) {
     error.value = reason instanceof Error ? reason.message : 'Could not update post status.'
@@ -196,10 +257,19 @@ async function updateStatus(status: 'draft' | 'archived') {
 }
 
 async function openPreview() {
+  const previewPostId = postId.value
   previewLoading.value = true
   error.value = ''
   try {
-    previewHtml.value = await api.getPreview(postId.value)
+    const saved = await autosave.save()
+    if (previewPostId !== postId.value || !saved || autosave.state.value !== 'saved') {
+      error.value = autosave.lastError.value || 'Save the current draft before opening a preview.'
+      return
+    }
+    const html = await api.getPreview(previewPostId)
+    if (previewPostId !== postId.value)
+      return
+    previewHtml.value = html
     previewOpen.value = true
   }
   catch (reason: unknown) {
@@ -212,9 +282,9 @@ async function openPreview() {
 
 async function loadRevisions() {
   revisionsOpen.value = !revisionsOpen.value
-  if (revisionsOpen.value && !revisions.value.length) {
+  if (revisionsOpen.value) {
     try {
-      revisions.value = (await api.listRevisions(postId.value)).revisions
+      await refreshRevisions()
     }
     catch (reason: unknown) {
       error.value = reason instanceof Error ? reason.message : 'Could not load revisions.'
@@ -229,9 +299,16 @@ async function restore(revision: BlogRevision) {
     const result = await api.restoreRevision(postId.value, draft.value.version, revision.id)
     detail.value = result
     draft.value = result.draft
+    const isLegacy = result.draft.content_json === null
+    legacyLocked.value = isLegacy
+    originalLegacyHtml.value = isLegacy ? result.draft.content_html : ''
+    legacyReview.value = isLegacy ? convertLegacyHtmlToTiptap(result.draft.content_html) : null
+    legacyReviewOpen.value = Boolean(legacyReview.value)
     editor.value?.commands.setContent(result.draft.content_json ?? result.draft.content_html, { emitUpdate: false })
+    editor.value?.setEditable(!isLegacy)
     revisionsOpen.value = false
     statusNotice.value = 'Revision restored to the private draft'
+    await refreshRevisions()
   }
   catch (reason: unknown) {
     error.value = reason instanceof Error ? reason.message : 'Could not restore this revision.'
@@ -349,6 +426,10 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void load()
 })
+watch(postId, (value, previous) => {
+  if (value && value !== previous)
+    void load()
+})
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
@@ -405,6 +486,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </p>
     <p v-if="statusNotice" class="blog-alert blog-alert--notice" role="status">
       <Check :size="16" /> {{ statusNotice }}
+    </p>
+    <p v-if="legacyLocked" class="blog-alert blog-alert--notice" role="status">
+      <ShieldCheck :size="16" /> Legacy HTML is preserved and the writing surface is locked until you approve its conversion.
+      <button type="button" class="blog-text-button" @click="reopenLegacyReview">
+        Review conversion
+      </button>
     </p>
 
     <div v-if="loading" class="blog-state">
@@ -505,7 +592,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
     </template>
 
-    <div v-if="legacyReview" class="blog-modal-backdrop" role="presentation">
+    <div v-if="legacyReview && legacyReviewOpen" class="blog-modal-backdrop" role="presentation">
       <section class="blog-modal blog-modal--wide" role="dialog" aria-modal="true" aria-labelledby="legacy-title">
         <div class="blog-modal__header">
           <div>
