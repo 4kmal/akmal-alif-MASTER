@@ -18,11 +18,10 @@ export function useBlogDocuments(onAsset?: (asset: BlogAsset) => void) {
     let html = imported.html
     const assets: BlogAsset[] = []
     for (const image of imported.images) {
-      const task = await uploads.upload(new File([image.blob], `${image.placeholder}.bin`, { type: image.blob.type || 'application/octet-stream' }))
-      if (!task.asset)
-        continue
+      const task = await uploads.upload(new File([image.blob], `${image.placeholder}.bin`, { type: image.blob.type || 'image/png' }))
+      if (task.status !== 'complete' || !task.asset)
+        throw new Error(`DOCX image ${image.placeholder} could not be uploaded completely. Fix the upload and retry the import.`)
       assets.push(task.asset)
-      onAsset?.(task.asset)
       const escaped = image.placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       html = html.replace(new RegExp(escaped, 'g'), `<img src="${task.asset.source_url}" data-asset-id="${task.asset.id}" alt="${image.alt.replace(/"/g, '&quot;')}">`)
     }
