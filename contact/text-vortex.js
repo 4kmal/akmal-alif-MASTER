@@ -50,6 +50,7 @@ class TextVortexBackground {
         
         // Configure rendering settings
         this.setupRenderer();
+        this.setupThemeObserver();
         
         // Start animation
         this.animationBegin = null;
@@ -60,7 +61,8 @@ class TextVortexBackground {
         this.startAnimation();
         
         // Handle window resize
-        window.addEventListener('resize', () => this.handleResize());
+        this.resizeHandler = () => this.handleResize();
+        window.addEventListener('resize', this.resizeHandler);
         
         console.log(`✅ Canvas-based Text Vortex initialized - Target: ${this.targetFPS}fps`);
     }
@@ -125,12 +127,46 @@ class TextVortexBackground {
     setupRenderer() {
         // Configure canvas context for performance
         this.ctx.font = `${this.fontSize}px press-start, monospace`;
-        this.ctx.fillStyle = 'rgb(96,124,198)'; // Light blue text
+        this.updateThemePalette();
         this.ctx.textAlign = 'left';
         this.ctx.textBaseline = 'top';
         
         // Disable antialiasing for pixel-perfect rendering (performance boost)
         this.ctx.imageSmoothingEnabled = false;
+    }
+
+    readThemePalette() {
+        const value = getComputedStyle(this.root)
+            .getPropertyValue('--contact-vortex-rgb')
+            .split(',')
+            .map((channel) => Number.parseInt(channel.trim(), 10));
+
+        if (value.length === 3 && value.every((channel) => Number.isInteger(channel))) {
+            return value;
+        }
+
+        return document.documentElement.classList.contains('dark')
+            ? [126, 152, 220]
+            : [70, 88, 150];
+    }
+
+    updateThemePalette() {
+        this.vortexColor = this.readThemePalette();
+        if (this.ctx) {
+            this.ctx.fillStyle = `rgb(${this.vortexColor.join(',')})`;
+        }
+    }
+
+    setupThemeObserver() {
+        this.updateThemePalette();
+
+        if (typeof MutationObserver === 'undefined') return;
+
+        this.themeObserver = new MutationObserver(() => this.updateThemePalette());
+        this.themeObserver.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['class', 'data-theme']
+        });
     }
     
     getCharAt(x, y) {
@@ -221,8 +257,8 @@ class TextVortexBackground {
                 if (char !== ' ') {
                     // Add subtle color variation based on position
                     const colorVariation = Math.sin(time + x * 0.1 + y * 0.1) * 20;
-                    const blue = Math.max(100, Math.min(255, 198 + colorVariation));
-                    this.ctx.fillStyle = `rgb(96,124,${Math.floor(blue)})`;
+                    const blue = Math.max(0, Math.min(255, this.vortexColor[2] + colorVariation));
+                    this.ctx.fillStyle = `rgb(${this.vortexColor[0]},${this.vortexColor[1]},${Math.floor(blue)})`;
                     
                     this.ctx.fillText(char, pixelX, pixelY);
                 }
@@ -284,7 +320,10 @@ class TextVortexBackground {
         if (this.root && this.canvas) {
             this.root.removeChild(this.canvas);
         }
-        window.removeEventListener('resize', this.handleResize);
+        if (this.resizeHandler) {
+            window.removeEventListener('resize', this.resizeHandler);
+        }
+        this.themeObserver?.disconnect();
         console.log('🌀 Text Vortex destroyed');
     }
 }

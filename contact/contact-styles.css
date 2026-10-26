@@ -11,8 +11,8 @@
 
 body.contact-page {
     font-family: 'press-start', 'Inter', monospace !important;
-    background: rgb(9,3,44) !important; /* Animated background base color */
-    color: #00ff41 !important; /* Terminal green text */
+    background: var(--portfolio-page) !important;
+    color: var(--portfolio-text) !important;
     overflow: hidden !important;
     /* Ensure full viewport for centering */
     margin: 0 !important;
@@ -24,8 +24,8 @@ body.contact-page {
 
 /* Dark mode support for contact page */
 body.dark.contact-page {
-    background: #000000 !important;
-    color: #00ff41 !important;
+    background: var(--portfolio-page) !important;
+    color: var(--portfolio-text) !important;
 }
 
 /* Optimized Canvas-Based Text Vortex Background */
@@ -84,8 +84,6 @@ body.dark.contact-page {
     flex-direction: column;
     overflow: hidden;
     position: relative;
-    /* CRT filter effects */
-    filter: contrast(1.075) brightness(1.14) saturate(1.3);
     /* No margin needed - parent handles centering */
     backdrop-filter: blur(2px); /* Subtle blur effect for glassmorphism */
 }
@@ -973,5 +971,167 @@ body.dark .send-btn:disabled {
     
     .chat-input-wrapper:focus-within {
         border-width: 2px;
+    }
+}
+
+/* ========== PORTFOLIO THEME SURFACES ========== */
+body.contact-page {
+    --contact-surface: var(--portfolio-surface);
+    --contact-surface-soft: var(--portfolio-surface-soft);
+    --contact-surface-muted: var(--portfolio-surface-muted);
+    --contact-text: var(--portfolio-text);
+    --contact-text-muted: var(--portfolio-text-muted);
+    --contact-border: var(--portfolio-border-strong);
+    --contact-scanline: rgba(42, 42, 42, 0.055);
+    --contact-flicker: rgba(42, 42, 42, 0.08);
+    --contact-vortex-rgb: 70, 88, 150;
+    --contact-retro-accent: #00a63c;
+    --contact-retro-surface: #545454;
+    background: var(--portfolio-page) !important;
+    color: var(--contact-text) !important;
+}
+
+html.dark body.contact-page,
+body.dark.contact-page {
+    --contact-scanline: rgba(255, 255, 255, 0.045);
+    --contact-flicker: rgba(255, 255, 255, 0.06);
+    --contact-vortex-rgb: 126, 152, 220;
+    --contact-retro-accent: #00ff41;
+    --contact-retro-surface: #171717;
+}
+
+html body.contact-page,
+html.dark body.contact-page,
+body.dark.contact-page {
+    background: var(--portfolio-page) !important;
+    color: var(--contact-text) !important;
+}
+
+body.contact-page .contact-container {
+    background: var(--contact-surface);
+    border-color: var(--contact-border);
+    box-shadow: var(--portfolio-panel-shadow);
+    filter: none;
+}
+
+body.contact-page .chat-header,
+body.contact-page .chat-input-container {
+    background: var(--contact-surface);
+    border-color: var(--contact-border);
+}
+
+body.contact-page .chat-messages-container {
+    background-color: var(--contact-surface-soft);
+    background-image: linear-gradient(
+        to bottom,
+        transparent 50%,
+        var(--contact-scanline) 50%
+    );
+    background-size: 100% 4px;
+}
+
+body.contact-page .status-text,
+body.contact-page .contact-subtitle,
+body.contact-page .assistant-message .message-time,
+body.contact-page .chat-input::placeholder {
+    color: var(--contact-text-muted);
+}
+
+body.contact-page .assistant-message .message-content {
+    background: var(--contact-surface-muted);
+    border-color: var(--contact-border);
+    box-shadow: var(--portfolio-card-shadow);
+}
+
+body.contact-page .user-message .message-content {
+    background: var(--contact-retro-surface);
+    border-color: var(--contact-border);
+}
+
+body.contact-page .assistant-message .message-content p,
+body.contact-page .assistant-message .message-text {
+    color: var(--contact-text) !important;
+}
+
+body.contact-page .typing-dots span {
+    background: var(--contact-text-muted);
+}
+
+body.contact-page .chat-input-wrapper {
+    background: var(--contact-surface-soft);
+    border-color: var(--contact-border);
+}
+
+body.contact-page .attachment-btn,
+body.contact-page .image-btn,
+body.contact-page .voice-btn {
+    color: var(--contact-text-muted);
+}
+
+body.contact-page .attachment-btn:hover,
+body.contact-page .image-btn:hover,
+body.contact-page .voice-btn:hover {
+    background: var(--contact-surface-muted);
+    color: var(--contact-text);
+}
+
+body.contact-page .scroll-to-bottom {
+    background: var(--contact-surface-muted);
+    border-color: var(--contact-retro-accent);
+    color: var(--contact-retro-accent);
+    box-shadow: var(--portfolio-control-shadow);
+}
+
+body.contact-page .scroll-to-bottom:hover {
+    background: var(--contact-surface-muted);
+    box-shadow: var(--portfolio-control-shadow);
+}
+
+body.contact-page .send-btn {
+    background: var(--contact-retro-surface);
+    border-color: var(--contact-retro-accent);
+    color: var(--contact-retro-accent);
+}
+
+body.contact-page .send-btn:hover:not(:disabled) {
+    background: var(--contact-retro-surface);
+    border-color: var(--contact-retro-accent);
+    color: var(--contact-retro-accent);
+}
+
+body.contact-page .send-btn:disabled {
+    background: var(--contact-surface-muted);
+    border-color: var(--contact-border);
+    color: var(--contact-text-muted);
+    box-shadow: var(--portfolio-control-shadow);
+}
+
+/* Scramble spans inherit the themed bubble instead of replacing it with the parent surface. */
+body.contact-page .assistant-message .message-content,
+body.contact-page .user-message .message-content {
+    background: var(--contact-surface-muted) !important;
+    border-radius: inherit !important;
+    padding: inherit !important;
+    box-shadow: inherit !important;
+}
+
+body.contact-page .user-message .message-content {
+    background: var(--contact-retro-surface) !important;
+}
+
+body.contact-page .contact-container::after {
+    background: var(--contact-flicker);
+    animation: contact-flicker 4s steps(2, end) infinite;
+}
+
+@keyframes contact-flicker {
+    0%, 100% { opacity: 0; }
+    50% { opacity: 0.04; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.contact-page .contact-container::after {
+        animation: none;
+        opacity: 0;
     }
 }

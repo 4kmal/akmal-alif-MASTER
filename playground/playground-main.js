@@ -525,42 +525,16 @@ class Creative3DPlaygroundController {
     openVideoModal(tool) {
         // Create fullscreen video modal
         const modal = document.createElement('div');
-        modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: #000;
-            z-index: 10000; /* Above CRT effects */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-        `;
+        modal.className = 'playground-video-modal';
 
         const video = document.createElement('video');
-        video.style.cssText = `
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        `;
+        video.className = 'playground-video-modal__video';
         video.src = tool.link;
         video.controls = true;
         video.autoplay = true;
 
         const closeText = document.createElement('div');
-        closeText.style.cssText = `
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            color: white;
-            font-family: 'press-start', monospace;
-            font-size: 1rem;
-            z-index: 10001;
-            cursor: pointer;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-        `;
+        closeText.className = 'playground-video-modal__close';
         closeText.textContent = 'CLOSE [ESC]';
 
         modal.appendChild(video);
@@ -606,27 +580,11 @@ class Creative3DPlaygroundController {
 
     showComingSoonNotification() {
         const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) scale(0);
-            background: linear-gradient(45deg, #395CC9, #F45555);
-            padding: 30px;
-            border-radius: 15px;
-            color: white;
-            text-align: center;
-            z-index: 10000;
-            font-family: 'press-start', monospace;
-            font-size: 0.9rem;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-            transition: transform 0.3s ease;
-            max-width: 300px;
-        `;
+        notification.className = 'playground-coming-soon-notification';
         
         notification.innerHTML = `
-            <h3 style="margin: 0 0 15px 0;">🚀 COMING SOON</h3>
-            <p style="margin: 0; font-size: 0.7rem; line-height: 1.4;">
+            <h3>🚀 COMING SOON</h3>
+            <p>
                 This creative tool is under development.<br>
                 Stay tuned for updates!
             </p>

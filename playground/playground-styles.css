@@ -21,9 +21,22 @@
     --playground-yellow: #F4EB75;
     --playground-red: #F45555;
     --playground-blue: #395CC9;
-    --playground-bg: #000000;
-    --playground-text: #ffffff;
+    --playground-bg: var(--portfolio-page);
+    --playground-text: var(--portfolio-text);
     --playground-accent: #00ff41;
+    --playground-surface: var(--portfolio-surface);
+    --playground-surface-soft: var(--portfolio-surface-soft);
+    --playground-surface-muted: var(--portfolio-surface-muted);
+    --playground-border: var(--portfolio-border);
+    --playground-border-strong: var(--portfolio-border-strong);
+    --playground-muted: var(--portfolio-text-muted);
+    --playground-scanline: rgba(42, 42, 42, 0.055);
+    --playground-flicker: rgba(42, 42, 42, 0.08);
+}
+
+html.dark {
+    --playground-scanline: rgba(255, 255, 255, 0.045);
+    --playground-flicker: rgba(255, 255, 255, 0.06);
 }
 
 /* Body and Layout - Override existing styles for playground only */
@@ -980,4 +993,146 @@ body.dark .playground-tool-card {
 
 body.dark .playground-tool-card:hover {
     border-color: var(--playground-accent);
+}
+
+/* ========== PORTFOLIO THEME SURFACES ========== */
+body.playground-page {
+    --playground-bg: var(--portfolio-page);
+    --playground-text: var(--portfolio-text);
+    --playground-surface: var(--portfolio-surface);
+    --playground-surface-soft: var(--portfolio-surface-soft);
+    --playground-surface-muted: var(--portfolio-surface-muted);
+    --playground-border: var(--portfolio-border);
+    --playground-border-strong: var(--portfolio-border-strong);
+    --playground-muted: var(--portfolio-text-muted);
+    background: var(--playground-bg) !important;
+    color: var(--playground-text) !important;
+}
+
+body.playground-page .playground-home {
+    background: var(--playground-surface);
+    color: var(--playground-text);
+}
+
+body.playground-page .playground-info-title,
+body.playground-page .playground-info-description {
+    color: var(--playground-text);
+}
+
+body.playground-page .playground-info-description {
+    color: var(--playground-muted);
+}
+
+body.playground-page .playground-copyright {
+    border-top-color: var(--playground-border);
+}
+
+body.playground-page .playground-copyright-text {
+    color: var(--playground-muted);
+}
+
+body.playground-page .playground-tc {
+    color: var(--playground-muted);
+    opacity: 0.72;
+}
+
+body.playground-page .playground-launch-button {
+    color: var(--portfolio-accent-ink);
+    border: 1px solid var(--playground-border-strong);
+}
+
+/* Keep CRT texture as a quiet overlay above the portfolio surfaces. */
+body.playground-page .playground-wrapper.awge-tube-shape::before {
+    background:
+        linear-gradient(transparent 50%, var(--playground-scanline) 50%),
+        linear-gradient(90deg, rgba(255, 0, 0, 0.025), rgba(0, 255, 0, 0.015), rgba(0, 0, 255, 0.025));
+    background-size: 100% 4px, 3px 100%;
+    opacity: 0.45;
+}
+
+body.playground-page .playground-wrapper.awge-tube-shape::after {
+    background: var(--playground-flicker);
+    animation: playground-flicker 4s steps(2, end) infinite;
+}
+
+@keyframes playground-flicker {
+    0%, 100% { opacity: 0; }
+    50% { opacity: 0.04; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.playground-page .playground-wrapper.awge-tube-shape::before {
+        opacity: 0.22;
+    }
+
+    body.playground-page .playground-wrapper.awge-tube-shape::after {
+        animation: none;
+        opacity: 0;
+    }
+}
+
+/* Dynamic overlays use these classes so a live theme change updates them too. */
+.playground-video-modal {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    background: var(--playground-bg);
+    color: var(--playground-text);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.playground-video-modal__video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.playground-video-modal__close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 10001;
+    padding: 8px 10px;
+    border: 1px solid var(--playground-border-strong);
+    background: var(--playground-surface);
+    color: var(--playground-text);
+    font-family: 'press-start', monospace;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.playground-coming-soon-notification {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    max-width: 300px;
+    padding: 30px;
+    border: 2px solid var(--playground-blue);
+    border-radius: 15px;
+    background: var(--playground-surface);
+    color: var(--playground-text);
+    text-align: center;
+    z-index: 10000;
+    font-family: 'press-start', monospace;
+    font-size: 0.9rem;
+    box-shadow: var(--portfolio-panel-shadow);
+    transition: transform 0.3s ease;
+}
+
+.playground-coming-soon-notification h3 {
+    margin: 0 0 15px;
+    color: var(--playground-text);
+}
+
+.playground-coming-soon-notification p {
+    margin: 0;
+    color: var(--playground-muted);
+    font-size: 0.7rem;
+    line-height: 1.4;
 }
