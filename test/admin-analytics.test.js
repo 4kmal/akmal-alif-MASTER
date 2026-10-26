@@ -157,7 +157,7 @@ test('ingestion normalizes, trusts gateway metadata, deduplicates atomically, an
         id: 'evt-article',
         type: 'article_progress',
         path: '/blog/hello?session=discarded',
-        progress: 1.8,
+        progress: 101,
         active_ms: 65000,
       },
     ];
@@ -184,6 +184,8 @@ test('ingestion normalizes, trusts gateway metadata, deduplicates atomically, an
     ].join('\n')).all();
     assert.equal(stored.length, 2);
     const page = stored.find((row) => row.event_id === 'evt-page');
+    const article = stored.find((row) => row.event_id === 'evt-article');
+    assert.equal(article.progress, 100);
     assert.deepEqual({
       path: page.path,
       progress: page.progress,
@@ -275,6 +277,69 @@ test('ingestion rejects untrusted origins, gateway credentials, malformed metada
   }
 });
 
+test('uses the production DB binding alias and fails closed without identity signing', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(undefined, { DB: d1 });
+    delete env.NEWadminD1;
+    const accepted = await ingestEvents(request('/internal/events', [
+      { id: 'db-alias-event', type: 'page_view', path: '/' },
+    ]), env);
+    assert.equal(accepted.status, 200);
+    assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count, 1);
+
+    const missingSecret = { ...env };
+    delete missingSecret.ANALYTICS_ID_SECRET;
+    const rejected = await ingestEvents(request('/internal/events', [
+      { id: 'unsigned-event', type: 'page_view', path: '/' },
+    ]), missingSecret);
+    assert.equal(rejected.status, 503);
+    assert.deepEqual(await rejected.json(), {
+      error: 'Analytics identity signing is unavailable',
+      meta: {
+        source: 'portfolio_analytics',
+        coverage: {
+          unavailable: true,
+          identities_unavailable: true,
+        },
+      },
+    });
+    assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('preserves missing trusted coordinates as unknown values', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(d1);
+    const response = await ingestEvents(request('/internal/events', [
+      { id: 'missing-coordinates', type: 'page_view', path: '/' },
+    ], {
+      meta: {
+        ip: '203.0.113.8',
+        userAgent: 'Mozilla/5.0',
+        country: 'MY',
+        region: '10',
+        city: 'Kuala Lumpur',
+        timezone: 'Asia/Kuala_Lumpur',
+        latitude: null,
+        longitude: '',
+        colo: 'KUL',
+      },
+    }), env);
+    assert.equal(response.status, 200);
+    const row = database.prepare([
+      'SELECT latitude, longitude FROM portfolio_analytics_events',
+    ].join('\n')).get();
+    assert.equal(row.latitude, null);
+    assert.equal(row.longitude, null);
+  } finally {
+    database.close();
+  }
+});
+
 test('reports expose deterministic overview, content, conversions, realtime, and explicit performance availability', async () => {
   const { database, d1 } = createDatabase();
   try {
@@ -331,6 +396,143 @@ test('reports expose deterministic overview, content, conversions, realtime, and
   }
 });
 
+test('performance queries Workers and RUM with bounded Time ranges and source-specific coverage', async () => {
+  const { database, d1 } = createDatabase();
+  const calls = [];
+  try {
+    const env = environment(d1, {
+      CF_ANALYTICS_TOKEN: 'graphql-token',
+      CF_ACCOUNT_ID: 'account-tag',
+      CF_WEB_ANALYTICS_SITE_TAG: 'site-tag',
+      CF_ANALYTICS_QUERY: async (_url, options) => {
+        const payload = JSON.parse(options.body);
+        calls.push(payload);
+        if (payload.query.includes('PortfolioRumPerformance')) {
+          return Response.json({
+            data: {
+              viewer: {
+                accounts: [{
+                  rumWebVitalsEventsAdaptiveGroups: [{
+                    count: 4,
+                    dimensions: {
+                      datetime: '2026-10-26T10:00:00Z',
+                      siteTag: 'site-tag',
+                      requestHost: 'www.akmalalif.com',
+                      requestPath: '/',
+                    },
+                    avg: {
+                      firstContentfulPaint: 90000,
+                      timeToFirstByte: null,
+                    },
+                    quantiles: {
+                      largestContentfulPaintP75: 123456,
+                      interactionToNextPaintP75: 50000,
+                      cumulativeLayoutShiftP75: 0.07,
+                    },
+                  }],
+                }],
+              },
+            },
+          });
+        }
+        const scriptName = payload.variables.scriptName;
+        return Response.json({
+          data: {
+            viewer: {
+              accounts: [{
+                workersInvocationsAdaptive: [{
+                  sum: { requests: 10, errors: 1, subrequests: 3 },
+                  quantiles: { cpuTimeP50: 250, cpuTimeP99: 900 },
+                  dimensions: {
+                    datetime: '2026-10-26T10:00:00Z',
+                    scriptName,
+                    status: 'success',
+                  },
+                }],
+              }],
+            },
+          },
+        });
+      },
+    });
+    const response = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=90d'),
+      env,
+    );
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(calls.length, 3);
+    assert.equal(calls.every((call) => call.query.includes('Time!')), true);
+    assert.equal(calls.some((call) => call.query.includes('Date!')), false);
+    assert.equal(calls.every((call) => call.query.includes('accountTag: string!')), true);
+    assert.equal(calls.every((call) => call.variables.start === '2026-09-25T10:00:00.000Z'), true);
+    assert.equal(calls.filter((call) => call.query.includes('PortfolioWorkerPerformance')).every((call) => call.query.includes('scriptName')), true);
+    assert.equal(calls.some((call) => call.query.includes('siteTag: $siteTag')), true);
+    assert.equal(result.meta.coverage.unavailable, false);
+    assert.equal(result.meta.coverage.workers['akmalalif-portfolio'].available, true);
+    assert.equal(result.data.cloudflare.scripts['akmalalif-portfolio'].totals.requests, 10);
+    assert.equal(result.data.cloudflare.scripts['akmalalif-admin'].rows[0].cpu_time_us.p99, 900);
+    assert.equal(result.meta.coverage.rum_vitals.available, true);
+    assert.equal(result.data.rum_vitals.series[0].metrics.lcp_ms_p75, 123.456);
+    assert.equal(result.data.rum_vitals.series[0].metrics.inp_ms_p75, 50);
+    assert.equal(result.data.rum_vitals.series[0].metrics.cls_p75, 0.07);
+    assert.equal(result.data.rum_vitals.series[0].metrics.fcp_ms_avg, 90);
+    assert.equal(result.data.rum_vitals.series[0].metrics.ttfb_ms_avg, null);
+    assert.equal(result.data.rum_vitals.units.timings, 'milliseconds');
+
+    const partial = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      {
+        ...env,
+        CF_ANALYTICS_QUERY: async (_url, options) => {
+          const payload = JSON.parse(options.body);
+          if (payload.query.includes('PortfolioRumPerformance')) {
+            return Response.json({ errors: [{ message: 'RUM unavailable' }] });
+          }
+          return Response.json({
+            data: {
+              viewer: {
+                accounts: [{ workersInvocationsAdaptive: [] }],
+              },
+            },
+          });
+        },
+      },
+    );
+    const partialResult = await partial.json();
+    assert.equal(partialResult.meta.coverage.unavailable, false);
+    assert.equal(partialResult.meta.coverage.rum_vitals.unavailable, true);
+    assert.equal(partialResult.meta.coverage.workers['akmalalif-portfolio'].available, true);
+    assert.equal(partialResult.meta.coverage.workers['akmalalif-portfolio'].has_data, false);
+  } finally {
+    database.close();
+  }
+});
+
+test('performance query timeout marks every source unavailable without hanging', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(d1, {
+      CF_ANALYTICS_TOKEN: 'graphql-token',
+      CF_ACCOUNT_ID: 'account-tag',
+      CF_WEB_ANALYTICS_SITE_TAG: 'site-tag',
+      CF_ANALYTICS_TIMEOUT_MS: 1_000,
+      CF_ANALYTICS_QUERY: () => new Promise(() => {}),
+    });
+    const response = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      env,
+    );
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(result.meta.coverage.unavailable, true);
+    assert.match(result.meta.coverage.rum_vitals.reason, /timed out/);
+    assert.match(result.meta.coverage.workers['akmalalif-portfolio'].reason, /timed out/);
+  } finally {
+    database.close();
+  }
+});
+
 test('Sink events feed shortlink goals and remain source-labelled', async () => {
   const { database, d1 } = createDatabase();
   try {
@@ -358,13 +560,19 @@ test('Sink events feed shortlink goals and remain source-labelled', async () => 
     assert.equal(retryAgain.deduped, 1);
     assert.equal(retryAgain.event_id, retry.event_id);
 
+    const anonymous = await recordShortlinkEvent({ slug: 'anon', target: '/s/anon' }, env);
+    const anonymousAgain = await recordShortlinkEvent({ slug: 'anon', target: '/s/anon' }, env);
+    assert.equal(anonymous.accepted, 1);
+    assert.equal(anonymousAgain.accepted, 1);
+    assert.notEqual(anonymousAgain.event_id, anonymous.event_id);
+
     const response = await handleAnalyticsRequest(
       new Request('https://www.akmalalif.com/api/portfolio/conversions?range=24h'),
       env,
     );
     const result = await response.json();
-    assert.equal(result.data.shortlink_campaigns[0].slug, 'cv');
-    assert.equal(result.data.goals.find((goal) => goal.id === 'shortlink_campaigns').conversions, 2);
+    assert.equal(result.data.shortlink_campaigns.find((campaign) => campaign.slug === 'cv')?.slug, 'cv');
+    assert.equal(result.data.goals.find((goal) => goal.id === 'shortlink_campaigns').conversions, 4);
   } finally {
     database.close();
   }

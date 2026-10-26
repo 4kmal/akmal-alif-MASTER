@@ -9,6 +9,10 @@ const MAX_EVENTS = 20;
 const MAX_PATH_LENGTH = 512;
 const HLL_REGISTERS = 64;
 const HLL_ALPHA = 0.709;
+const MAX_PERFORMANCE_QUERY_MS = 31 * 24 * 60 * 60 * 1000;
+const DEFAULT_CF_QUERY_TIMEOUT_MS = 5_000;
+const PORTFOLIO_WORKER_SCRIPT = 'akmalalif-portfolio';
+const ADMIN_WORKER_SCRIPT = 'akmalalif-admin';
 const VISITOR_COOKIE = '__Host-portfolio-visitor';
 const SESSION_COOKIE = '__Host-portfolio-session';
 const VISITOR_COOKIE_MAX_AGE = 13 * 31 * 24 * 60 * 60;
@@ -70,7 +74,9 @@ const REPORT_EVENT_SELECT = [
 ].join('\n');
 
 function analyticsDb(env) {
-  return env?.NEWadminD1 ?? env?.ADMIN_DB ?? null;
+  // The standalone admin Worker binds the new D1 resource as DB. Keep the
+  // explicit names for local tests and service-bound callers.
+  return env?.NEWadminD1 ?? env?.newadminDB ?? env?.ADMIN_DB ?? env?.DB ?? null;
 }
 
 function jsonResponse(value, status = 200, extraHeaders = {}) {
@@ -135,6 +141,9 @@ function cleanText(value, limit) {
 }
 
 function finiteNumber(value, minimum, maximum) {
+  if (value == null || value === '') {
+    return null;
+  }
   const number = Number(value);
   if (!Number.isFinite(number)) {
     return null;
@@ -246,7 +255,7 @@ function normalizeBrowserEvent(value, index) {
     sourceEventType: type,
     path,
     target: normalizeTarget(value.target),
-    progress: finiteNumber(value.progress, 0, 1),
+    progress: finiteNumber(value.progress, 0, 100),
     activeMs: finiteInteger(value.active_ms, 0, 24 * 60 * 60 * 1000),
     mediaId: cleanText(value.media_id, 160),
     mediaKind: cleanText(value.media_kind, 80),
@@ -667,6 +676,16 @@ export async function ingestEvents(request, env = {}, ctx = null) {
   const db = analyticsDb(env);
   if (!db) {
     return errorResponse(503, 'Analytics database is unavailable');
+  }
+
+  if (!cleanText(env.ANALYTICS_ID_SECRET, 256)) {
+    return errorResponse(503, 'Analytics identity signing is unavailable', {
+      source: 'portfolio_analytics',
+      coverage: {
+        unavailable: true,
+        identities_unavailable: true,
+      },
+    });
   }
 
   const now = nowMs(env);
@@ -1298,106 +1317,306 @@ function summarizeDaily(rows) {
   };
 }
 
+function performanceQueryRange(range) {
+  const to = range.to;
+  return {
+    from: Math.max(range.from, to - MAX_PERFORMANCE_QUERY_MS),
+    to,
+  };
+}
+
+function isoRange(range) {
+  return {
+    from: new Date(range.from).toISOString(),
+    to: new Date(range.to).toISOString(),
+  };
+}
+
+function unavailableSource(reason) {
+  return {
+    available: false,
+    unavailable: true,
+    has_data: false,
+    reason,
+  };
+}
+
+function availableSource(hasData) {
+  return {
+    available: true,
+    unavailable: false,
+    has_data: hasData,
+  };
+}
+
+async function queryCloudflareGraphql(env, query, variables) {
+  const fetcher = env.CF_ANALYTICS_QUERY ?? globalThis.fetch;
+  if (typeof fetcher !== 'function') {
+    throw new Error('CF GraphQL query function is unavailable');
+  }
+
+  const timeoutValue = finiteInteger(env.CF_ANALYTICS_TIMEOUT_MS, 1_000, 10_000);
+  const timeoutMs = timeoutValue ?? DEFAULT_CF_QUERY_TIMEOUT_MS;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timeoutId = null;
+  const request = Promise.resolve()
+    .then(() => fetcher('https://api.cloudflare.com/client/v4/graphql', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + cleanText(env.CF_ANALYTICS_TOKEN, 512),
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ query, variables }),
+      ...(controller ? { signal: controller.signal } : {}),
+    }))
+    .then(async (response) => {
+      if (!response?.ok) {
+        throw new Error('CF GraphQL request failed');
+      }
+      const body = await response.json();
+      if (body?.errors?.length) {
+        throw new Error('CF GraphQL response contained errors');
+      }
+      return body?.data ?? null;
+    });
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller?.abort?.();
+      reject(new Error('CF GraphQL query timed out'));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([request, timeout]);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+  }
+}
+
+function numberOrNull(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function microsecondsToMilliseconds(value) {
+  const number = numberOrNull(value);
+  return number == null ? null : Math.round((number / 1_000) * 1000) / 1000;
+}
+
+function workerRows(data, scriptName) {
+  const account = data?.viewer?.accounts?.[0];
+  const rows = Array.isArray(account?.workersInvocationsAdaptive)
+    ? account.workersInvocationsAdaptive.slice(0, 1_000)
+    : [];
+  const series = rows.map((row) => ({
+    timestamp: row?.dimensions?.datetime ?? null,
+    status: row?.dimensions?.status ?? null,
+    requests: numberOrNull(row?.sum?.requests),
+    errors: numberOrNull(row?.sum?.errors),
+    subrequests: numberOrNull(row?.sum?.subrequests),
+    cpu_time_us: {
+      p50: numberOrNull(row?.quantiles?.cpuTimeP50),
+      p99: numberOrNull(row?.quantiles?.cpuTimeP99),
+    },
+  }));
+  return {
+    script_name: scriptName,
+    rows: series,
+    totals: {
+      requests: series.reduce((sum, row) => sum + (row.requests ?? 0), 0),
+      errors: series.reduce((sum, row) => sum + (row.errors ?? 0), 0),
+      subrequests: series.reduce((sum, row) => sum + (row.subrequests ?? 0), 0),
+    },
+  };
+}
+
+function rumRows(data, siteTag) {
+  const account = data?.viewer?.accounts?.[0];
+  const rows = Array.isArray(account?.rumWebVitalsEventsAdaptiveGroups)
+    ? account.rumWebVitalsEventsAdaptiveGroups.slice(0, 1_000)
+    : [];
+  const series = rows.map((row) => ({
+    samples: numberOrNull(row?.count) ?? 0,
+    dimensions: {
+      timestamp: row?.dimensions?.datetime ?? null,
+      site_tag: row?.dimensions?.siteTag ?? siteTag,
+      host: row?.dimensions?.requestHost ?? null,
+      path: row?.dimensions?.requestPath ?? null,
+    },
+    metrics: {
+      lcp_ms_p75: microsecondsToMilliseconds(row?.quantiles?.largestContentfulPaintP75),
+      inp_ms_p75: microsecondsToMilliseconds(row?.quantiles?.interactionToNextPaintP75),
+      cls_p75: numberOrNull(row?.quantiles?.cumulativeLayoutShiftP75),
+      fcp_ms_avg: microsecondsToMilliseconds(row?.avg?.firstContentfulPaint),
+      ttfb_ms_avg: microsecondsToMilliseconds(row?.avg?.timeToFirstByte),
+    },
+  }));
+  return {
+    site_tag: siteTag,
+    samples: series.reduce((sum, row) => sum + row.samples, 0),
+    units: {
+      timings: 'milliseconds',
+      cpu_time: 'microseconds',
+      cls: 'unitless',
+    },
+    series,
+  };
+}
+
 async function performanceReport(env, range) {
-  const unavailable = (reason) => ({
+  const requestedRange = isoRange(range);
+  const queryRange = performanceQueryRange(range);
+  const queryRangeMeta = isoRange(queryRange);
+  const token = cleanText(env.CF_ANALYTICS_TOKEN, 512);
+  const accountId = cleanText(env.CF_ACCOUNT_ID, 128);
+  const siteTag = cleanText(env.CF_WEB_ANALYTICS_SITE_TAG, 256);
+  const portfolioScript = cleanText(env.CF_PORTFOLIO_WORKER_NAME, 128) || PORTFOLIO_WORKER_SCRIPT;
+  const adminScript = cleanText(env.CF_ADMIN_WORKER_NAME, 128) || ADMIN_WORKER_SCRIPT;
+  const sourceMeta = {
+    source: 'cloudflare_graphql',
+    timezone: ANALYTICS_TIMEZONE,
+    range: requestedRange,
+    query_range: queryRangeMeta,
+  };
+
+  const unavailable = (workers, rum) => ({
     data: {
       cloudflare: null,
       rum_vitals: null,
     },
     meta: {
-      source: 'cloudflare_graphql',
-      timezone: ANALYTICS_TIMEZONE,
-      range: {
-        from: new Date(range.from).toISOString(),
-        to: new Date(range.to).toISOString(),
-      },
+      ...sourceMeta,
       coverage: {
         has_data: false,
         unavailable: true,
         stale: false,
+        workers,
+        rum_vitals: rum,
       },
-      reason,
     },
   });
 
-  const token = cleanText(env.CF_ANALYTICS_TOKEN, 512);
-  const accountId = cleanText(env.CF_ACCOUNT_ID, 128);
-  const siteTag = cleanText(env.CF_WEB_ANALYTICS_SITE_TAG, 256);
-  if (!token || !accountId || !siteTag) {
-    return unavailable('CF GraphQL performance credentials are unavailable');
+  if (!token || !accountId) {
+    return unavailable(
+      unavailableSource('CF GraphQL token or account ID is unavailable'),
+      unavailableSource('CF GraphQL token or account ID is unavailable'),
+    );
   }
 
-  const fetcher = env.CF_ANALYTICS_QUERY ?? globalThis.fetch;
-  if (typeof fetcher !== 'function') {
-    return unavailable('CF GraphQL query function is unavailable');
-  }
-
-  const query = [
-    'query PortfolioPerformance($account: String!, $from: Date!, $to: Date!) {',
+  const workerQuery = [
+    'query PortfolioWorkerPerformance($accountTag: string!, $start: Time!, $end: Time!, $scriptName: string!) {',
     '  viewer {',
-    '    accounts(filter: {accountTag: $account}) {',
+    '    accounts(filter: {accountTag: $accountTag}) {',
     '      workersInvocationsAdaptive(',
-    '        filter: {datetime_geq: $from, datetime_leq: $to}',
     '        limit: 1000',
+    '        filter: {scriptName: $scriptName, datetime_geq: $start, datetime_leq: $end}',
     '      ) {',
-    '        sum { requests errors cpuTimeUs }',
+    '        sum { requests errors subrequests }',
+    '        quantiles { cpuTimeP50 cpuTimeP99 }',
+    '        dimensions { datetime scriptName status }',
     '      }',
     '    }',
     '  }',
     '}',
   ].join('\n');
+  const rumQuery = [
+    'query PortfolioRumPerformance($accountTag: string!, $start: Time!, $end: Time!, $siteTag: string!) {',
+    '  viewer {',
+    '    accounts(filter: {accountTag: $accountTag}) {',
+    '      rumWebVitalsEventsAdaptiveGroups(',
+    '        limit: 1000',
+    '        filter: {siteTag: $siteTag, datetime_geq: $start, datetime_leq: $end}',
+    '      ) {',
+    '        count',
+    '        dimensions { datetime siteTag requestHost requestPath }',
+    '        avg { largestContentfulPaint interactionToNextPaint cumulativeLayoutShift firstContentfulPaint timeToFirstByte }',
+    '        quantiles { largestContentfulPaintP75 interactionToNextPaintP75 cumulativeLayoutShiftP75 }',
+    '      }',
+    '    }',
+    '  }',
+    '}',
+  ].join('\n');
+  const variables = {
+    accountTag: accountId,
+    start: queryRangeMeta.from,
+    end: queryRangeMeta.to,
+  };
 
-  try {
-    const result = await fetcher('https://api.cloudflare.com/client/v4/graphql', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query,
-        variables: {
-          account: accountId,
-          from: new Date(range.from).toISOString().slice(0, 10),
-          to: new Date(range.to).toISOString().slice(0, 10),
-        },
-      }),
-    });
-    if (!result?.ok) {
-      return unavailable('CF GraphQL performance request failed');
+  const queryWorker = async (scriptName) => {
+    try {
+      const data = await queryCloudflareGraphql(env, workerQuery, { ...variables, scriptName });
+      const value = workerRows(data, scriptName);
+      return {
+        value,
+        status: availableSource(value.rows.length > 0),
+      };
+    } catch (error) {
+      return {
+        value: null,
+        status: unavailableSource(error instanceof Error ? error.message : 'CF Workers metrics unavailable'),
+      };
     }
-    const body = await result.json();
-    if (body?.errors?.length) {
-      return unavailable('CF GraphQL performance data is unavailable');
-    }
+  };
 
-    return {
-      data: {
-        cloudflare: body?.data?.viewer?.accounts?.[0]?.workersInvocationsAdaptive ?? null,
-        rum_vitals: {
-          source: 'portfolio_analytics',
-          unavailable: true,
-          reason: 'RUM vital ingestion is not configured in this deployment',
-          site_tag: siteTag,
+  const [portfolio, admin, rum] = await Promise.all([
+    queryWorker(portfolioScript),
+    queryWorker(adminScript),
+    (async () => {
+      if (!siteTag) {
+        return {
+          value: null,
+          status: unavailableSource('CF Web Analytics site tag is unavailable'),
+        };
+      }
+      try {
+        const data = await queryCloudflareGraphql(env, rumQuery, { ...variables, siteTag });
+        const value = rumRows(data, siteTag);
+        return {
+          value,
+          status: availableSource(value.series.length > 0),
+        };
+      } catch (error) {
+        return {
+          value: null,
+          status: unavailableSource(error instanceof Error ? error.message : 'CF Web Analytics RUM unavailable'),
+        };
+      }
+    })(),
+  ]);
+
+  const workers = {
+    scripts: {
+      [portfolioScript]: portfolio.value,
+      [adminScript]: admin.value,
+    },
+    units: {
+      cpu_time: 'microseconds',
+    },
+  };
+  const hasData = portfolio.status.has_data || admin.status.has_data || rum.status.has_data;
+  return {
+    data: {
+      cloudflare: portfolio.value || admin.value ? workers : null,
+      rum_vitals: rum.value,
+    },
+    meta: {
+      ...sourceMeta,
+      coverage: {
+        has_data: hasData,
+        unavailable: !portfolio.status.available && !admin.status.available && !rum.status.available,
+        stale: false,
+        workers: {
+          [portfolioScript]: portfolio.status,
+          [adminScript]: admin.status,
         },
+        rum_vitals: rum.status,
       },
-      meta: {
-        source: 'cloudflare_graphql',
-        timezone: ANALYTICS_TIMEZONE,
-        range: {
-          from: new Date(range.from).toISOString(),
-          to: new Date(range.to).toISOString(),
-        },
-        coverage: {
-          has_data: Boolean(body?.data),
-          unavailable: false,
-          stale: false,
-        },
-      },
-    };
-  } catch {
-    return unavailable('CF GraphQL performance request failed');
-  }
+    },
+  };
 }
 
 async function reportData(route, db, range, env, now, url) {
@@ -1534,13 +1753,24 @@ export async function handleAnalyticsRequest(request, env = {}, ctx = null) {
 
 function stableSourceId(data) {
   const campaign = normalizeCampaign(data.campaign);
+  const sourceIdentity = [
+    data.request_id,
+    data.trace_id,
+    data.delivery_id,
+    data.occurred_at,
+    data.timestamp,
+    data.created_at,
+  ].map((value) => cleanText(value, 256)).find(Boolean);
+  if (!sourceIdentity) {
+    return 'sink:' + randomIdentifier();
+  }
   const fields = [
     data.slug ?? data.shortlink_slug,
     data.path,
     data.type ?? data.event_type,
     data.target,
     campaign ? JSON.stringify(campaign) : '',
-    data.occurred_at ?? data.timestamp ?? data.created_at,
+    sourceIdentity,
   ];
   return 'sink:' + fnv1a(fields.map((value) => String(value ?? '')).join('|')).toString(16);
 }
