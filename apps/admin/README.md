@@ -22,15 +22,20 @@ reserved for an explicitly configured local gateway.
 
 ## Local-only workflow
 
-Use the Nuxt server at `http://localhost:7466/admin` for the fastest local UI loop. Put
+Use the Nuxt server at `http://127.0.0.1:7466/admin` for the fastest local UI loop. Put
 these values in an untracked `apps/admin/.env.local` file and never reuse them in a
-deployment environment:
+deployment environment. Pass that file explicitly because Nuxt does not load this
+non-default filename for every command:
 
 ```dotenv
 ALLOW_LOCAL_ADMIN=true
-PORTFOLIO_ADMIN_ORIGIN=http://localhost:7466
-SHORTLINK_ORIGIN=http://localhost:7466
+PORTFOLIO_ADMIN_ORIGIN=http://127.0.0.1:7466
+SHORTLINK_ORIGIN=http://127.0.0.1:7466
 NUXT_PUBLIC_PREVIEW_MODE=false
+```
+
+```powershell
+pnpm dev --dotenv .env.local --host 127.0.0.1
 ```
 
 For a separate Worker-runtime check, build first and run the committed local-only

@@ -1,18 +1,6 @@
 import type { NitroFetchOptions, NitroFetchRequest } from 'nitropack'
+import { getAdminApiPath, isWebAdminHostname } from '@/utils/api-path'
 import { getAuthToken, removeAuthToken } from '@/utils/auth-token'
-
-function isWebAdminHost() {
-  if (!import.meta.client)
-    return false
-
-  const { public: publicConfig } = useRuntimeConfig()
-  try {
-    return window.location.hostname === new URL(publicConfig.adminOrigin).hostname
-  }
-  catch {
-    return window.location.hostname === 'www.akmalalif.com' || window.location.hostname === 'localhost'
-  }
-}
 
 type APIOptions = Omit<NitroFetchOptions<NitroFetchRequest>, 'headers'> & {
   headers?: Record<string, string>
@@ -21,10 +9,10 @@ type APIOptions = Omit<NitroFetchOptions<NitroFetchRequest>, 'headers'> & {
 export function useAPI<T = unknown>(api: string, options?: APIOptions): Promise<T>
 export async function useAPI(api: string, options?: APIOptions): Promise<unknown> {
   const { headers, ...fetchOptions } = options ?? {}
-  const isWebAdmin = isWebAdminHost()
-  const requestPath = isWebAdmin && api.startsWith('/api/') && !api.startsWith('/api/admin/')
-    ? `/api/admin/sink${api.slice('/api'.length)}`
-    : api
+  const publicConfig = useRuntimeConfig().public
+  const browserHostname = import.meta.client ? window.location.hostname : ''
+  const isWebAdmin = import.meta.client && isWebAdminHostname(browserHostname, publicConfig.adminOrigin)
+  const requestPath = getAdminApiPath(api, browserHostname, publicConfig.adminOrigin)
   const requestOptions: NitroFetchOptions<NitroFetchRequest> = {
     ...fetchOptions,
     // Keep API requests at the origin root; only browser assets and page

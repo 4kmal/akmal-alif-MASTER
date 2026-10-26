@@ -136,9 +136,9 @@ describe('admin authentication route boundaries', () => {
     origin = `http://127.0.0.1:${address.port}`
   }
 
-  async function requestAuth(headers: Record<string, string>) {
+  async function requestAuth(headers: Record<string, string>, path = '/api/portfolio/traffic', method = 'GET') {
     return await new Promise<{ status: number, headers: Record<string, string | string[] | undefined>, body: string }>((resolve, reject) => {
-      const request = httpRequest(`${origin}/api/portfolio/traffic`, { headers }, (response) => {
+      const request = httpRequest(`${origin}${path}`, { headers, method }, (response) => {
         const chunks: Buffer[] = []
         response.on('data', chunk => chunks.push(Buffer.from(chunk)))
         response.on('end', () => resolve({
@@ -175,5 +175,40 @@ describe('admin authentication route boundaries', () => {
     expect(response.status).toBe(401)
     expect(response.headers['www-authenticate']).toBe('Bearer')
     expect(response.body).toContain('Unauthorized')
+  })
+
+  it('allows local native Sink APIs only with the explicit bypass and same-origin writes', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      adminEmail: 'iamaleep@gmail.com',
+      portfolioAdminOrigin: origin,
+      portfolioGatewayToken: '',
+      shortlinkOrigin: origin,
+      siteToken: '',
+      allowLocalAdmin: true,
+      cfAccessTeamDomain: '',
+      cfAccessAud: '',
+    }))
+    await startAuthRoute()
+    const localHeaders = {
+      host: new URL(origin).host,
+      origin,
+    }
+
+    const read = await requestAuth(localHeaders, '/api/link/list')
+    expect(read.status).toBe(200)
+
+    const write = await requestAuth(localHeaders, '/api/link/create', 'POST')
+    expect(write.status).toBe(200)
+
+    const crossSite = await requestAuth({
+      ...localHeaders,
+      origin: 'https://evil.example',
+    }, '/api/link/create', 'POST')
+    expect(crossSite.status).toBe(403)
+
+    const missingOrigin = await requestAuth({
+      host: new URL(origin).host,
+    }, '/api/link/create', 'POST')
+    expect(missingOrigin.status).toBe(403)
   })
 })

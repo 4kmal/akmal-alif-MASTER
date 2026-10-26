@@ -1,3 +1,4 @@
+import type { H3Event } from 'h3'
 import { timingSafeEqual } from 'node:crypto'
 import { getRuntimeBoolean, getRuntimeString } from '../utils/runtime-config'
 
@@ -21,7 +22,7 @@ export default eventHandler(async (event) => {
   const shortlinkHost = hostnameFromOrigin(shortlinkOrigin)
   const isShortlinkHost = shortlinkHost && requestUrl.hostname === shortlinkHost
   const token = getHeader(event, 'Authorization')?.replace(/^Bearer\s+/, '')
-  const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(requestUrl.hostname)
+  const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(requestUrl.hostname)
 
   if (isAnalyticsIngest) {
     if (!gatewayAuthorized) {
@@ -56,7 +57,11 @@ export default eventHandler(async (event) => {
   // Local browser QA uses an explicit opt-in and never reaches a production
   // origin. Keep the local path useful without putting a bearer token in the
   // dashboard bundle or localStorage.
-  if (isLocal && allowLocalAdmin && (isOwnerOnlyRoute || event.path === '/api/verify')) {
+  if (isLocal && allowLocalAdmin && event.path.startsWith('/api/')) {
+    if (!isLocalRequestAllowed(event, requestUrl)) {
+      throw createError({ status: 403, statusText: 'Local admin requests must use the same origin' })
+    }
+
     event.context.authMethod = 'local-admin'
     event.context.userID = 'root'
     event.context.userEmail = adminEmail || 'local-admin@localhost'
@@ -113,6 +118,17 @@ export default eventHandler(async (event) => {
     statusText: 'Unauthorized',
   })
 })
+
+function isLocalRequestAllowed(event: H3Event, requestUrl: URL): boolean {
+  if (getHeader(event, 'Sec-Fetch-Site') === 'cross-site')
+    return false
+
+  const origin = getHeader(event, 'Origin')
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(event.method))
+    return origin === requestUrl.origin
+
+  return !origin || origin === requestUrl.origin
+}
 
 function hostnameFromOrigin(origin: string): string {
   try {
