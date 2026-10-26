@@ -849,6 +849,61 @@ test('performance queries Workers and RUM with bounded string ranges and source-
   }
 });
 
+test('performance totals and quantiles use period aggregates even when the detailed series is limited', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(d1, {
+      CF_ANALYTICS_TOKEN: 'aggregate-test-token',
+      CF_ACCOUNT_ID: 'account-tag',
+      CF_WEB_ANALYTICS_SITE_TAG: 'site-tag',
+      CF_ANALYTICS_QUERY: async (_url, options) => {
+        const payload = JSON.parse(options.body);
+        if (payload.query.includes('PortfolioRumPerformance')) {
+          assert.match(payload.query, /rumPeriodTotals: rumWebVitalsEventsAdaptiveGroups/);
+          return Response.json({ data: { viewer: { accounts: [{
+            rumWebVitalsEventsAdaptiveGroups: Array.from({ length: 1000 }, () => ({
+              count: 1,
+              dimensions: { datetimeHour: '2026-10-26T09:00:00Z' },
+              quantiles: { largestContentfulPaintP75: 2500000 },
+            })),
+            rumPeriodTotals: [{
+              count: 20000,
+              quantiles: { largestContentfulPaintP75: 900000, interactionToNextPaintP75: 70000, cumulativeLayoutShiftP75: 0.04 },
+              avg: { firstContentfulPaint: 500000 },
+            }],
+          }] } } });
+        }
+        assert.match(payload.query, /workerPeriodTotals: workersInvocationsAdaptive/);
+        return Response.json({ data: { viewer: { accounts: [{
+          workersInvocationsAdaptive: Array.from({ length: 1000 }, () => ({
+            sum: { requests: 1, errors: 0, subrequests: 0 },
+            quantiles: { cpuTimeP99: 50 },
+            dimensions: { datetime: '2026-10-26T09:00:00Z' },
+          })),
+          workerPeriodTotals: [{
+            sum: { requests: 10000, errors: 12, subrequests: 3000 },
+            quantiles: { cpuTimeP50: 300, cpuTimeP99: 900 },
+          }],
+        }] } } });
+      },
+    });
+    const response = await handleAnalyticsRequest(new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'), env);
+    const result = await response.json();
+    const script = result.data.cloudflare.scripts['akmalalif-portfolio'];
+    assert.equal(script.totals.requests, 10000);
+    assert.equal(script.totals.errors, 12);
+    assert.equal(script.totals.cpu_time_us.p99, 900);
+    assert.equal(script.totals_complete, true);
+    assert.equal(script.series_truncated, true);
+    assert.equal(result.data.rum_vitals.samples, 20000);
+    assert.equal(result.data.rum_vitals.period_metrics.lcp_ms_p75, 900);
+    assert.equal(result.data.rum_vitals.period_metrics.inp_ms_p75, 70);
+    assert.equal(result.meta.coverage.series_truncated, true);
+  } finally {
+    database.close();
+  }
+});
+
 test('performance query timeout marks every source unavailable without hanging', async () => {
   const { database, d1 } = createDatabase();
   try {

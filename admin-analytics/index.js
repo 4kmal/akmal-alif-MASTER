@@ -2504,14 +2504,36 @@ function workerRows(data, scriptName) {
       p99: numberOrNull(row?.quantiles?.cpuTimeP99),
     },
   }));
+  const aggregateRows = Array.isArray(account?.workerPeriodTotals) ? account.workerPeriodTotals : null;
+  const aggregate = aggregateRows?.[0];
+  const totalsComplete = aggregateRows !== null || rows.length < 1_000;
+  const total = (name) => aggregateRows !== null
+    ? (numberOrNull(aggregate?.sum?.[name]) ?? 0)
+    : totalsComplete ? series.reduce((sum, row) => sum + (row[name] ?? 0), 0) : null;
   return {
     script_name: scriptName,
     rows: series,
+    series_truncated: rows.length >= 1_000,
+    totals_complete: totalsComplete,
     totals: {
-      requests: series.reduce((sum, row) => sum + (row.requests ?? 0), 0),
-      errors: series.reduce((sum, row) => sum + (row.errors ?? 0), 0),
-      subrequests: series.reduce((sum, row) => sum + (row.subrequests ?? 0), 0),
+      requests: total('requests'),
+      errors: total('errors'),
+      subrequests: total('subrequests'),
+      cpu_time_us: {
+        p50: numberOrNull(aggregate?.quantiles?.cpuTimeP50),
+        p99: numberOrNull(aggregate?.quantiles?.cpuTimeP99),
+      },
     },
+  };
+}
+
+function rumMetrics(row) {
+  return {
+    lcp_ms_p75: microsecondsToMilliseconds(row?.quantiles?.largestContentfulPaintP75),
+    inp_ms_p75: microsecondsToMilliseconds(row?.quantiles?.interactionToNextPaintP75),
+    cls_p75: numberOrNull(row?.quantiles?.cumulativeLayoutShiftP75),
+    fcp_ms_avg: microsecondsToMilliseconds(row?.avg?.firstContentfulPaint),
+    ttfb_ms_avg: microsecondsToMilliseconds(row?.avg?.timeToFirstByte),
   };
 }
 
@@ -2528,17 +2550,16 @@ function rumRows(data, siteTag) {
       host: row?.dimensions?.requestHost ?? null,
       path: row?.dimensions?.requestPath ?? null,
     },
-    metrics: {
-      lcp_ms_p75: microsecondsToMilliseconds(row?.quantiles?.largestContentfulPaintP75),
-      inp_ms_p75: microsecondsToMilliseconds(row?.quantiles?.interactionToNextPaintP75),
-      cls_p75: numberOrNull(row?.quantiles?.cumulativeLayoutShiftP75),
-      fcp_ms_avg: microsecondsToMilliseconds(row?.avg?.firstContentfulPaint),
-      ttfb_ms_avg: microsecondsToMilliseconds(row?.avg?.timeToFirstByte),
-    },
+    metrics: rumMetrics(row),
   }));
+  const aggregateRows = Array.isArray(account?.rumPeriodTotals) ? account.rumPeriodTotals : null;
   return {
     site_tag: siteTag,
-    samples: series.reduce((sum, row) => sum + row.samples, 0),
+    samples: aggregateRows !== null
+      ? (numberOrNull(aggregateRows[0]?.count) ?? 0)
+      : rows.length < 1_000 ? series.reduce((sum, row) => sum + row.samples, 0) : null,
+    period_metrics: aggregateRows?.length ? rumMetrics(aggregateRows[0]) : null,
+    series_truncated: rows.length >= 1_000,
     units: {
       timings: 'milliseconds',
       cpu_time: 'microseconds',
@@ -2600,6 +2621,13 @@ async function performanceReport(env, range) {
     '        quantiles { cpuTimeP50 cpuTimeP99 }',
     '        dimensions { datetime scriptName status }',
     '      }',
+    '      workerPeriodTotals: workersInvocationsAdaptive(',
+    '        limit: 1',
+    '        filter: {scriptName: $scriptName, datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd}',
+    '      ) {',
+    '        sum { requests errors subrequests }',
+    '        quantiles { cpuTimeP50 cpuTimeP99 }',
+    '      }',
     '    }',
     '  }',
     '}',
@@ -2615,6 +2643,14 @@ async function performanceReport(env, range) {
     '        count',
     '        dimensions { datetimeHour siteTag requestHost requestPath }',
     '        avg { largestContentfulPaint interactionToNextPaint cumulativeLayoutShift firstContentfulPaint timeToFirstByte }',
+    '        quantiles { largestContentfulPaintP75 interactionToNextPaintP75 cumulativeLayoutShiftP75 }',
+    '      }',
+    '      rumPeriodTotals: rumWebVitalsEventsAdaptiveGroups(',
+    '        limit: 1',
+    '        filter: {siteTag: $siteTag, datetime_geq: $datetimeStart, datetime_leq: $datetimeEnd}',
+    '      ) {',
+    '        count',
+    '        avg { firstContentfulPaint timeToFirstByte }',
     '        quantiles { largestContentfulPaintP75 interactionToNextPaintP75 cumulativeLayoutShiftP75 }',
     '      }',
     '    }',
@@ -2633,7 +2669,11 @@ async function performanceReport(env, range) {
       const value = workerRows(data, scriptName);
       return {
         value,
-        status: availableSource(value.rows.length > 0),
+        status: {
+          ...availableSource(value.rows.length > 0 || (value.totals.requests ?? 0) > 0),
+          series_truncated: value.series_truncated,
+          totals_complete: value.totals_complete,
+        },
       };
     } catch (error) {
       return {
@@ -2658,7 +2698,10 @@ async function performanceReport(env, range) {
         const value = rumRows(data, siteTag);
         return {
           value,
-          status: availableSource(value.series.length > 0),
+          status: {
+            ...availableSource(value.series.length > 0 || (value.samples ?? 0) > 0),
+            series_truncated: value.series_truncated,
+          },
         };
       } catch (error) {
         return {
@@ -2690,6 +2733,7 @@ async function performanceReport(env, range) {
         has_data: hasData,
         unavailable: !portfolio.status.available && !admin.status.available && !rum.status.available,
         stale: false,
+        series_truncated: portfolio.status.series_truncated || admin.status.series_truncated || rum.status.series_truncated || false,
         workers: {
           [portfolioScript]: portfolio.status,
           [adminScript]: admin.status,
