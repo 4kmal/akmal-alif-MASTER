@@ -958,6 +958,56 @@
   color: var(--foreground);
   text-align: left;
 }
+.blog-conflict-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+.blog-conflict-pane {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 0.8rem;
+  background: color-mix(in srgb, var(--muted) 42%, transparent);
+}
+.blog-conflict-pane h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.78rem;
+}
+.blog-conflict-meta {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0 0 0.7rem;
+  font-size: 0.7rem;
+}
+.blog-conflict-meta > div {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+.blog-conflict-meta dt {
+  color: var(--muted-foreground);
+}
+.blog-conflict-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.blog-conflict-content {
+  max-height: 15rem;
+  overflow: auto;
+  margin: 0;
+  border-radius: 8px;
+  padding: 0.7rem;
+  background: var(--background);
+  color: var(--foreground);
+  font: 0.7rem/1.5 'Departure Mono', monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .blog-picker-card img,
 .blog-picker-card__video {
   width: 100%;
@@ -1374,6 +1424,7 @@
   }
   .blog-setting-options,
   .blog-conversion-grid,
+  .blog-conflict-grid,
   .blog-range-grid {
     grid-template-columns: 1fr;
   }

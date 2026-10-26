@@ -10,7 +10,9 @@ import { useBlogAutosave } from '@/composables/useBlogAutosave'
 import { useBlogDocuments } from '@/composables/useBlogDocuments'
 import { useBlogEditor } from '@/composables/useBlogEditor'
 import { convertLegacyHtmlToTiptap } from '@/composables/useBlogLegacyConversion'
-import { createEmptyDraft, formatDate, isStaleDraftError } from '@/utils/blog-studio'
+import { preserveDraftEditsAfterServerSave, rebaseDraftOntoServer } from '@/composables/useBlogStudio'
+import { cloneDraft, createEmptyDraft, formatDate, isStaleDraftError } from '@/utils/blog-studio'
+import BlogModal from './BlogModal.vue'
 
 const route = useRoute()
 const api = useBlogApi()
@@ -35,12 +37,20 @@ const legacyReviewOpen = ref(false)
 const legacyLocked = ref(false)
 const originalLegacyHtml = ref('')
 const staleReviewOpen = ref(false)
+const staleServerDetail = ref<BlogPostDetail | null>(null)
+const staleServerLoading = ref(false)
+const staleServerError = ref('')
+const staleApplyLoading = ref(false)
+const staleLocalDraft = ref<BlogDraft | null>(null)
+const localRecoveryReviewAvailable = ref(false)
 const isPublishing = ref(false)
 const statusNotice = ref('')
 const docxInput = ref<HTMLInputElement | null>(null)
 const docxReview = ref<BlogDocxImportReview | null>(null)
 const docxLoading = ref(false)
 let loadSequence = 0
+let conflictRequestSequence = 0
+let editSequence = 0
 
 const autosave = useBlogAutosave(postId, draft, (saved) => {
   detail.value = saved
@@ -54,6 +64,9 @@ const editorState = useBlogEditor({
     draft.value.content_json = editor.getJSON()
     draft.value.content_html = editor.getHTML()
     autosave.markChanged()
+    editSequence += 1
+    if (autosave.state.value === 'stale' || staleReviewOpen.value || localRecoveryReviewAvailable.value)
+      staleLocalDraft.value = cloneDraft(draft.value)
     refreshSelectedMedia(editor)
   },
 })
@@ -74,6 +87,8 @@ const saveLabel = computed(() => {
     return 'Save failed'
   if (autosave.state.value === 'stale')
     return 'Review stale draft'
+  if (autosave.state.value === 'recovery')
+    return 'Recovery copy kept locally'
   if (autosave.state.value === 'unsaved')
     return 'Unsaved changes'
   return 'Saved privately'
@@ -87,6 +102,44 @@ function refreshSelectedMedia(instance: Editor | null = editor.value ?? null) {
 function setDraftField<Key extends keyof BlogDraft>(key: Key, value: BlogDraft[Key]) {
   draft.value[key] = value
   autosave.markChanged()
+  editSequence += 1
+  if (autosave.state.value === 'stale' || staleReviewOpen.value || localRecoveryReviewAvailable.value)
+    staleLocalDraft.value = cloneDraft(draft.value)
+}
+
+function collectDraftText(value: BlogDraft | null): string {
+  if (!value)
+    return ''
+  if (!value.content_json)
+    return value.content_html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+
+  const chunks: string[] = []
+  const visit = (node: unknown) => {
+    if (!node || typeof node !== 'object')
+      return
+    const candidate = node as { text?: unknown, content?: unknown }
+    if (typeof candidate.text === 'string')
+      chunks.push(candidate.text)
+    if (Array.isArray(candidate.content)) {
+      for (const child of candidate.content)
+        visit(child)
+      if (candidate.content.length)
+        chunks.push('\n')
+    }
+  }
+  visit(value.content_json)
+  return chunks.join('').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+function rememberLocalRecovery() {
+  if (draft.value && (!staleLocalDraft.value || autosave.state.value === 'stale' || autosave.state.value === 'recovery' || !localRecoveryReviewAvailable.value))
+    staleLocalDraft.value = cloneDraft(draft.value)
+}
+
+function syncEditorFromDraft(value: BlogDraft) {
+  editor.value?.commands.setContent(value.content_json ?? value.content_html ?? { type: 'doc', content: [{ type: 'paragraph' }] }, { emitUpdate: false })
+  editor.value?.setEditable(value.content_json !== null)
+  refreshSelectedMedia()
 }
 
 async function refreshRevisions() {
@@ -107,15 +160,22 @@ async function load() {
       return
     detail.value = result
     draft.value = result.draft
+    editSequence = 0
+    staleReviewOpen.value = false
+    staleServerDetail.value = null
+    staleServerError.value = ''
+    staleLocalDraft.value = null
     taxonomy.value = tax
     const isLegacy = result.draft.content_json === null
     legacyLocked.value = isLegacy
     originalLegacyHtml.value = isLegacy ? result.draft.content_html : ''
     legacyReview.value = isLegacy ? convertLegacyHtmlToTiptap(result.draft.content_html) : null
     legacyReviewOpen.value = Boolean(legacyReview.value)
-    editor.value?.commands.setContent(result.draft.content_json ?? result.draft.content_html ?? { type: 'doc', content: [{ type: 'paragraph' }] }, { emitUpdate: false })
-    editor.value?.setEditable(!isLegacy)
-    refreshSelectedMedia()
+    syncEditorFromDraft(result.draft)
+    const recovered = autosave.inspectRecovery()
+    localRecoveryReviewAvailable.value = Boolean(recovered)
+    if (recovered)
+      staleLocalDraft.value = recovered
   }
   catch (reason: unknown) {
     if (requestedPostId === postId.value && requestSequence === loadSequence)
@@ -179,20 +239,120 @@ function reopenLegacyReview() {
 }
 
 async function reloadCurrent() {
+  rememberLocalRecovery()
+  autosave.keepRecovery()
   staleReviewOpen.value = false
   autosave.resetForReload()
   await load()
+  localRecoveryReviewAvailable.value = Boolean(autosave.inspectRecovery())
+  statusNotice.value = localRecoveryReviewAvailable.value
+    ? 'Current server version loaded. Your recovery copy is still available for review.'
+    : 'Current server version loaded.'
 }
 
 function keepRecoveryCopy() {
+  rememberLocalRecovery()
   autosave.keepRecovery()
   staleReviewOpen.value = false
+  localRecoveryReviewAvailable.value = true
   statusNotice.value = 'Working copy kept locally. Reload the current version before merging.'
 }
 
+async function loadConflictServer() {
+  const requestedPostId = postId.value
+  const requestSequence = ++conflictRequestSequence
+  staleServerLoading.value = true
+  staleServerError.value = ''
+  try {
+    const result = await api.getPost(requestedPostId)
+    if (requestedPostId === postId.value && requestSequence === conflictRequestSequence)
+      staleServerDetail.value = result
+  }
+  catch (reason: unknown) {
+    if (requestedPostId === postId.value && requestSequence === conflictRequestSequence)
+      staleServerError.value = reason instanceof Error ? reason.message : 'Could not load the current server version.'
+  }
+  finally {
+    if (requestSequence === conflictRequestSequence)
+      staleServerLoading.value = false
+  }
+}
+
+function openConflictReview() {
+  rememberLocalRecovery()
+  staleReviewOpen.value = true
+  void loadConflictServer()
+}
+
+async function applyMyCopyToDraft() {
+  const requestedPostId = postId.value
+  const server = staleServerDetail.value
+  const local = staleLocalDraft.value ?? autosave.inspectRecovery() ?? draft.value
+  if (!server || !local || staleApplyLoading.value)
+    return
+
+  const editAtStart = editSequence
+  const localSnapshot = cloneDraft(local)
+  staleApplyLoading.value = true
+  staleServerError.value = ''
+  autosave.keepRecovery()
+  try {
+    const result = await api.saveDraft(requestedPostId, rebaseDraftOntoServer(localSnapshot, server.draft))
+    if (requestedPostId !== postId.value)
+      return
+
+    const changedDuringApply = editSequence !== editAtStart
+    autosave.resetForReload()
+    detail.value = result
+    if (changedDuringApply) {
+      const currentDraft = draft.value
+      if (currentDraft) {
+        draft.value = preserveDraftEditsAfterServerSave(currentDraft, result.draft, true)
+        detail.value = { ...result, draft: draft.value }
+      }
+      autosave.markChanged()
+      rememberLocalRecovery()
+      statusNotice.value = 'Your copy was applied. Newer edits remain unsaved and are queued privately.'
+    }
+    else {
+      draft.value = preserveDraftEditsAfterServerSave(localSnapshot, result.draft, false)
+      syncEditorFromDraft(result.draft)
+      autosave.discardRecovery()
+      staleLocalDraft.value = null
+      localRecoveryReviewAvailable.value = false
+      statusNotice.value = 'Your copy was applied to the private draft.'
+    }
+    staleReviewOpen.value = false
+    staleServerDetail.value = null
+  }
+  catch (reason: unknown) {
+    rememberLocalRecovery()
+    autosave.keepRecovery()
+    if (isStaleDraftError(reason)) {
+      autosave.state.value = 'stale'
+      autosave.lastError.value = 'The server changed again. Review the newest version before applying your copy.'
+      staleReviewOpen.value = true
+      await loadConflictServer()
+    }
+    else {
+      staleServerError.value = reason instanceof Error ? reason.message : 'Could not apply your copy. It remains available locally.'
+      staleReviewOpen.value = true
+    }
+  }
+  finally {
+    staleApplyLoading.value = false
+  }
+}
+
 watch(() => autosave.state.value, (value) => {
-  if (value === 'stale')
+  if (value === 'stale' || value === 'offline' || value === 'error' || value === 'recovery') {
+    rememberLocalRecovery()
+    localRecoveryReviewAvailable.value = true
+  }
+  if (value === 'stale') {
     staleReviewOpen.value = true
+    void loadConflictServer()
+  }
 })
 
 async function publish() {
@@ -217,7 +377,9 @@ async function publish() {
   catch (reason: unknown) {
     if (isStaleDraftError(reason)) {
       autosave.state.value = 'stale'
+      rememberLocalRecovery()
       staleReviewOpen.value = true
+      void loadConflictServer()
     }
     else {
       error.value = reason instanceof Error ? reason.message : 'Could not publish this post.'
@@ -493,6 +655,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         Review conversion
       </button>
     </p>
+    <p v-if="isStale && !staleReviewOpen" class="blog-alert blog-alert--error" role="alert">
+      <ShieldCheck :size="16" /> A newer private draft is available. Your local copy is preserved.
+      <button type="button" class="blog-text-button" @click="openConflictReview">
+        Review conflict
+      </button>
+    </p>
+    <p v-else-if="localRecoveryReviewAvailable && !staleReviewOpen" class="blog-alert blog-alert--notice" role="status">
+      <ShieldCheck :size="16" /> A local recovery copy is available for this draft.
+      <button type="button" class="blog-text-button" @click="openConflictReview">
+        Review recovery copy
+      </button>
+    </p>
 
     <div v-if="loading" class="blog-state">
       <LoaderCircle class="blog-spin" :size="23" /> Loading editor…
@@ -592,272 +766,286 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
     </template>
 
-    <div v-if="legacyReview && legacyReviewOpen" class="blog-modal-backdrop" role="presentation">
-      <section class="blog-modal blog-modal--wide" role="dialog" aria-modal="true" aria-labelledby="legacy-title">
-        <div class="blog-modal__header">
-          <div>
-            <p class="blog-eyebrow">
-              Legacy conversion review
-            </p><h2 id="legacy-title">
-              Review before applying
-            </h2>
-          </div><button
-            type="button" class="blog-icon-button" aria-label="Keep original HTML" @click="keepOriginalLegacy"
-          >
-            <X :size="18" />
-          </button>
-        </div>
-        <p class="blog-modal__intro">
-          The original HTML remains preserved as the source revision. This preview converts only supported structures into the standard editor document.
-        </p>
-        <div class="blog-conversion-grid">
-          <div>
-            <h3>Conversion report</h3><ul
-              v-if="legacyReview.issues.length" class="blog-issue-list"
-            >
-              <li v-for="issue in legacyReview.issues" :key="issue.tag">
-                <strong>&lt;{{ issue.tag }}&gt;</strong> ×{{ issue.count }} — {{ issue.message }}
-              </li>
-            </ul><p
-              v-else class="blog-empty-note"
-            >
-              No unsupported structures found.
-            </p>
-          </div><div>
-            <h3>Original source</h3><pre
-              class="blog-source-preview"
-            >{{ originalLegacyHtml }}</pre>
-          </div>
-        </div>
-        <div class="blog-modal__footer">
-          <button
-            type="button" class="blog-button" @click="keepOriginalLegacy"
-          >
-            Keep original for now
-          </button><button
-            type="button" class="blog-button blog-button--primary" @click="applyLegacyConversion"
-          >
-            Apply converted draft
-          </button>
-        </div>
-      </section>
-    </div>
-
-    <div v-if="staleReviewOpen" class="blog-modal-backdrop" role="presentation">
-      <section class="blog-modal" role="dialog" aria-modal="true" aria-labelledby="stale-title">
-        <div
-          class="blog-modal__header"
+    <BlogModal
+      v-if="legacyReview"
+      v-model:open="legacyReviewOpen"
+      title="Legacy conversion review"
+      description="Review the legacy HTML conversion before applying it to the private draft."
+      modal-class="blog-modal--wide"
+    >
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">
+            Legacy conversion review
+          </p><h2 id="legacy-title">
+            Review before applying
+          </h2>
+        </div><button
+          type="button" class="blog-icon-button" aria-label="Keep original HTML" @click="keepOriginalLegacy"
         >
-          <div>
-            <p
-              class="blog-eyebrow"
-            >
-              Concurrency check
-            </p><h2 id="stale-title">
-              A newer draft exists
-            </h2>
-          </div><X :size="19" aria-hidden="true" />
-        </div><p>Your draft was saved from another tab or device. Choose how to proceed so the newer server version is never overwritten silently.</p><div
-          class="blog-modal__footer"
-        >
-          <button
-            type="button" class="blog-button" @click="keepRecoveryCopy"
+          <X :size="18" />
+        </button>
+      </div>
+      <p class="blog-modal__intro">
+        The original HTML remains preserved as the source revision. This preview converts only supported structures into the standard editor document.
+      </p>
+      <div class="blog-conversion-grid">
+        <div>
+          <h3>Conversion report</h3><ul
+            v-if="legacyReview.issues.length" class="blog-issue-list"
           >
-            Keep my recovery copy
-          </button><button
-            type="button" class="blog-button blog-button--primary" @click="reloadCurrent"
+            <li v-for="issue in legacyReview.issues" :key="issue.tag">
+              <strong>&lt;{{ issue.tag }}&gt;</strong> ×{{ issue.count }} — {{ issue.message }}
+            </li>
+          </ul><p
+            v-else class="blog-empty-note"
           >
-            Review current version
-          </button>
+            No unsupported structures found.
+          </p>
+        </div><div>
+          <h3>Original source</h3><pre
+            class="blog-source-preview"
+          >{{ originalLegacyHtml }}</pre>
         </div>
-      </section>
-    </div>
+      </div>
+      <div class="blog-modal__footer">
+        <button
+          type="button" class="blog-button" @click="keepOriginalLegacy"
+        >
+          Keep original for now
+        </button><button
+          type="button" class="blog-button blog-button--primary" @click="applyLegacyConversion"
+        >
+          Apply converted draft
+        </button>
+      </div>
+    </BlogModal>
 
-    <div v-if="previewOpen" class="blog-modal-backdrop" role="presentation">
-      <section
-        class="blog-modal blog-modal--preview" role="dialog" aria-modal="true" aria-labelledby="preview-title"
+    <BlogModal
+      v-model:open="staleReviewOpen"
+      title="Draft conflict review"
+      description="Compare your private recovery copy with the latest server draft before applying it."
+    >
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">
+            Concurrency check
+          </p><h2 id="stale-title">
+            Review before applying
+          </h2>
+        </div><button type="button" class="blog-icon-button" aria-label="Keep recovery copy and close" @click="keepRecoveryCopy">
+          <X :size="18" />
+        </button>
+      </div>
+      <p class="blog-modal__intro">
+        Your private copy and the latest server draft are shown separately. Applying your copy uses the server version shown below and remains a private draft.
+      </p>
+      <div v-if="staleServerLoading" class="blog-state blog-state--small">
+        <LoaderCircle :size="18" class="blog-spin" /> Loading the latest server version…
+      </div>
+      <p v-else-if="staleServerError" class="blog-alert blog-alert--error" role="alert">
+        {{ staleServerError }} Your recovery copy remains available locally.
+      </p>
+      <div v-else-if="staleServerDetail" class="blog-conflict-grid">
+        <article class="blog-conflict-pane">
+          <h3>Your recovery copy</h3>
+          <dl class="blog-conflict-meta">
+            <div><dt>Title</dt><dd>{{ (staleLocalDraft ?? draft).title || 'Untitled' }}</dd></div>
+            <div><dt>Slug</dt><dd>{{ (staleLocalDraft ?? draft).slug || '—' }}</dd></div>
+            <div><dt>Local version</dt><dd>v{{ (staleLocalDraft ?? draft).version }}</dd></div>
+          </dl>
+          <pre class="blog-conflict-content">{{ collectDraftText(staleLocalDraft ?? draft) || '(empty document)' }}</pre>
+        </article>
+        <article class="blog-conflict-pane">
+          <h3>Latest server draft</h3>
+          <dl class="blog-conflict-meta">
+            <div><dt>Title</dt><dd>{{ staleServerDetail.draft.title || 'Untitled' }}</dd></div>
+            <div><dt>Slug</dt><dd>{{ staleServerDetail.draft.slug || '—' }}</dd></div>
+            <div><dt>Server version</dt><dd>v{{ staleServerDetail.draft.version }}</dd></div>
+          </dl>
+          <pre class="blog-conflict-content">{{ collectDraftText(staleServerDetail.draft) || '(empty document)' }}</pre>
+        </article>
+      </div>
+      <div class="blog-modal__footer">
+        <button type="button" class="blog-button" @click="keepRecoveryCopy">
+          Keep my copy locally
+        </button><button type="button" class="blog-button" :disabled="staleApplyLoading" @click="reloadCurrent">
+          Reload server version
+        </button><button type="button" class="blog-button blog-button--primary" :disabled="!staleServerDetail || staleServerLoading || staleApplyLoading" @click="applyMyCopyToDraft">
+          {{ staleApplyLoading ? 'Applying…' : 'Apply my copy to private draft' }}
+        </button>
+      </div>
+    </BlogModal>
+
+    <BlogModal v-model:open="previewOpen" title="Private preview" modal-class="blog-modal--preview">
+      <div
+        class="blog-modal__header"
+      >
+        <div>
+          <p
+            class="blog-eyebrow"
+          >
+            Private preview
+          </p><h2 id="preview-title">
+            Reader view
+          </h2>
+        </div><button
+          type="button" class="blog-icon-button" aria-label="Close preview" @click="previewOpen = false"
+        >
+          <X :size="18" />
+        </button>
+      </div><iframe
+        class="blog-preview-frame" :srcdoc="previewHtml" title="Private blog preview" sandbox="allow-same-origin"
+      />
+    </BlogModal>
+
+    <BlogModal v-model:open="revisionsOpen" title="Draft history">
+      <div
+        class="blog-modal__header"
+      >
+        <div>
+          <p
+            class="blog-eyebrow"
+          >
+            Draft history
+          </p><h2 id="revision-title">
+            Revisions
+          </h2>
+        </div><button
+          type="button" class="blog-icon-button" aria-label="Close revisions" @click="revisionsOpen = false"
+        >
+          <X :size="18" />
+        </button>
+      </div><div
+        v-if="!revisions.length" class="blog-empty-note"
+      >
+        No checkpoints yet. Ctrl+S creates one.
+      </div><div
+        v-else class="blog-revision-list"
       >
         <div
-          class="blog-modal__header"
+          v-for="revision in revisions" :key="revision.id" class="
+            blog-revision-row
+          "
         >
-          <div>
-            <p
-              class="blog-eyebrow"
-            >
-              Private preview
-            </p><h2 id="preview-title">
-              Reader view
-            </h2>
-          </div><button
-            type="button" class="blog-icon-button" aria-label="Close preview" @click="previewOpen = false"
+          <div><strong>v{{ revision.version }} · {{ revision.title || 'Untitled' }}</strong><span>{{ revision.kind ?? 'checkpoint' }} · {{ formatDate(revision.created_at) }}</span></div><button
+            type="button" class="blog-button blog-button--quiet" @click="restore(revision)"
           >
-            <X :size="18" />
+            <RotateCcw :size="15" /> Restore to draft
           </button>
-        </div><iframe
-          class="blog-preview-frame" :srcdoc="previewHtml" title="Private blog preview" sandbox="allow-same-origin"
-        />
-      </section>
-    </div>
+        </div>
+      </div>
+    </BlogModal>
 
-    <div v-if="revisionsOpen" class="blog-modal-backdrop" role="presentation">
-      <section
-        class="blog-modal" role="dialog" aria-modal="true" aria-labelledby="revision-title"
+    <BlogModal v-model:open="mediaDialogOpen" title="Media library" modal-class="blog-modal--wide">
+      <div
+        class="blog-modal__header"
       >
-        <div
-          class="blog-modal__header"
-        >
-          <div>
-            <p
-              class="blog-eyebrow"
-            >
-              Draft history
-            </p><h2 id="revision-title">
-              Revisions
-            </h2>
-          </div><button
-            type="button" class="blog-icon-button" aria-label="Close revisions" @click="revisionsOpen = false"
+        <div>
+          <p
+            class="blog-eyebrow"
           >
-            <X :size="18" />
-          </button>
-        </div><div
-          v-if="!revisions.length" class="blog-empty-note"
+            Insert
+          </p><h2 id="media-picker-title">
+            Media library
+          </h2>
+        </div><button
+          type="button" class="blog-icon-button" aria-label="Close media library" @click="mediaDialogOpen = false"
         >
-          No checkpoints yet. Ctrl+S creates one.
-        </div><div
-          v-else class="blog-revision-list"
+          <X :size="18" />
+        </button>
+      </div><div
+        v-if="mediaLoading" class="blog-state blog-state--small"
+      >
+        <LoaderCircle
+          :size="18" class="blog-spin"
+        /> Loading media…
+      </div><div
+        v-else-if="!mediaAssets.length" class="blog-empty-note"
+      >
+        No published or private media assets yet. Upload one in the media library.
+      </div><div
+        v-else class="blog-picker-grid"
+      >
+        <button
+          v-for="asset in mediaAssets" :key="asset.id" type="button" class="
+            blog-picker-card
+          " @click="insertAsset(asset)"
         >
-          <div
-            v-for="revision in revisions" :key="revision.id" class="
-              blog-revision-row
+          <img v-if="asset.kind !== 'video'" :src="asset.source_url" :alt="asset.name"><div
+            v-else class="blog-picker-card__video"
+          >
+            <Play :size="20" />
+          </div><strong>{{ asset.name }}</strong><span>{{ asset.kind }} · {{ asset.mime_type }}</span>
+        </button>
+      </div><div
+        class="blog-modal__footer"
+      >
+        <NuxtLink
+          to="/admin/blog/media" class="blog-button"
+        >
+          <ExternalLink :size="15" /> Open media library
+        </NuxtLink>
+      </div>
+    </BlogModal>
+    <BlogModal v-if="docxReview" :open="true" title="DOCX import review" modal-class="blog-modal--wide" @update:open="docxReview = null">
+      <div
+        class="blog-modal__header"
+      >
+        <div>
+          <p
+            class="blog-eyebrow"
+          >
+            DOCX import review
+          </p><h2 id="docx-title">
+            Review converted content
+          </h2>
+        </div><button
+          type="button" class="blog-icon-button" aria-label="Cancel DOCX import" @click="docxReview = null"
+        >
+          <X :size="18" />
+        </button>
+      </div><p
+        class="blog-modal__intro"
+      >
+        Images were uploaded as private immutable source assets. Apply only after checking the converted text and any reported lossy constructs.
+      </p><div
+        class="blog-conversion-grid"
+      >
+        <div>
+          <h3>Conversion report</h3><ul
+            v-if="docxReview.messages.length || docxReview.document.issues.length" class="
+              blog-issue-list
             "
           >
-            <div><strong>v{{ revision.version }} · {{ revision.title || 'Untitled' }}</strong><span>{{ revision.kind ?? 'checkpoint' }} · {{ formatDate(revision.created_at) }}</span></div><button
-              type="button" class="blog-button blog-button--quiet" @click="restore(revision)"
-            >
-              <RotateCcw :size="15" /> Restore to draft
-            </button>
-          </div>
+            <li v-for="message in docxReview.messages" :key="message">
+              {{ message }}
+            </li><li v-for="issue in docxReview.document.issues" :key="issue.tag">
+              <strong>&lt;{{ issue.tag }}&gt;</strong> ×{{ issue.count }} — {{ issue.message }}
+            </li>
+          </ul><p
+            v-else class="blog-empty-note"
+          >
+            No lossy constructs reported.
+          </p>
+        </div><div>
+          <h3>Converted HTML preview</h3><div
+            class="blog-source-preview" v-html="docxReview.html"
+          />
         </div>
-      </section>
-    </div>
-
-    <div v-if="mediaDialogOpen" class="blog-modal-backdrop" role="presentation">
-      <section
-        class="blog-modal blog-modal--wide" role="dialog" aria-modal="true" aria-labelledby="media-picker-title"
+      </div><div
+        class="blog-modal__footer"
       >
-        <div
-          class="blog-modal__header"
+        <button
+          type="button" class="blog-button" @click="docxReview = null"
         >
-          <div>
-            <p
-              class="blog-eyebrow"
-            >
-              Insert
-            </p><h2 id="media-picker-title">
-              Media library
-            </h2>
-          </div><button
-            type="button" class="blog-icon-button" aria-label="Close media library" @click="mediaDialogOpen = false"
-          >
-            <X :size="18" />
-          </button>
-        </div><div
-          v-if="mediaLoading" class="blog-state blog-state--small"
+          Keep current draft
+        </button><button
+          type="button" class="blog-button blog-button--primary" @click="applyDocxConversion"
         >
-          <LoaderCircle
-            :size="18" class="blog-spin"
-          /> Loading media…
-        </div><div
-          v-else-if="!mediaAssets.length" class="blog-empty-note"
-        >
-          No published or private media assets yet. Upload one in the media library.
-        </div><div
-          v-else class="blog-picker-grid"
-        >
-          <button
-            v-for="asset in mediaAssets" :key="asset.id" type="button" class="
-              blog-picker-card
-            " @click="insertAsset(asset)"
-          >
-            <img v-if="asset.kind !== 'video'" :src="asset.source_url" :alt="asset.name"><div
-              v-else class="blog-picker-card__video"
-            >
-              <Play :size="20" />
-            </div><strong>{{ asset.name }}</strong><span>{{ asset.kind }} · {{ asset.mime_type }}</span>
-          </button>
-        </div><div
-          class="blog-modal__footer"
-        >
-          <NuxtLink
-            to="/admin/blog/media" class="blog-button"
-          >
-            <ExternalLink :size="15" /> Open media library
-          </NuxtLink>
-        </div>
-      </section>
-    </div>
-    <div v-if="docxReview" class="blog-modal-backdrop" role="presentation">
-      <section
-        class="blog-modal blog-modal--wide" role="dialog" aria-modal="true" aria-labelledby="docx-title"
-      >
-        <div
-          class="blog-modal__header"
-        >
-          <div>
-            <p
-              class="blog-eyebrow"
-            >
-              DOCX import review
-            </p><h2 id="docx-title">
-              Review converted content
-            </h2>
-          </div><button
-            type="button" class="blog-icon-button" aria-label="Cancel DOCX import" @click="docxReview = null"
-          >
-            <X :size="18" />
-          </button>
-        </div><p
-          class="blog-modal__intro"
-        >
-          Images were uploaded as private immutable source assets. Apply only after checking the converted text and any reported lossy constructs.
-        </p><div
-          class="blog-conversion-grid"
-        >
-          <div>
-            <h3>Conversion report</h3><ul
-              v-if="docxReview.messages.length || docxReview.document.issues.length" class="
-                blog-issue-list
-              "
-            >
-              <li v-for="message in docxReview.messages" :key="message">
-                {{ message }}
-              </li><li v-for="issue in docxReview.document.issues" :key="issue.tag">
-                <strong>&lt;{{ issue.tag }}&gt;</strong> ×{{ issue.count }} — {{ issue.message }}
-              </li>
-            </ul><p
-              v-else class="blog-empty-note"
-            >
-              No lossy constructs reported.
-            </p>
-          </div><div>
-            <h3>Converted HTML preview</h3><div
-              class="blog-source-preview" v-html="docxReview.html"
-            />
-          </div>
-        </div><div
-          class="blog-modal__footer"
-        >
-          <button
-            type="button" class="blog-button" @click="docxReview = null"
-          >
-            Keep current draft
-          </button><button
-            type="button" class="blog-button blog-button--primary" @click="applyDocxConversion"
-          >
-            Apply converted draft
-          </button>
-        </div>
-      </section>
-    </div>
+          Apply converted draft
+        </button>
+      </div>
+    </BlogModal>
   </main>
 </template>

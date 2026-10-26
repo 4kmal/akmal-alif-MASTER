@@ -1,3 +1,4 @@
+import type { Mark, Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { Editor, JSONContent } from '@tiptap/vue-3'
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
@@ -10,6 +11,80 @@ import { TextStyleKit } from '@tiptap/extension-text-style'
 import StarterKit from '@tiptap/starter-kit'
 import { Extension, useEditor } from '@tiptap/vue-3'
 import { BlogMedia } from '@/utils/blog-media-extension'
+
+export interface BlogTextMatch {
+  from: number
+  to: number
+  text: string
+  marks: readonly Mark[]
+}
+
+/**
+ * Collect text using the document's real ProseMirror positions. Text nodes
+ * that only differ by marks are joined, while block boundaries and inline
+ * atoms remain separators so a search can never cross a table cell or
+ * paragraph accidentally.
+ */
+export function findBlogTextMatches(doc: ProseMirrorNode, query: string): BlogTextMatch[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  if (!normalizedQuery)
+    return []
+
+  const groups = new Map<string, Array<{ from: number, to: number, text: string, marks: readonly Mark[] }>>()
+  doc.descendants((node, pos) => {
+    if (!node.isText || !node.text)
+      return
+
+    const resolved = doc.resolve(pos)
+    const key = `${resolved.depth}:${resolved.start(resolved.depth)}:${resolved.parent.type.name}`
+    const group = groups.get(key) ?? []
+    group.push({ from: pos, to: pos + node.text.length, text: node.text, marks: node.marks })
+    groups.set(key, group)
+  })
+
+  const matches: BlogTextMatch[] = []
+  for (const slices of groups.values()) {
+    slices.sort((left, right) => left.from - right.from)
+    let searchable = ''
+    const characters: Array<{ from: number, to: number, marks: readonly Mark[] } | null> = []
+    let previous: { from: number, to: number } | undefined
+
+    for (const slice of slices) {
+      if (previous && previous.to !== slice.from) {
+        searchable += '\u0000'
+        characters.push(null)
+      }
+      for (let index = 0; index < slice.text.length; index += 1) {
+        searchable += slice.text[index]
+        characters.push({ from: slice.from + index, to: slice.from + index + 1, marks: slice.marks })
+      }
+      previous = slice
+    }
+
+    let offset = searchable.toLocaleLowerCase().indexOf(normalizedQuery)
+    while (offset >= 0) {
+      const first = characters[offset]
+      const last = characters[offset + normalizedQuery.length - 1]
+      if (first && last) {
+        matches.push({
+          from: first.from,
+          to: last.to,
+          text: searchable.slice(offset, offset + normalizedQuery.length),
+          marks: first.marks,
+        })
+      }
+      offset = searchable.toLocaleLowerCase().indexOf(normalizedQuery, offset + 1)
+    }
+  }
+
+  return matches.sort((left, right) => left.from - right.from)
+}
+
+export function findNextBlogTextMatch(matches: readonly BlogTextMatch[], selectionFrom: number, selectionTo: number): BlogTextMatch | null {
+  if (!matches.length)
+    return null
+  return matches.find(match => match.from >= selectionTo && match.from !== selectionFrom) ?? matches[0] ?? null
+}
 
 const EditorStyle = Extension.create({
   name: 'editorStyle',
@@ -112,20 +187,34 @@ export function useBlogEditor(options: BlogEditorOptions) {
     const instance = editor.value
     if (!instance || !query)
       return null
-    const text = instance.state.doc.textBetween(0, instance.state.doc.content.size, '\n', '\uFFFC')
-    const index = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase())
-    if (index < 0)
+    const matches = findBlogTextMatches(instance.state.doc, query)
+    const match = findNextBlogTextMatch(matches, instance.state.selection.from, instance.state.selection.to)
+    if (!match)
       return null
-    const from = Math.max(1, index + 1)
-    instance.chain().focus().setTextSelection({ from, to: from + query.length }).run()
-    return { from, to: from + query.length }
+    instance.chain().focus().setTextSelection({ from: match.from, to: match.to }).run()
+    return { from: match.from, to: match.to }
   }
 
   function replaceText(query: string, replacement: string) {
-    const match = findText(query)
-    if (!match || !editor.value)
+    const instance = editor.value
+    if (!instance || !query)
       return false
-    editor.value.chain().focus().insertContentAt(match, replacement).run()
+
+    const match = findNextBlogTextMatch(
+      findBlogTextMatches(instance.state.doc, query),
+      instance.state.selection.from,
+      instance.state.selection.to,
+    )
+    if (!match)
+      return false
+
+    instance.view.focus()
+    const transaction = instance.state.tr
+    if (replacement)
+      transaction.replaceWith(match.from, match.to, instance.state.schema.text(replacement, match.marks))
+    else
+      transaction.delete(match.from, match.to)
+    instance.view.dispatch(transaction)
     return true
   }
 

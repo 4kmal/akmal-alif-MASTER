@@ -1,7 +1,12 @@
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { Schema } from '@tiptap/pm/model'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { BLOG_EDITOR_COMMANDS } from '../app/composables/useBlogEditor'
+import { BLOG_RIBBON_TABS, moveBlogRibbonTab } from '../app/components/blog/blog-ribbon-state'
+import { BLOG_EDITOR_COMMANDS, findBlogTextMatches, findNextBlogTextMatch } from '../app/composables/useBlogEditor'
 import { convertLegacyHtmlToTiptap } from '../app/composables/useBlogLegacyConversion'
 import { BLOG_MEDIA_MAX_CONCURRENT_PARTS, BLOG_MEDIA_MAX_SOURCE_BYTES, BLOG_MEDIA_PART_SIZE, getMediaPartRanges } from '../app/composables/useBlogMediaUpload'
+import { preserveDraftEditsAfterServerSave, rebaseDraftOntoServer } from '../app/composables/useBlogStudio'
 import { cloneDraft, createEmptyDraft, formatBytes, isStaleDraftError } from '../app/utils/blog-studio'
 
 const autosaveApi = vi.hoisted(() => ({
@@ -116,6 +121,13 @@ describe('legacy conversion review', () => {
 })
 
 describe('editor command surface', () => {
+  it('keeps the posts index and editor as sibling Nuxt routes', () => {
+    const postsDir = resolve(process.cwd(), 'app/pages/admin/blog/posts')
+    expect(existsSync(resolve(postsDir, 'index.vue'))).toBe(true)
+    expect(existsSync(resolve(postsDir, '[id].vue'))).toBe(true)
+    expect(existsSync(resolve(postsDir, '../posts.vue'))).toBe(false)
+  })
+
   it('keeps ribbon actions mapped to standard editor commands', () => {
     expect(BLOG_EDITOR_COMMANDS).toEqual(expect.arrayContaining([
       'undo',
@@ -128,6 +140,71 @@ describe('editor command surface', () => {
       'setFontSize',
       'setLineHeight',
     ]))
+  })
+
+  it('maps find matches to actual ProseMirror positions across blocks, tables and marks', () => {
+    const schema = new Schema({
+      nodes: {
+        doc: { content: 'block+' },
+        paragraph: { content: 'inline*', group: 'block' },
+        table: { content: 'tableRow+', group: 'block' },
+        tableRow: { content: 'tableCell+' },
+        tableCell: { content: 'block+' },
+        text: { group: 'inline' },
+      },
+      marks: { bold: {} },
+    })
+    const doc = schema.nodeFromJSON({
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'prefix' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'NE' }, { type: 'text', marks: [{ type: 'bold' }], text: 'EDLE' }] },
+        { type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableCell', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'needle in a cell' }] }] }] }] },
+      ],
+    })
+
+    const matches = findBlogTextMatches(doc, 'needle')
+    expect(matches).toHaveLength(2)
+    expect(matches[0]).toMatchObject({ from: 9, to: 15, text: 'NEEDLE' })
+    expect(matches[0].from).not.toBe(8)
+    expect(matches[1].text).toBe('needle')
+    expect(matches[0].marks).toHaveLength(0)
+    expect(matches[1].from).toBeGreaterThan(matches[0].to)
+    expect(findBlogTextMatches(doc, 'EDLE')[0].marks[0]?.type.name).toBe('bold')
+
+    expect(findNextBlogTextMatch(matches, matches[0].from, matches[0].to)).toBe(matches[1])
+    expect(findNextBlogTextMatch(matches, matches[1].from, matches[1].to)).toBe(matches[0])
+  })
+
+  it('keeps ribbon tab navigation roving and wrapping', () => {
+    expect(BLOG_RIBBON_TABS).toEqual(['Home', 'Insert', 'Layout', 'Media', 'Review'])
+    expect(moveBlogRibbonTab(0, 'ArrowLeft')).toBe(4)
+    expect(moveBlogRibbonTab(4, 'ArrowRight')).toBe(0)
+    expect(moveBlogRibbonTab(2, 'Home')).toBe(0)
+    expect(moveBlogRibbonTab(2, 'End')).toBe(4)
+    expect(moveBlogRibbonTab(2, 'PageDown')).toBeNull()
+  })
+
+  it('rebases an explicit conflict apply onto the latest server CAS version', () => {
+    const local = createEmptyDraft()
+    local.version = 3
+    local.title = 'My recovery copy'
+    local.content_html = '<p>Local content</p>'
+    const server = { ...createEmptyDraft(), version: 8, updated_at: '2026-10-27T01:00:00.000Z', title: 'Server copy' }
+
+    const rebased = rebaseDraftOntoServer(local, server)
+    expect(rebased).toMatchObject({ version: 8, updated_at: server.updated_at, title: 'My recovery copy', content_html: '<p>Local content</p>' })
+    expect(local.version).toBe(3)
+
+    const newerLocal = { ...rebased, title: 'Edited while applying' }
+    expect(preserveDraftEditsAfterServerSave(newerLocal, { ...server, version: 9 }, true)).toMatchObject({
+      title: 'Edited while applying',
+      version: 9,
+    })
+    expect(preserveDraftEditsAfterServerSave(newerLocal, { ...server, version: 9 }, false)).toMatchObject({
+      title: 'Server copy',
+      version: 9,
+    })
   })
 })
 

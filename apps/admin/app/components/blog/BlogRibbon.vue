@@ -1,7 +1,9 @@
 <!-- eslint-disable no-alert -->
 <script setup lang="ts">
 import type { Editor } from '@tiptap/vue-3'
+import type { BlogRibbonTab } from './blog-ribbon-state'
 import { Bold, CheckSquare, Code2, Highlighter, ImagePlus, Italic, Link2, List, ListOrdered, Minus, Palette, Quote, Redo2, Search, Strikethrough, Subscript, Superscript, Table2, Type, Underline, Undo2 } from '@lucide/vue'
+import { BLOG_RIBBON_TABS, moveBlogRibbonTab } from './blog-ribbon-state'
 
 const props = defineProps<{
   editor: Editor | null
@@ -13,8 +15,9 @@ const emit = defineEmits<{
   insertMedia: []
 }>()
 
-const tabs = ['Home', 'Insert', 'Layout', 'Media', 'Review'] as const
-const activeTab = ref<(typeof tabs)[number]>('Home')
+const tabs = BLOG_RIBBON_TABS
+const activeTab = ref<BlogRibbonTab>('Home')
+const tabRefs = ref<Array<HTMLButtonElement | null>>([])
 const findQuery = ref('')
 const replaceQuery = ref('')
 const linkUrl = ref('')
@@ -68,26 +71,67 @@ function replace() {
   if (findQuery.value.trim())
     props.replaceText?.(findQuery.value.trim(), replaceQuery.value)
 }
+
+function tabId(tab: BlogRibbonTab) {
+  return `blog-ribbon-tab-${tab.toLocaleLowerCase()}`
+}
+
+function panelId(tab: BlogRibbonTab) {
+  return `blog-ribbon-panel-${tab.toLocaleLowerCase()}`
+}
+
+function tabAt(index: number): BlogRibbonTab {
+  return tabs[index] ?? tabs[0]
+}
+
+function setTabRef(index: number, element: unknown) {
+  tabRefs.value[index] = element as HTMLButtonElement | null
+}
+
+function activateTab(tab: BlogRibbonTab, focus = false) {
+  activeTab.value = tab
+  if (!focus)
+    return
+  nextTick(() => tabRefs.value[tabs.indexOf(tab)]?.focus())
+}
+
+function onTabKeydown(event: KeyboardEvent, index: number) {
+  const nextIndex = moveBlogRibbonTab(index, event.key)
+  if (nextIndex === null) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      activateTab(tabAt(index))
+    }
+    return
+  }
+  event.preventDefault()
+  activateTab(tabAt(nextIndex), true)
+}
 </script>
 
 <template>
   <section class="blog-ribbon" aria-label="Editor ribbon">
-    <div class="blog-ribbon__tabs" role="tablist" aria-label="Editor tools">
+    <div class="blog-ribbon__tabs" role="tablist" aria-label="Editor tools" aria-orientation="horizontal">
       <button
         v-for="tab in tabs"
         :key="tab"
+        :ref="setTabRef.bind(null, tabs.indexOf(tab))"
         type="button"
         class="blog-ribbon__tab"
         :class="{ 'is-active': activeTab === tab }"
         role="tab"
+        :id="tabId(tab)"
         :aria-selected="activeTab === tab"
-        @click="activeTab = tab"
+        :aria-controls="panelId(tab)"
+        :tabindex="activeTab === tab ? 0 : -1"
+        @click="activateTab(tab)"
+        @keydown="onTabKeydown($event, tabs.indexOf(tab))"
       >
         {{ tab }}
       </button>
     </div>
 
-    <div v-if="activeTab === 'Home'" class="blog-ribbon__body">
+    <div v-show="activeTab === 'Home'" :id="panelId('Home')" class="blog-ribbon__body" role="tabpanel" :aria-labelledby="tabId('Home')" :aria-hidden="activeTab !== 'Home'" tabindex="0">
       <div class="blog-ribbon__group">
         <button
           type="button" title="Undo (Ctrl+Z)" aria-label="Undo" class="
@@ -218,7 +262,7 @@ function replace() {
       </div>
     </div>
 
-    <div v-else-if="activeTab === 'Insert'" class="blog-ribbon__body">
+    <div v-show="activeTab === 'Insert'" :id="panelId('Insert')" class="blog-ribbon__body" role="tabpanel" :aria-labelledby="tabId('Insert')" :aria-hidden="activeTab !== 'Insert'" tabindex="0">
       <div class="blog-ribbon__group">
         <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertMedia')">
           <ImagePlus :size="16" /> Media
@@ -252,7 +296,7 @@ function replace() {
       </div>
     </div>
 
-    <div v-else-if="activeTab === 'Layout'" class="blog-ribbon__body">
+    <div v-show="activeTab === 'Layout'" :id="panelId('Layout')" class="blog-ribbon__body" role="tabpanel" :aria-labelledby="tabId('Layout')" :aria-hidden="activeTab !== 'Layout'" tabindex="0">
       <div class="blog-ribbon__group blog-ribbon__group--selects">
         <label class="sr-only" for="blog-line-height">Line spacing</label>
         <select id="blog-line-height" class="blog-tool-select" aria-label="Line spacing" @change="setLineHeight(($event.target as HTMLSelectElement).value)">
@@ -291,7 +335,7 @@ function replace() {
       </div>
     </div>
 
-    <div v-else-if="activeTab === 'Media'" class="blog-ribbon__body">
+    <div v-show="activeTab === 'Media'" :id="panelId('Media')" class="blog-ribbon__body" role="tabpanel" :aria-labelledby="tabId('Media')" :aria-hidden="activeTab !== 'Media'" tabindex="0">
       <div class="blog-ribbon__group">
         <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertMedia')">
           <ImagePlus :size="16" /> Insert media
@@ -300,13 +344,13 @@ function replace() {
       </div>
     </div>
 
-    <div v-else class="blog-ribbon__body blog-ribbon__body--review">
+    <div v-show="activeTab === 'Review'" :id="panelId('Review')" class="blog-ribbon__body blog-ribbon__body--review" role="tabpanel" :aria-labelledby="tabId('Review')" :aria-hidden="activeTab !== 'Review'" tabindex="0">
       <div class="blog-ribbon__group">
         <Search :size="16" aria-hidden="true" />
         <input v-model="findQuery" class="blog-inline-input" aria-label="Find text" placeholder="Find in document" @keydown.enter="find">
         <input v-model="replaceQuery" class="blog-inline-input" aria-label="Replace text" placeholder="Replace with">
         <button type="button" class="blog-tool blog-tool--wide" @click="find">
-          Find
+          Find next
         </button>
         <button type="button" class="blog-tool blog-tool--wide" @click="replace">
           Replace
