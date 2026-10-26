@@ -86,3 +86,24 @@ must never be included in the admin migration command.
 
 The Sink-derived code is adapted from [miantiao-me/Sink](https://github.com/miantiao-me/Sink)
 and remains under its AGPL-3.0-only license and notices in `LICENSE`.
+
+## Cloudflare Git builds
+
+Use the existing `4kmal/akmal-alif-MASTER` connection and production branch `main`.
+The admin build root is `apps/admin`, build command is `pnpm build`, and deploy
+command is `pnpm exec wrangler deploy`. Pin `NODE_VERSION=24.21.0` and
+`PNPM_VERSION=11.2.2` in Workers Builds. Its Wrangler configuration supplies the
+admin bindings, the `go.akmalalif.com` custom domain and the daily backup/retention
+schedule. Keep the admin Worker workers.dev and preview URLs disabled.
+
+For the first release, deploy and verify the admin Worker before enabling the
+portfolio gateway deployment. The portfolio keeps its existing root build and
+adds the `ADMIN` service binding. The two Workers share the encrypted
+`PORTFOLIO_GATEWAY_TOKEN`; the analytics identity key, machine API token and
+Cloudflare analytics read token remain encrypted admin runtime secrets.
+
+Verify the owner Access login on `www`, bearer-only API/MCP on `go`, fresh Sink
+storage initialization, public shortlink resolution, provider reports and cron
+registration. Save both Worker version IDs and the Git commit with private
+release evidence before replacing a working deployment. Restore the affected
+Worker's previous version if a material smoke-check regression appears.
