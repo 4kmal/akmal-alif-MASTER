@@ -220,6 +220,7 @@ test('text vortex updates its live palette and ignores callbacks after destroy',
 function createModalFixture() {
   const listeners = new Map();
   const body = { children: [], isConnected: true };
+  let cursorHideCalls = 0;
   const document = {
     body,
     activeElement: null,
@@ -232,6 +233,7 @@ function createModalFixture() {
         style: {},
         isConnected: false,
         parentNode: null,
+        open: false,
         focus() {
           document.activeElement = this;
         },
@@ -251,6 +253,7 @@ function createModalFixture() {
         },
         remove() {
           if (!this.isConnected) return;
+          this.open = false;
           this.isConnected = false;
           if (this.parentNode?.children) {
             this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
@@ -260,6 +263,12 @@ function createModalFixture() {
             child.isConnected = false;
             child.parentNode = null;
           });
+        },
+        showModal() {
+          this.open = true;
+        },
+        close() {
+          this.open = false;
         },
         pause() {},
       };
@@ -283,12 +292,30 @@ function createModalFixture() {
     body.children.push(child);
   };
 
-  const sandbox = { document, console: { log() {}, warn() {}, error() {} } };
+  const sandbox = {
+    document,
+    window: {
+      customCursor: {
+        hideCursor() {
+          cursorHideCalls += 1;
+        },
+      },
+    },
+    console: { log() {}, warn() {}, error() {} },
+  };
   vm.runInNewContext(playgroundClassSource, sandbox);
-  return { document, body, listeners, Controller: sandbox.Creative3DPlaygroundController };
+  return {
+    document,
+    body,
+    listeners,
+    Controller: sandbox.Creative3DPlaygroundController,
+    get cursorHideCalls() {
+      return cursorHideCalls;
+    },
+  };
 }
 
-test('video modal is an accessible dialog with focus trapping and idempotent close cleanup', () => {
+test('video modal uses native dialog lifecycle and restores focus on close', () => {
   const fixture = createModalFixture();
   const controller = Object.create(fixture.Controller.prototype);
   let launchFocusCalls = 0;
@@ -305,32 +332,30 @@ test('video modal is an accessible dialog with focus trapping and idempotent clo
   const video = modal.children[0];
   const closeButton = modal.children[1];
 
+  assert.equal(modal.type, 'dialog');
+  assert.equal(modal.open, true);
   assert.equal(modal.attributes.role, 'dialog');
   assert.equal(modal.attributes['aria-modal'], 'true');
   assert.equal(modal.attributes['aria-label'], 'Video: Demo Reel');
   assert.equal(closeButton.type, 'button');
   assert.equal(closeButton.attributes['aria-label'], 'Close video');
   assert.equal(fixture.document.activeElement, closeButton);
+  assert.equal(fixture.cursorHideCalls, 1);
+  assert.equal(modal.listeners.has('keydown'), false);
 
+  const pauseCalls = [];
+  video.pause = () => pauseCalls.push(true);
   let prevented = false;
-  modal.listeners.get('keydown')({
-    key: 'Tab',
-    shiftKey: false,
+  modal.listeners.get('cancel')({
     preventDefault() {
       prevented = true;
     },
   });
   assert.equal(prevented, true);
-  assert.equal(fixture.document.activeElement, video);
-
-  const pauseCalls = [];
-  video.pause = () => pauseCalls.push(true);
-  fixture.listeners.get('keydown')({ key: 'Escape' });
+  assert.equal(modal.open, false);
   assert.equal(modal.isConnected, false);
   assert.equal(pauseCalls.length, 1);
   assert.equal(launchFocusCalls, 1);
-  assert.equal(fixture.listeners.has('keydown'), false);
-  assert.equal(modal.listeners.has('keydown'), false);
 
   closeButton.listeners.get('click')?.();
   assert.equal(pauseCalls.length, 1);
@@ -340,6 +365,7 @@ test('video modal is an accessible dialog with focus trapping and idempotent clo
   const secondVideo = secondModal.children[0];
   secondVideo.pause = () => pauseCalls.push(true);
   secondModal.listeners.get('click')({ target: secondModal });
+  assert.equal(secondModal.open, false);
   assert.equal(secondModal.isConnected, false);
   assert.equal(pauseCalls.length, 2);
   assert.equal(launchFocusCalls, 2);

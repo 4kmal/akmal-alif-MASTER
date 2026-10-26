@@ -524,7 +524,7 @@ class Creative3DPlaygroundController {
 
     openVideoModal(tool) {
         // Create fullscreen video modal
-        const modal = document.createElement('div');
+        const modal = document.createElement('dialog');
         modal.className = 'playground-video-modal';
         modal.setAttribute('role', 'dialog');
         modal.setAttribute('aria-modal', 'true');
@@ -545,18 +545,16 @@ class Creative3DPlaygroundController {
         modal.appendChild(video);
         modal.appendChild(closeButton);
         document.body.appendChild(modal);
+        window.customCursor?.hideCursor?.();
 
         // Close handlers
         let isClosed = false;
-        let escHandler;
-        let modalKeydownHandler;
         const returnFocus = this.launchButton;
         const closeModal = () => {
             if (isClosed) return;
             isClosed = true;
-            document.removeEventListener('keydown', escHandler);
-            modal.removeEventListener('keydown', modalKeydownHandler);
             if (typeof video.pause === 'function') video.pause();
+            if (modal.open) modal.close();
             if (modal.isConnected) modal.remove();
             if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
         };
@@ -569,30 +567,12 @@ class Creative3DPlaygroundController {
 
         closeButton.addEventListener('click', closeModal);
 
-        modalKeydownHandler = (e) => {
-            if (e.key !== 'Tab') return;
-
-            const focusable = [closeButton, video].filter((element) => (
-                element && typeof element.focus === 'function' && element.isConnected !== false
-            ));
-            if (focusable.length === 0) return;
-
-            const currentIndex = focusable.indexOf(document.activeElement);
-            const nextIndex = e.shiftKey
-                ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
-                : (currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
-
+        modal.addEventListener('cancel', (e) => {
             e.preventDefault();
-            focusable[nextIndex].focus();
-        };
-        modal.addEventListener('keydown', modalKeydownHandler);
+            closeModal();
+        });
 
-        escHandler = (e) => {
-            if (e.key === 'Escape') {
-                closeModal();
-            }
-        };
-        document.addEventListener('keydown', escHandler);
+        modal.showModal();
         closeButton.focus();
     }
 
