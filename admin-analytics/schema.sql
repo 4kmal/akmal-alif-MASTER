@@ -1,6 +1,6 @@
 PRAGMA foreign_keys = ON;
 
--- Portfolio-owned analytics data lives in the NEWadminD1 database beside Sink tables.
+-- Portfolio-owned analytics data lives in the new admin D1 database beside Sink tables.
 -- Raw rows retain trusted request context for 90 days; daily summaries retain 13 months.
 CREATE TABLE IF NOT EXISTS portfolio_analytics_events (
   event_id TEXT PRIMARY KEY NOT NULL,
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS portfolio_analytics_daily (
   source TEXT NOT NULL,
   event_count INTEGER NOT NULL DEFAULT 0,
   session_count INTEGER NOT NULL DEFAULT 0,
+  session_hll TEXT NOT NULL DEFAULT '',
   active_ms INTEGER NOT NULL DEFAULT 0,
   visitor_hll TEXT NOT NULL DEFAULT '',
   first_event_at INTEGER,

@@ -125,6 +125,7 @@ test('schema creates prefixed raw, daily, and state tables', () => {
       'portfolio_analytics_events',
       'portfolio_analytics_state',
     ]);
+    assert.equal(database.prepare("SELECT count(*) AS count FROM pragma_table_info('portfolio_analytics_daily') WHERE name = 'session_hll'").get().count, 1);
   } finally {
     database.close();
   }
@@ -255,6 +256,8 @@ test('ingestion rejects untrusted origins, gateway credentials, malformed metada
     const env = environment(d1);
     assert.equal((await ingestEvents(request('/internal/events', [], { host: 'preview.example.test' }), env)).status, 403);
     assert.equal((await ingestEvents(request('/internal/events', [], { token: 'wrong' }), env)).status, 401);
+    const localDisabled = { ...env, ALLOW_LOCAL_ANALYTICS: 'false', PORTFOLIO_GATEWAY_TOKEN: null };
+    assert.equal((await ingestEvents(request('/internal/events', [], { host: 'localhost' }), localDisabled)).status, 403);
     const missingMeta = new Request('https://www.akmalalif.com/internal/events', {
       method: 'POST',
       headers: {
@@ -348,6 +351,7 @@ test('reports expose deterministic overview, content, conversions, realtime, and
       { id: 'overview-page', type: 'page_view', path: '/' },
       { id: 'overview-article', type: 'article_complete', path: '/blog/hello', active_ms: 30000 },
       { id: 'overview-contact', type: 'contact_open', path: '/contact' },
+      { id: 'overview-contact-interaction', type: 'contact_interaction', path: '/contact', target: '#form' },
     ]), env);
     const overviewResponse = await handleAnalyticsRequest(
       new Request('https://www.akmalalif.com/api/portfolio/overview?range=24h'),
@@ -358,9 +362,13 @@ test('reports expose deterministic overview, content, conversions, realtime, and
     assert.equal(overview.meta.timezone, 'Asia/Kuala_Lumpur');
     assert.equal(overview.meta.coverage.has_data, true);
     assert.equal(overview.meta.detail, 'raw_90_day_events');
-    assert.equal(overview.data.events, 3);
+    assert.equal(overview.data.events, 4);
     assert.equal(overview.data.page_views, 1);
-    assert.equal(overview.data.goals.find((goal) => goal.id === 'career_contact').conversions, 1);
+    const contactGoal = overview.data.goals.find((goal) => goal.id === 'career_contact');
+    assert.equal(contactGoal.label, 'Contact intent');
+    assert.equal(contactGoal.conversions, 1);
+    assert.equal(contactGoal.denominator_sessions, 1);
+    assert.equal(contactGoal.conversion_rate, 1);
 
     const content = await handleAnalyticsRequest(
       new Request('https://www.akmalalif.com/api/portfolio/content?range=24h'),
@@ -380,7 +388,7 @@ test('reports expose deterministic overview, content, conversions, realtime, and
       env,
     );
     const realtimeData = await realtime.json();
-    assert.equal(realtimeData.data.events.length, 3);
+    assert.equal(realtimeData.data.events.length, 4);
     assert.equal(realtimeData.data.events[0].timestamp, '2026-10-26T10:00:00.000Z');
 
     const performance = await handleAnalyticsRequest(
@@ -504,6 +512,18 @@ test('performance queries Workers and RUM with bounded Time ranges and source-sp
     assert.equal(partialResult.meta.coverage.rum_vitals.unavailable, true);
     assert.equal(partialResult.meta.coverage.workers['akmalalif-portfolio'].available, true);
     assert.equal(partialResult.meta.coverage.workers['akmalalif-portfolio'].has_data, false);
+
+    const malformed = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      {
+        ...env,
+        CF_ANALYTICS_QUERY: async () => Response.json({}),
+      },
+    );
+    const malformedResult = await malformed.json();
+    assert.equal(malformedResult.meta.coverage.unavailable, true);
+    assert.equal(malformedResult.meta.coverage.rum_vitals.unavailable, true);
+    assert.equal(malformedResult.meta.coverage.workers['akmalalif-portfolio'].unavailable, true);
   } finally {
     database.close();
   }
@@ -551,7 +571,14 @@ test('Sink events feed shortlink goals and remain source-labelled', async () => 
     }, env);
     assert.equal(first.accepted, 1);
     assert.equal(second.deduped, 1);
-    assert.equal(database.prepare("SELECT source, shortlink_slug, ip FROM portfolio_analytics_events WHERE source = 'sink'").get().shortlink_slug, 'cv');
+    const firstRow = database.prepare([
+      "SELECT source, shortlink_slug, ip, visitor_key, session_key",
+      "FROM portfolio_analytics_events WHERE source = 'sink' AND shortlink_slug = 'cv'",
+    ].join('\n')).get();
+    assert.equal(firstRow.source, 'sink');
+    assert.equal(firstRow.shortlink_slug, 'cv');
+    assert.equal(firstRow.visitor_key.startsWith('sink-ip-v1:'), true);
+    assert.equal(firstRow.session_key, null);
 
     const retryPayload = { slug: 'docs', target: '/docs', occurred_at: '2026-10-26T10:00:00.000Z' };
     const retry = await recordShortlinkEvent(retryPayload, env);
@@ -565,6 +592,9 @@ test('Sink events feed shortlink goals and remain source-labelled', async () => 
     assert.equal(anonymous.accepted, 1);
     assert.equal(anonymousAgain.accepted, 1);
     assert.notEqual(anonymousAgain.event_id, anonymous.event_id);
+    await ingestEvents(request('/internal/events', [
+      { id: 'website-with-shortlink', type: 'page_view', path: '/' },
+    ]), env);
 
     const response = await handleAnalyticsRequest(
       new Request('https://www.akmalalif.com/api/portfolio/conversions?range=24h'),
@@ -573,6 +603,17 @@ test('Sink events feed shortlink goals and remain source-labelled', async () => 
     const result = await response.json();
     assert.equal(result.data.shortlink_campaigns.find((campaign) => campaign.slug === 'cv')?.slug, 'cv');
     assert.equal(result.data.goals.find((goal) => goal.id === 'shortlink_campaigns').conversions, 4);
+    assert.equal(result.data.shortlink_campaigns.find((campaign) => campaign.slug === 'cv')?.visitor_method, 'IP estimate');
+    assert.equal(result.meta.detail, 'raw_90_day_events');
+    const overviewResponse = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/overview?range=24h'),
+      env,
+    );
+    const overview = await overviewResponse.json();
+    assert.equal(overview.data.unique_visitors, 1);
+    assert.equal(overview.data.shortlink_unique_visitors, 1);
+    assert.equal(overview.data.unique_visitors + overview.data.shortlink_unique_visitors, 2);
+    assert.equal(overview.data.visitor_estimates.shortlinks.method, 'IP estimate');
   } finally {
     database.close();
   }
@@ -644,6 +685,103 @@ test('maintenance recomputes mergeable daily sketches and prunes raw detail idem
     const again = await runAnalyticsMaintenance(env);
     assert.equal(again.daily_rows < result.daily_rows, true);
     assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_daily').get().count, dailyCount);
+  } finally {
+    database.close();
+  }
+});
+
+test('daily history merges sessions across midnight and remains available for prior comparisons', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(d1);
+    const day = 24 * 60 * 60 * 1000;
+    const oldRows = [
+      ['summary-old-a', now - (101 * day), '/old-a'],
+      ['summary-old-b', now - (100 * day), '/old-b'],
+    ];
+    const insert = database.prepare([
+      'INSERT INTO portfolio_analytics_events (',
+      'event_id, event_type, path, source, event_at, received_at, visitor_key, session_key, is_bot',
+      ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ].join('\n'));
+    for (const [eventId, eventAt, path] of oldRows) {
+      insert.run(eventId, 'page_view', path, 'portfolio', eventAt, eventAt, 'visitor-old', 'session-cross-day', 0);
+    }
+
+    const maintenance = await runAnalyticsMaintenance(env);
+    assert.equal(maintenance.raw_pruned, 2);
+    const daily = database.prepare([
+      "SELECT day, session_count, session_hll FROM portfolio_analytics_daily",
+      "WHERE dimension = 'all' AND source = 'portfolio' ORDER BY day ASC",
+    ].join('\n')).all();
+    assert.equal(daily.length, 2);
+    assert.equal(daily[0].session_count, 1);
+    assert.equal(daily[1].session_count, 1);
+    assert.equal(daily[0].session_hll.length, 128);
+    assert.equal(daily[1].session_hll.length, 128);
+
+    const response = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/overview?range=90d'),
+      env,
+    );
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(result.data.comparison.events, 2);
+    assert.equal(result.data.comparison.page_views, 2);
+    assert.equal(result.data.comparison.sessions, 1);
+    assert.equal(result.data.comparison.unique_visitors, 1);
+    assert.equal(result.meta.coverage.prior_detail, 'daily_rollup');
+    assert.equal(result.meta.coverage.tracking_started_at, new Date(now - (101 * day)).toISOString());
+  } finally {
+    database.close();
+  }
+});
+
+test('reports mark periods beyond daily retention unavailable instead of returning zero totals', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(d1);
+    const from = new Date(Date.UTC(2025, 1, 1)).toISOString();
+    const to = new Date(Date.UTC(2025, 2, 1)).toISOString();
+    const response = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/overview?range=custom&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)),
+      env,
+    );
+    const result = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(result.data, null);
+    assert.equal(result.meta.coverage.unavailable, true);
+    assert.match(result.meta.coverage.reason, /13-month/);
+  } finally {
+    database.close();
+  }
+});
+
+test('raw report detail refuses an oversized result instead of silently truncating', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const originalPrepare = d1.prepare.bind(d1);
+    d1.prepare = (sql) => {
+      if (sql.includes('LIMIT 50001')) {
+        return {
+          bind() {
+            return this;
+          },
+          all() {
+            return { results: Array.from({ length: 50_001 }, () => ({})) };
+          },
+        };
+      }
+      return originalPrepare(sql);
+    };
+    const response = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/overview?range=24h'),
+      environment(d1),
+    );
+    const result = await response.json();
+    assert.equal(response.status, 503);
+    assert.match(result.error, /bounded report limit/);
+    assert.equal(result.meta.coverage.unavailable, true);
   } finally {
     database.close();
   }
