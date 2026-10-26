@@ -27,13 +27,22 @@
       "preview_id": "00000000000000000000000000000000"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "akmalalif-admin-local"
+    }
+  ],
   "vars": {
     "PORTFOLIO_ADMIN_ORIGIN": "http://localhost:8788",
     "SHORTLINK_ORIGIN": "http://localhost:8788",
+    "NUXT_PUBLIC_ADMIN_ORIGIN": "http://localhost:8788",
+    "NUXT_PUBLIC_SHORTLINK_ORIGIN": "http://localhost:8788",
     "ADMIN_EMAIL": "iamaleep@gmail.com",
     "ALLOW_LOCAL_ADMIN": "true",
     "NUXT_PUBLIC_PREVIEW_MODE": "false",
     "NUXT_SITE_TOKEN": "local-only-site-token",
+    "ANALYTICS_ID_SECRET": "local-only-analytics-key",
     "NUXT_API_CORS": "false"
   }
 }
