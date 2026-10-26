@@ -211,6 +211,41 @@ describe('blog studio persistence', () => {
     }
   })
 
+  it('restores an old slug revision into the current published URL draft', async () => {
+    const { database, d1, bucket } = databaseFixture()
+    try {
+      const created = await createBlogPost(eventFor(d1, bucket, 'POST', '/posts'), {
+        title: 'Original title',
+        slug: 'original-slug',
+        excerpt: 'Original excerpt',
+        content_html: '<p>Original body</p>',
+      })
+      const original = database.prepare('SELECT id FROM blog_post_revisions WHERE post_id = ? AND kind = \'original\'').get(created.post.id)
+      const renamed = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/draft', {
+        version: created.draft.version,
+        slug: 'published-slug',
+        title: 'Published title',
+      }), created.post.id)
+      const published = await publishBlogPost(eventFor(d1, bucket, 'POST', '/publish', { version: renamed.draft.version }), created.post.id)
+      expect(published.post.slug).toBe('published-slug')
+      const unpublished = await setBlogPostStatus(eventFor(d1, bucket, 'POST', '/status', { status: 'draft' }), created.post.id)
+
+      const restored = await restoreBlogPost(eventFor(d1, bucket, 'POST', '/restore', {
+        version: unpublished.draft.version,
+        revision_id: original.id,
+      }), created.post.id)
+
+      expect(restored.post.status).toBe('draft')
+      expect(restored.post.slug).toBe('published-slug')
+      expect(restored.draft.slug).toBe('published-slug')
+      expect(restored.draft.title).toBe('Original title')
+      expect(restored.draft.content_html).toBe('<p>Original body</p>')
+    }
+    finally {
+      database.close()
+    }
+  })
+
   it('maps duplicate create and publish slug races to 409 without partial writes', async () => {
     const { database, d1, bucket } = databaseFixture()
     try {

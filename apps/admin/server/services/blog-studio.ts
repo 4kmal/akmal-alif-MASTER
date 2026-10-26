@@ -993,9 +993,9 @@ export async function restoreBlogPost(event: H3Event, postId: string): Promise<B
   catch {
     throw createError({ statusCode: 500, statusMessage: 'Revision snapshot is invalid' })
   }
-  const restored = await draftInputFromBody(db, actor, snapshot, current.draft, postId)
-  if (current.post.published_version != null && restored.slug !== current.post.slug)
-    throw createError({ statusCode: 409, statusMessage: 'Published slugs are immutable' })
+  const restored = await draftInputFromBody(db, actor, current.post.published_version != null
+    ? { ...snapshot, slug: current.post.slug }
+    : snapshot, current.draft, postId)
   const nextVersion = version + 1
   const token = crypto.randomUUID()
   const now = new Date().toISOString()
