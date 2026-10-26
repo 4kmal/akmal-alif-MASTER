@@ -108,6 +108,7 @@ function environment(d1, extra = {}) {
     PORTFOLIO_GATEWAY_TOKEN: 'test-gateway',
     ANALYTICS_ID_SECRET: 'test-id-secret',
     ANALYTICS_NOW: now,
+    ANALYTICS_REPORT_CACHE: 'false',
     ...extra,
   };
 }
@@ -123,12 +124,13 @@ function insertAnalyticsEvent(database, {
   session = null,
   userAgent = null,
   source = 'portfolio',
+  isBot = 0,
 }) {
   database.prepare([
     'INSERT INTO portfolio_analytics_events (',
     'event_id, event_type, path, target, referrer, source, event_at, received_at,',
     'visitor_key, session_key, user_agent, is_bot',
-    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+    ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ].join('\n')).run(
     id,
     type,
@@ -141,6 +143,7 @@ function insertAnalyticsEvent(database, {
     visitor,
     session,
     userAgent,
+    isBot,
   );
 }
 
@@ -543,6 +546,10 @@ test('reports expose deterministic overview, content, conversions, realtime, and
     const realtimeData = await realtime.json();
     assert.equal(realtimeData.data.events.length, 5);
     assert.equal(realtimeData.data.events[0].timestamp, '2026-10-26T10:00:00.000Z');
+    assert.equal(realtimeData.data.events[0].country, 'MY');
+    assert.equal(realtimeData.data.events[0].region, '10');
+    assert.equal(Object.hasOwn(realtimeData.data.events[0], 'ip'), false);
+    assert.equal(Object.hasOwn(realtimeData.data.events[0], 'city'), false);
 
     const performance = await handleAnalyticsRequest(
       new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
@@ -899,6 +906,268 @@ test('performance totals and quantiles use period aggregates even when the detai
     assert.equal(result.data.rum_vitals.period_metrics.lcp_ms_p75, 900);
     assert.equal(result.data.rum_vitals.period_metrics.inp_ms_p75, 70);
     assert.equal(result.meta.coverage.series_truncated, true);
+  } finally {
+    database.close();
+  }
+});
+
+test('historical reports use bounded TTLs, invalidate on accepted writes, and serve stale last-success data', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(d1, {
+      ANALYTICS_REPORT_CACHE: 'true',
+      ANALYTICS_HISTORY_CACHE_TTL_MS: 1_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'cache-history-a',
+      type: 'page_view',
+      path: '/',
+      eventAt: now,
+    });
+
+    const reportRequest = () => new Request('https://www.akmalalif.com/api/portfolio/overview?range=24h');
+    const first = await handleAnalyticsRequest(reportRequest(), env);
+    const firstResult = await first.json();
+    assert.equal(first.status, 200);
+    assert.equal(firstResult.data.events, 1);
+    assert.equal(firstResult.meta.cache.status, 'fresh');
+    assert.equal(firstResult.meta.cache.stale, false);
+
+    insertAnalyticsEvent(database, {
+      id: 'cache-history-b',
+      type: 'page_view',
+      path: '/new',
+      eventAt: now,
+    });
+    env.ANALYTICS_NOW = now + 500;
+    const hit = await handleAnalyticsRequest(reportRequest(), env);
+    const hitResult = await hit.json();
+    assert.equal(hitResult.meta.cache.status, 'hit');
+    assert.equal(hitResult.data.events, 1);
+
+    env.ANALYTICS_NOW = now + 1_500;
+    const refreshed = await handleAnalyticsRequest(reportRequest(), env);
+    const refreshedResult = await refreshed.json();
+    assert.equal(refreshedResult.meta.cache.status, 'fresh');
+    assert.equal(refreshedResult.data.events, 2);
+    assert.equal(refreshedResult.meta.cache.cache_age_ms, 0);
+
+    const accepted = await ingestEvents(request('/internal/events', [
+      { id: 'cache-history-c', type: 'page_view', path: '/accepted-write' },
+    ]), env);
+    assert.equal(accepted.status, 200);
+    const invalidated = await handleAnalyticsRequest(reportRequest(), env);
+    const invalidatedResult = await invalidated.json();
+    assert.equal(invalidatedResult.meta.cache.status, 'fresh');
+    assert.equal(invalidatedResult.data.events, 3);
+
+    env.ANALYTICS_NOW = now + 3_500;
+    env.NEWadminD1 = { prepare() { throw new Error('database offline'); } };
+    const stale = await handleAnalyticsRequest(reportRequest(), env);
+    const staleResult = await stale.json();
+    assert.equal(stale.status, 200);
+    assert.equal(staleResult.meta.cache.status, 'stale');
+    assert.equal(staleResult.meta.cache.stale, true);
+    assert.equal(staleResult.data.events, 3);
+    assert.equal(staleResult.meta.cache.generated_at, new Date(now + 1_500).toISOString());
+    assert.equal(staleResult.meta.cache.cache_age_ms, 2_000);
+  } finally {
+    database.close();
+  }
+});
+
+test('custom filters have distinct cache keys while history and realtime stay uncached', async () => {
+  const { database, d1 } = createDatabase();
+  try {
+    const env = environment(d1, {
+      ANALYTICS_REPORT_CACHE: 'true',
+      ANALYTICS_HISTORY_CACHE_TTL_MS: 10_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'cache-filter-normal',
+      type: 'page_view',
+      path: '/normal',
+      eventAt: now - 5_000,
+    });
+    insertAnalyticsEvent(database, {
+      id: 'cache-filter-bot',
+      type: 'page_view',
+      path: '/bot',
+      eventAt: now - 4_000,
+      isBot: 1,
+    });
+
+    const from = encodeURIComponent(new Date(now - 10_000).toISOString());
+    const to = encodeURIComponent(new Date(now).toISOString());
+    const custom = (includeBots = false) => new Request(
+      'https://www.akmalalif.com/api/portfolio/overview?range=custom&from=' + from + '&to=' + to + (includeBots ? '&include_bots=1' : ''),
+    );
+    const normal = await handleAnalyticsRequest(custom(), env);
+    const normalResult = await normal.json();
+    assert.equal(normalResult.data.events, 1);
+    assert.equal(normalResult.meta.cache.status, 'fresh');
+    const withBots = await handleAnalyticsRequest(custom(true), env);
+    const withBotsResult = await withBots.json();
+    assert.equal(withBotsResult.data.events, 2);
+    assert.equal(withBotsResult.meta.cache.status, 'fresh');
+    const withBotsHit = await handleAnalyticsRequest(custom(true), env);
+    const withBotsHitResult = await withBotsHit.json();
+    assert.equal(withBotsHitResult.meta.cache.status, 'hit');
+
+    const historyRequest = () => new Request('https://www.akmalalif.com/api/portfolio/history?range=24h&include_bots=1');
+    const historyFirst = await handleAnalyticsRequest(historyRequest(), env);
+    const historyFirstResult = await historyFirst.json();
+    assert.equal(historyFirstResult.data.events.length, 2);
+    assert.equal(historyFirstResult.meta.cache, undefined);
+    insertAnalyticsEvent(database, {
+      id: 'cache-raw-history',
+      type: 'page_view',
+      path: '/raw',
+      eventAt: now,
+    });
+    const historySecond = await handleAnalyticsRequest(historyRequest(), env);
+    const historySecondResult = await historySecond.json();
+    assert.equal(historySecondResult.data.events.length, 3);
+
+    const realtimeRequest = () => new Request('https://www.akmalalif.com/api/portfolio/realtime?range=24h&include_bots=1');
+    const realtimeFirst = await handleAnalyticsRequest(realtimeRequest(), env);
+    const realtimeFirstResult = await realtimeFirst.json();
+    assert.equal(realtimeFirstResult.data.events.length, 3);
+    assert.equal(realtimeFirstResult.meta.cache, undefined);
+    insertAnalyticsEvent(database, {
+      id: 'cache-raw-realtime',
+      type: 'page_view',
+      path: '/realtime',
+      eventAt: now,
+    });
+    const realtimeSecond = await handleAnalyticsRequest(realtimeRequest(), env);
+    const realtimeSecondResult = await realtimeSecond.json();
+    assert.equal(realtimeSecondResult.data.events.length, 4);
+  } finally {
+    database.close();
+  }
+});
+
+test('provider cache isolates environments, preserves partial sources, and reports stale failures', async () => {
+  const { database, d1 } = createDatabase();
+  const calls = [];
+  let phase = 'initial';
+  try {
+    const query = async (_url, options) => {
+      const payload = JSON.parse(options.body);
+      const isRum = payload.query.includes('PortfolioRumPerformance');
+      const name = isRum ? 'rum' : payload.variables.scriptName;
+      calls.push(name);
+      if (phase === 'all-fail' || (phase === 'partial' && name === 'akmalalif-admin')) {
+        throw new Error(name + ' offline');
+      }
+      if (isRum) {
+        const samples = phase === 'partial' ? 44 : 4;
+        return Response.json({ data: { viewer: { accounts: [{
+          rumWebVitalsEventsAdaptiveGroups: [{
+            count: samples,
+            dimensions: { datetimeHour: '2026-10-26T10:00:00Z', siteTag: 'site-tag' },
+            avg: { firstContentfulPaint: 90_000, timeToFirstByte: 30_000 },
+            quantiles: { largestContentfulPaintP75: 123_456, interactionToNextPaintP75: 50_000, cumulativeLayoutShiftP75: 0.07 },
+          }],
+          rumPeriodTotals: [{
+            count: samples,
+            avg: { firstContentfulPaint: 90_000, timeToFirstByte: 30_000 },
+            quantiles: { largestContentfulPaintP75: 123_456, interactionToNextPaintP75: 50_000, cumulativeLayoutShiftP75: 0.07 },
+          }],
+        }] } } });
+      }
+      const requests = phase === 'partial'
+        ? (name === 'akmalalif-portfolio' ? 110 : 220)
+        : (name === 'akmalalif-portfolio' ? 10 : 20);
+      return Response.json({ data: { viewer: { accounts: [{
+        workersInvocationsAdaptive: [{
+          sum: { requests, errors: 1, subrequests: 2 },
+          quantiles: { cpuTimeP50: 250, cpuTimeP99: 900 },
+          dimensions: { datetime: '2026-10-26T10:00:00Z', scriptName: name, status: 'success' },
+        }],
+        workerPeriodTotals: [{
+          sum: { requests, errors: 1, subrequests: 2 },
+          quantiles: { cpuTimeP50: 250, cpuTimeP99: 900 },
+        }],
+      }] } } });
+    };
+    const base = {
+      ANALYTICS_REPORT_CACHE: 'true',
+      ANALYTICS_PROVIDER_CACHE_TTL_MS: 1_000,
+      CF_ANALYTICS_TOKEN: 'graphql-token',
+      CF_ACCOUNT_ID: 'account-tag',
+      CF_WEB_ANALYTICS_SITE_TAG: 'site-tag',
+      CF_ANALYTICS_QUERY: query,
+    };
+    const envA = environment(d1, base);
+    const first = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      envA,
+    );
+    const firstResult = await first.json();
+    assert.equal(firstResult.meta.cache.status, 'fresh');
+    assert.equal(firstResult.data.cloudflare.scripts['akmalalif-portfolio'].totals.requests, 10);
+    assert.equal(calls.length, 3);
+
+    envA.ANALYTICS_NOW = now + 500;
+    const hit = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      envA,
+    );
+    const hitResult = await hit.json();
+    assert.equal(hitResult.meta.cache.status, 'hit');
+    assert.equal(calls.length, 3);
+
+    const envB = environment(d1, base);
+    const isolated = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      envB,
+    );
+    const isolatedResult = await isolated.json();
+    assert.equal(isolatedResult.meta.cache.status, 'fresh');
+    assert.equal(calls.length, 6);
+
+    envA.ANALYTICS_NOW = now + 1_500;
+    phase = 'partial';
+    const partial = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      envA,
+    );
+    const partialResult = await partial.json();
+    assert.equal(partialResult.meta.cache.status, 'partial');
+    assert.equal(partialResult.data.cloudflare.scripts['akmalalif-portfolio'].totals.requests, 110);
+    assert.equal(partialResult.data.cloudflare.scripts['akmalalif-admin'].totals.requests, 20);
+    assert.equal(partialResult.meta.coverage.workers['akmalalif-admin'].stale, true);
+    assert.equal(partialResult.meta.coverage.workers['akmalalif-admin'].generated_at, new Date(now).toISOString());
+
+    const callsBeforeWrite = calls.length;
+    const accepted = await ingestEvents(request('/internal/events', [
+      { id: 'provider-cache-write', type: 'page_view', path: '/cache-write' },
+    ]), envA);
+    assert.equal(accepted.status, 200);
+    const providerHitAfterWrite = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      envA,
+    );
+    const providerHitAfterWriteResult = await providerHitAfterWrite.json();
+    assert.equal(providerHitAfterWriteResult.meta.cache.status, 'hit');
+    assert.equal(calls.length, callsBeforeWrite);
+
+    envA.ANALYTICS_NOW = now + 3_500;
+    phase = 'all-fail';
+    const stale = await handleAnalyticsRequest(
+      new Request('https://www.akmalalif.com/api/portfolio/performance?range=24h'),
+      envA,
+    );
+    const staleResult = await stale.json();
+    assert.equal(staleResult.meta.cache.status, 'stale');
+    assert.equal(staleResult.meta.cache.stale, true);
+    assert.equal(staleResult.meta.coverage.has_data, true);
+    assert.equal(staleResult.data.cloudflare.scripts['akmalalif-portfolio'].totals.requests, 110);
+    assert.equal(staleResult.data.cloudflare.scripts['akmalalif-admin'].totals.requests, 20);
+    assert.equal(staleResult.data.rum_vitals.samples, 44);
+    assert.equal(staleResult.meta.cache.cache_age_ms, 2_000);
   } finally {
     database.close();
   }

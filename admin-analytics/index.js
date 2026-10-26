@@ -20,6 +20,17 @@ const VISITOR_COOKIE = '__Host-portfolio-visitor';
 const SESSION_COOKIE = '__Host-portfolio-session';
 const VISITOR_COOKIE_MAX_AGE = 13 * 31 * 24 * 60 * 60;
 const SESSION_COOKIE_MAX_AGE = 30 * 60;
+const DEFAULT_PROVIDER_CACHE_TTL_MS = 60 * 1000;
+const DEFAULT_HISTORICAL_CACHE_TTL_MS = 20 * 1000;
+const MAX_REPORT_CACHE_ENTRIES = 32;
+const MAX_PROVIDER_CACHE_ENTRIES = 12;
+
+// These caches are intentionally isolate-local. The environment object keeps
+// data from crossing tenants or tests, while WeakMap lets a Worker isolate
+// release a cache when its binding environment is gone. Cache values contain
+// report aggregates only; raw history and realtime bypass this layer.
+const objectCacheStates = new WeakMap();
+const primitiveCacheStates = new Map();
 
 class AnalyticsRangeLimitError extends Error {
   constructor() {
@@ -190,6 +201,69 @@ function finiteNumber(value, minimum, maximum) {
 function finiteInteger(value, minimum, maximum) {
   const number = finiteNumber(value, minimum, maximum);
   return number == null ? null : Math.trunc(number);
+}
+
+function reportCacheEnabled(env) {
+  const value = String(env?.ANALYTICS_REPORT_CACHE ?? '').trim().toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(value);
+}
+
+function configuredCacheTtl(env, key, fallback) {
+  const value = finiteInteger(env?.[key], 0, 10 * 60 * 1000);
+  return value == null ? fallback : value;
+}
+
+function cacheStateFor(env) {
+  const isObject = (typeof env === 'object' && env !== null) || typeof env === 'function';
+  if (isObject) {
+    let state = objectCacheStates.get(env);
+    if (!state) {
+      state = { historical: new Map(), provider: new Map() };
+      objectCacheStates.set(env, state);
+    }
+    return state;
+  }
+
+  const key = String(env ?? '');
+  let state = primitiveCacheStates.get(key);
+  if (!state) {
+    state = { historical: new Map(), provider: new Map() };
+    primitiveCacheStates.set(key, state);
+    while (primitiveCacheStates.size > MAX_REPORT_CACHE_ENTRIES) {
+      primitiveCacheStates.delete(primitiveCacheStates.keys().next().value);
+    }
+  }
+  return state;
+}
+
+function cacheSet(map, key, value, limit) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > limit) {
+    map.delete(map.keys().next().value);
+  }
+}
+
+function invalidateHistoricalCache(env) {
+  cacheStateFor(env).historical.clear();
+}
+
+function cacheAgeMs(now, generatedAt) {
+  return Math.max(0, now - generatedAt);
+}
+
+function cacheDate(timestamp) {
+  return new Date(timestamp).toISOString();
+}
+
+function withCacheMeta(result, cache) {
+  return {
+    ...result,
+    meta: {
+      ...(result.meta ?? {}),
+      cache,
+    },
+  };
 }
 
 function normalizePath(value) {
@@ -754,6 +828,9 @@ export async function ingestEvents(request, env = {}, ctx = null) {
 
   const acceptedEvents = events.filter((_, index) => resultChanges(results[index]) > 0);
   await mirrorEvents(acceptedEvents, env, ctx);
+  if (acceptedEvents.length > 0) {
+    invalidateHistoricalCache(env);
+  }
 
   const response = jsonResponse({
     accepted: acceptedEvents.length,
@@ -1017,6 +1094,23 @@ function rangeFromRequest(url, now) {
     priorTo: from,
     summaryFrom: addMonths(now, -SUMMARY_RETENTION_MONTHS),
   };
+}
+
+function reportCacheKey(route, range, url) {
+  const filters = [
+    ['include_bots', url.searchParams.get('include_bots') === '1' ? '1' : '0'],
+  ];
+  const filterKey = filters
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}=${value}`)
+    .join('&');
+  // Presets intentionally ignore the moving computed bounds so 24h/7d/etc.
+  // hit the same bounded entry during its short TTL. Custom windows retain
+  // their exact parsed bounds and filters.
+  const rangeKey = range.preset === 'custom'
+    ? `custom:${url.searchParams.get('from') ?? range.from}:${url.searchParams.get('to') ?? range.to}`
+    : `preset:${range.preset}`;
+  return `${route}|${rangeKey}|${filterKey}`;
 }
 
 async function trackingStart(db) {
@@ -1816,6 +1910,8 @@ function safeRealtimeRow(row) {
     source: row.source,
     shortlink_slug: row.shortlink_slug,
     campaign: row.campaign,
+    country: row.country ?? null,
+    region: row.region ?? null,
   };
 }
 
@@ -2744,9 +2840,270 @@ async function performanceReport(env, range) {
   };
 }
 
+function providerScriptNames(env) {
+  return {
+    portfolio: cleanText(env.CF_PORTFOLIO_WORKER_NAME, 128) || PORTFOLIO_WORKER_SCRIPT,
+    admin: cleanText(env.CF_ADMIN_WORKER_NAME, 128) || ADMIN_WORKER_SCRIPT,
+  };
+}
+
+function providerSourceDescriptors(result, env) {
+  const scripts = result?.data?.cloudflare?.scripts ?? {};
+  const workers = result?.meta?.coverage?.workers;
+  const names = providerScriptNames(env);
+  const workerStatus = (name) => {
+    if (workers && typeof workers === 'object' && Object.prototype.hasOwnProperty.call(workers, name)) {
+      return workers[name];
+    }
+    if (workers && typeof workers === 'object' && Object.prototype.hasOwnProperty.call(workers, 'available')) {
+      return workers;
+    }
+    return unavailableSource('CF Workers metrics unavailable');
+  };
+  return [
+    {
+      key: 'worker:' + names.portfolio,
+      kind: 'worker',
+      name: names.portfolio,
+      value: scripts[names.portfolio] ?? null,
+      status: workerStatus(names.portfolio),
+    },
+    {
+      key: 'worker:' + names.admin,
+      kind: 'worker',
+      name: names.admin,
+      value: scripts[names.admin] ?? null,
+      status: workerStatus(names.admin),
+    },
+    {
+      key: 'rum',
+      kind: 'rum',
+      name: 'rum_vitals',
+      value: result?.data?.rum_vitals ?? null,
+      status: result?.meta?.coverage?.rum_vitals ?? unavailableSource('CF Web Analytics RUM unavailable'),
+    },
+  ];
+}
+
+function providerStateFor(descriptor, previous, generatedAt) {
+  if (descriptor.status?.available) {
+    return {
+      value: descriptor.value,
+      status: { ...descriptor.status },
+      generatedAt,
+      successful: true,
+      stale: false,
+    };
+  }
+  if (previous?.successful) {
+    return {
+      value: previous.value,
+      status: { ...previous.status },
+      generatedAt: previous.generatedAt,
+      successful: true,
+      stale: true,
+    };
+  }
+  return {
+    value: descriptor.value,
+    status: { ...descriptor.status },
+    generatedAt: null,
+    successful: false,
+    stale: false,
+  };
+}
+
+function providerStatusFor(state, now) {
+  const age = state.generatedAt == null ? null : cacheAgeMs(now, state.generatedAt);
+  return {
+    ...state.status,
+    stale: state.stale,
+    ...(state.generatedAt == null ? {} : {
+      generated_at: cacheDate(state.generatedAt),
+      cache_age_ms: age,
+    }),
+  };
+}
+
+function providerResultFromStates(result, states, env, now) {
+  const names = providerScriptNames(env);
+  const freshData = result?.data ?? {};
+  const freshCloudflare = freshData.cloudflare ?? {};
+  const freshScripts = freshCloudflare.scripts ?? {};
+  const portfolioState = states['worker:' + names.portfolio];
+  const adminState = states['worker:' + names.admin];
+  const rumState = states.rum;
+  const hasWorkerData = Boolean(freshData.cloudflare)
+    || [portfolioState, adminState].some((state) => state?.successful);
+  const hasRumData = freshData.rum_vitals != null || rumState?.successful;
+  const data = {
+    ...freshData,
+    ...(hasWorkerData ? {
+      cloudflare: {
+        ...freshCloudflare,
+        scripts: {
+          ...freshScripts,
+          ...(portfolioState ? { [names.portfolio]: portfolioState.value } : {}),
+          ...(adminState ? { [names.admin]: adminState.value } : {}),
+        },
+      },
+    } : {}),
+    ...(hasRumData ? { rum_vitals: rumState?.value ?? freshData.rum_vitals } : {}),
+  };
+  const freshCoverage = result?.meta?.coverage ?? {};
+  const workerCoverage = {
+    ...(freshCoverage.workers && typeof freshCoverage.workers === 'object' && !Object.prototype.hasOwnProperty.call(freshCoverage.workers, 'available')
+      ? freshCoverage.workers
+      : {}),
+    ...(portfolioState ? { [names.portfolio]: providerStatusFor(portfolioState, now) } : {}),
+    ...(adminState ? { [names.admin]: providerStatusFor(adminState, now) } : {}),
+  };
+  const sourceStates = [portfolioState, adminState, rumState].filter(Boolean);
+  const statuses = sourceStates.map((state) => providerStatusFor(state, now));
+  return {
+    ...result,
+    data,
+    meta: {
+      ...(result.meta ?? {}),
+      coverage: {
+        ...freshCoverage,
+        has_data: Boolean(freshCoverage.has_data)
+          || statuses.some((status) => status.available && status.has_data),
+        unavailable: statuses.length > 0 && statuses.every((status) => !status.available),
+        stale: statuses.some((status) => status.stale),
+        series_truncated: statuses.some((status) => status.series_truncated),
+        workers: hasWorkerData || Object.keys(workerCoverage).length > 0
+          ? workerCoverage
+          : freshCoverage.workers,
+        rum_vitals: rumState ? providerStatusFor(rumState, now) : freshCoverage.rum_vitals,
+      },
+    },
+  };
+}
+
+function providerCacheMeta(entry, now, status, ttl) {
+  const sourceMeta = {};
+  const timestamps = [];
+  for (const [key, state] of Object.entries(entry.sources)) {
+    if (state.generatedAt != null) timestamps.push(state.generatedAt);
+    sourceMeta[key] = {
+      status: state.stale ? 'stale' : state.successful ? 'fresh' : 'unavailable',
+      generated_at: state.generatedAt == null ? null : cacheDate(state.generatedAt),
+      cache_age_ms: state.generatedAt == null ? null : cacheAgeMs(now, state.generatedAt),
+    };
+  }
+  const generatedAt = timestamps.length ? Math.max(...timestamps) : entry.checkedAt;
+  const hasStaleSource = Object.values(entry.sources).some((state) => state.stale);
+  return {
+    status,
+    stale: hasStaleSource || status === 'stale',
+    generated_at: cacheDate(generatedAt),
+    cache_age_ms: cacheAgeMs(now, generatedAt),
+    ttl_ms: ttl,
+    sources: sourceMeta,
+  };
+}
+
+async function cachedPerformanceReport(env, range) {
+  if (!reportCacheEnabled(env)) {
+    return performanceReport(env, range);
+  }
+
+  const state = cacheStateFor(env);
+  const key = reportCacheKey('performance', range, new URL('https://cache.invalid/'));
+  const now = nowMs(env);
+  const ttl = configuredCacheTtl(env, 'ANALYTICS_PROVIDER_CACHE_TTL_MS', DEFAULT_PROVIDER_CACHE_TTL_MS);
+  const existing = state.provider.get(key);
+  if (existing && cacheAgeMs(now, existing.checkedAt) < ttl) {
+    state.provider.delete(key);
+    state.provider.set(key, existing);
+    const value = providerResultFromStates(existing.value, existing.sources, env, now);
+    return withCacheMeta(value, providerCacheMeta(existing, now, 'hit', ttl));
+  }
+
+  let fresh;
+  try {
+    fresh = await performanceReport(env, range);
+  } catch (error) {
+    if (!existing) throw error;
+    const value = providerResultFromStates(existing.value, existing.sources, env, now);
+    return withCacheMeta(value, providerCacheMeta(existing, now, 'stale', ttl));
+  }
+
+  const descriptors = providerSourceDescriptors(fresh, env);
+  const sources = {};
+  for (const descriptor of descriptors) {
+    sources[descriptor.key] = providerStateFor(
+      descriptor,
+      existing?.sources?.[descriptor.key],
+      now,
+    );
+  }
+  const entry = {
+    checkedAt: now,
+    sources,
+    value: fresh,
+  };
+  const hasSuccessfulSource = descriptors.some((descriptor) => descriptor.status?.available);
+  const hasStaleSource = Object.values(sources).some((source) => source.stale);
+  if (existing || hasSuccessfulSource) {
+    cacheSet(state.provider, key, entry, MAX_PROVIDER_CACHE_ENTRIES);
+  }
+
+  const value = providerResultFromStates(fresh, sources, env, now);
+  const status = hasStaleSource
+    ? (descriptors.some((descriptor) => descriptor.status?.available) ? 'partial' : 'stale')
+    : hasSuccessfulSource ? 'fresh' : 'unavailable';
+  return withCacheMeta(value, providerCacheMeta(entry, now, status, ttl));
+}
+
+async function cachedHistoricalReport(route, db, range, env, now, url) {
+  if (route === 'realtime' || !reportCacheEnabled(env)) {
+    return reportData(route, db, range, env, now, url);
+  }
+
+  const state = cacheStateFor(env);
+  const key = reportCacheKey(route, range, url);
+  const ttl = configuredCacheTtl(env, 'ANALYTICS_HISTORY_CACHE_TTL_MS', DEFAULT_HISTORICAL_CACHE_TTL_MS);
+  const existing = state.historical.get(key);
+  if (existing && cacheAgeMs(now, existing.generatedAt) < ttl) {
+    state.historical.delete(key);
+    state.historical.set(key, existing);
+    return withCacheMeta(existing.value, {
+      status: 'hit',
+      stale: false,
+      generated_at: cacheDate(existing.generatedAt),
+      cache_age_ms: cacheAgeMs(now, existing.generatedAt),
+      ttl_ms: ttl,
+    });
+  }
+
+  try {
+    const value = await reportData(route, db, range, env, now, url);
+    const entry = { generatedAt: now, value };
+    cacheSet(state.historical, key, entry, MAX_REPORT_CACHE_ENTRIES);
+    return withCacheMeta(value, {
+      status: 'fresh',
+      stale: false,
+      generated_at: cacheDate(now),
+      cache_age_ms: 0,
+      ttl_ms: ttl,
+    });
+  } catch (error) {
+    if (!existing) throw error;
+    return withCacheMeta(existing.value, {
+      status: 'stale',
+      stale: true,
+      generated_at: cacheDate(existing.generatedAt),
+      cache_age_ms: cacheAgeMs(now, existing.generatedAt),
+      ttl_ms: ttl,
+    });
+  }
+}
+
 async function reportData(route, db, range, env, now, url) {
   if (route === 'performance') {
-    return performanceReport(env, range);
+    return cachedPerformanceReport(env, range);
   }
 
   const includeBots = url.searchParams.get('include_bots') === '1';
@@ -3005,7 +3362,7 @@ export async function handleAnalyticsRequest(request, env = {}, ctx = null) {
         coverage: { unavailable: true },
       });
     }
-    return jsonResponse(await reportData(route, db, range, env, now, url));
+    return jsonResponse(await cachedHistoricalReport(route, db, range, env, now, url));
   } catch (error) {
     if (error?.code === 'REPORT_TOO_LARGE') {
       return errorResponse(503, 'Analytics detail exceeds the bounded report limit', {
@@ -3111,6 +3468,9 @@ export async function recordShortlinkEvent(data, env = {}, ctx = null) {
     return { accepted: 0, deduped: 0, unavailable: true };
   }
   const accepted = resultChanges(results[0]) > 0 ? 1 : 0;
+  if (accepted) {
+    invalidateHistoricalCache(env);
+  }
   await mirrorEvents(accepted ? [event] : [], env, ctx);
   return {
     accepted,
@@ -3274,11 +3634,18 @@ export async function runAnalyticsMaintenance(env = {}, ctx = null) {
   }
   const task = pruneAndRollup(db, nowMs(env));
   if (ctx && typeof ctx.waitUntil === 'function') {
-    ctx.waitUntil(task);
+    ctx.waitUntil(task.then((result) => {
+      if (!result?.unavailable) {
+        invalidateHistoricalCache(env);
+      }
+      return result;
+    }));
     return { scheduled: true };
   }
   try {
-    return await task;
+    const result = await task;
+    invalidateHistoricalCache(env);
+    return result;
   } catch {
     return { unavailable: true, reason: 'Analytics maintenance failed' };
   }
@@ -3373,6 +3740,9 @@ export async function importLegacyHistory(env = {}) {
         }
       }
     } catch {
+      if (imported > 0) {
+        invalidateHistoricalCache(env);
+      }
       return {
         imported,
         deduped,
@@ -3382,6 +3752,9 @@ export async function importLegacyHistory(env = {}) {
     }
   }
 
+  if (imported > 0) {
+    invalidateHistoricalCache(env);
+  }
   return {
     imported,
     deduped,
