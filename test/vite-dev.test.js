@@ -47,7 +47,7 @@ test('frontend preview serves clean routes and only forwards public reads', asyn
   await t.test('keeps reference HTML and generated output out of entries', () => {
     const entries = Object.values(server.config.build.rollupOptions.input);
     assert.ok(entries.some((entry) => /[/\\]blog\.html$/.test(entry)));
-    assert.ok(entries.every((entry) => !/[/\\](repo-reference|dist|node_modules|\.wrangler)[/\\]/.test(entry)));
+    assert.ok(entries.every((entry) => !/[/\\](repo-reference|dist|node_modules|\.wrangler|apps|admin-analytics)[/\\]/.test(entry)));
   });
 
   await t.test('serves the blog clean URL with its query intact', async () => {
@@ -86,6 +86,10 @@ test('frontend preview serves clean routes and only forwards public reads', asyn
     }
     const videoWrite = await fetch(`${origin}/assets/video/brandon.mp4`, { method: 'POST' });
     assert.equal(videoWrite.status, 405);
+    for (const path of ['/api/events', '/api/admin/sink/link/create']) {
+      const response = await fetch(`${origin}${path}`, { method: 'POST' });
+      assert.equal(response.status, 405, path);
+    }
     assert.equal(requests.length, before);
   });
 });

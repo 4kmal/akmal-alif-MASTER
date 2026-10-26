@@ -12,6 +12,10 @@
     "build": "vite build",
     "preview": "wrangler dev",
     "dev:worker": "wrangler dev",
+    "dev:admin": "pnpm --dir apps/admin dev",
+    "build:admin": "pnpm --dir apps/admin build",
+    "test:admin": "pnpm --dir apps/admin test --run",
+    "check:admin": "pnpm --dir apps/admin types:check && pnpm --dir apps/admin lint",
     "test": "node --test test/*.test.js",
     "deploy": "pnpm build && wrangler deploy"
   },

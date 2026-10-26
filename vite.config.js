@@ -4,7 +4,7 @@ import { readdirSync, statSync, cpSync, existsSync, mkdirSync } from 'fs';
 import { Agent as HttpsAgent } from 'node:https';
 
 const projectRoot = resolve(__dirname, '.');
-const ignoredDirectories = new Set(['node_modules', 'dist', 'repo-reference', 'coverage']);
+const ignoredDirectories = new Set(['node_modules', 'dist', 'repo-reference', 'coverage', 'apps', 'admin-analytics']);
 const backendPaths = ['/api', '/media', '/assets/video/', '/blog/blogpic/thumb1.mp4'];
 
 function isBackendPath(url = '') {
@@ -96,7 +96,7 @@ export default defineConfig(({ mode }) => {
     open: false,
     proxy,
     watch: {
-      ignored: ['**/repo-reference/**', '**/dist/**', '**/.wrangler/**', '**/coverage/**'],
+      ignored: ['**/repo-reference/**', '**/dist/**', '**/.wrangler/**', '**/coverage/**', '**/apps/**', '**/admin-analytics/**'],
     },
   },
   build: {
@@ -106,6 +106,15 @@ export default defineConfig(({ mode }) => {
     },
   },
   plugins: [
+    {
+      name: 'portfolio-event-tracking',
+      transformIndexHtml: {
+        order: 'pre',
+        handler() {
+          return [{ tag: 'script', attrs: { type: 'module', src: '/js/analytics.js' }, injectTo: 'head' }];
+        },
+      },
+    },
     {
       name: 'read-only-development-backend',
       configureServer(server) {

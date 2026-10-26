@@ -1,0 +1,8 @@
+# Local Worker development only. Never enable local flags in production settings.
+ALLOW_LOCAL_ADMIN=true
+ALLOW_LOCAL_ANALYTICS=true
+PORTFOLIO_GATEWAY_TOKEN=replace-with-the-same-private-local-value-in-both-workers
+
+# Production uses Cloudflare Access; these identifiers are supplied by its application.
+CF_ACCESS_TEAM_DOMAIN=
+CF_ACCESS_AUD=

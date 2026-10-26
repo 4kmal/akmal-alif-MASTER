@@ -6,6 +6,22 @@
   "account_id": "73138007ecb740aea99f9c99bb2a2705",
   "workers_dev": true,
   "preview_urls": false,
+  "vars": {
+    "ADMIN_EMAIL": "iamaleep@gmail.com",
+    "PORTFOLIO_ADMIN_ORIGIN": "https://www.akmalalif.com",
+    "CF_ACCESS_TEAM_DOMAIN": "restless-moon-2787.cloudflareaccess.com",
+    "CF_ACCESS_AUD": "714d0158f871371058f2c4e4a2e119f2f72476e301a1aacdca730aa44372cc33"
+  },
+  "services": [
+    { "binding": "ADMIN", "service": "akmalalif-admin" }
+  ],
+  "ratelimits": [
+    {
+      "name": "EVENT_RATE_LIMITER",
+      "namespace_id": "74102601",
+      "simple": { "limit": 120, "period": 60 }
+    }
+  ],
   "routes": [
     {
       "pattern": "www.akmalalif.com",
