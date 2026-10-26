@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   createPublicShortlinkUrl,
@@ -36,4 +37,3 @@ describe('public shortlink URL adapter', () => {
     expect(getPublicShortlinkImageUrl(undefined, origin)).toBe('https://go.akmalalif.com/icon/portfolio.svg')
   })
 })
-import { existsSync } from 'node:fs'

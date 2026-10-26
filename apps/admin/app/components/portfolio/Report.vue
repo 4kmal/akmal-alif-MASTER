@@ -475,9 +475,10 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
   const coverage = response.meta?.coverage
   const sourceState = sourceStateFor(response, report)
   const source = response.meta?.source || 'portfolio analytics'
+  const hasReportData = coverage?.has_data === true || (report === 'history' && records(data.events).length > 0)
   const detail = response.meta?.detail === 'daily_rollup'
     ? 'This period uses retained daily summaries; raw event detail has expired.'
-    : response.meta?.reason || (coverage?.has_data ? `Source: ${source}.` : 'No trusted events were returned for this window.')
+    : response.meta?.reason || (hasReportData ? `Source: ${source}.` : 'No trusted events were returned for this window.')
   const range = response.meta?.range?.preset || [response.meta?.range?.from, response.meta?.range?.to].filter(Boolean).join(' → ')
   const queryRange = response.meta?.query_range
   const queryRangeLabel = queryRange
@@ -789,7 +790,7 @@ function normalizeReport(response: BackendReport, report: ReportName): ReportPay
     highlights.push('Active visitors are measured over the last five minutes.')
 
   return {
-    hasData: coverage?.has_data === true,
+    hasData: hasReportData,
     sourceState,
     sourceNote: detail,
     updatedAt: typeof data.as_of === 'string' ? data.as_of : undefined,
