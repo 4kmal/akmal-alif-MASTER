@@ -7,6 +7,16 @@ function reply(status, error) {
   return Response.json({ error }, { status, headers: { 'Cache-Control': 'no-store' } });
 }
 
+function adminOrigin(env) {
+  try {
+    const configured = new URL(env.PORTFOLIO_ADMIN_ORIGIN || ADMIN_ORIGIN);
+    if (configured.protocol !== 'https:' || configured.hostname.endsWith('.workers.dev') || configured.username || configured.password) return null;
+    return configured.origin;
+  } catch {
+    return null;
+  }
+}
+
 function decodePart(value) {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('Invalid JWT encoding');
   return Uint8Array.from(atob(value.replaceAll('-', '+').replaceAll('_', '/')), (char) => char.charCodeAt(0));
@@ -33,9 +43,11 @@ export async function validateAccessIdentity(request, env, options = {}) {
     if (parts.length !== 3) return null;
     const header = JSON.parse(new TextDecoder().decode(decodePart(parts[0])));
     const claims = JSON.parse(new TextDecoder().decode(decodePart(parts[1])));
-    const expectedEmail = String(env.ADMIN_EMAIL || 'iamaleep@gmail.com').toLowerCase();
+    const expectedEmail = String(env.ADMIN_EMAIL || '').toLowerCase();
+    if (!expectedEmail || expectedEmail.length > 254 || !/^[^\s@]+@[^\s@]+$/.test(expectedEmail)) return null;
     const seconds = Math.floor(now / 1000);
     if (header.alg !== 'RS256' || typeof header.kid !== 'string' || header.kid.length > 256
+      || claims.type !== 'app' || claims.common_name !== undefined
       || claims.iss !== `https://${domain}`
       || !(Array.isArray(claims.aud) ? claims.aud : [claims.aud]).includes(audience)
       || !Number.isFinite(claims.exp) || claims.exp <= seconds
@@ -72,11 +84,13 @@ function trustedHeaders(request, env) {
   for (const name of [...headers.keys()]) {
     const lower = name.toLowerCase();
     if (lower.startsWith('x-portfolio-') || lower.startsWith('x-forwarded-') || lower === 'authorization'
+      || ['host', 'forwarded', 'x-real-ip', 'true-client-ip', 'x-original-url', 'x-original-host', 'x-rewrite-url', 'x-http-method-override'].includes(lower)
       || (lower.startsWith('cf-') && lower !== 'cf-access-jwt-assertion')) headers.delete(name);
   }
+  const origin = new URL(adminOrigin(env) || ADMIN_ORIGIN);
   headers.set('x-portfolio-gateway', env.PORTFOLIO_GATEWAY_TOKEN);
-  headers.set('x-forwarded-proto', 'https');
-  headers.set('x-forwarded-host', 'www.akmalalif.com');
+  headers.set('x-forwarded-proto', origin.protocol.slice(0, -1));
+  headers.set('x-forwarded-host', origin.host);
   return headers;
 }
 
@@ -86,13 +100,17 @@ function proxyResponse(response) {
   headers.set('X-Robots-Tag', 'noindex, nofollow');
   headers.set('Referrer-Policy', 'same-origin');
   headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('X-Frame-Options', 'DENY');
+  const csp = (headers.get('Content-Security-Policy') || '').split(';').map((directive) => directive.trim()).filter((directive) => directive && !/^frame-ancestors\b/i.test(directive));
+  csp.push("frame-ancestors 'none'");
+  headers.set('Content-Security-Policy', csp.join('; '));
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 export async function handleAdminGateway(request, env, options = {}) {
   const url = new URL(request.url);
   const local = LOCAL_HOSTS.has(url.hostname) && env.ALLOW_LOCAL_ADMIN === 'true';
-  if (url.origin !== ADMIN_ORIGIN && !local) return reply(404, 'Not Found');
+  if (url.origin !== adminOrigin(env) && !local) return reply(404, 'Not Found');
   if (!env.ADMIN || !env.PORTFOLIO_GATEWAY_TOKEN) return reply(503, 'Admin service is not configured');
   if (!local && !await validateAccessIdentity(request, env, options)) return reply(401, 'Cloudflare Access owner sign-in required');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.headers.get('Origin') !== url.origin) return reply(403, 'Cross-origin admin writes are not allowed');

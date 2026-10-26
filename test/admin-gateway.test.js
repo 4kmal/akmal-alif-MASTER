@@ -12,7 +12,7 @@ const options = { now, fetcher: async () => Response.json({ keys: [publicKey] })
 async function jwt(overrides = {}, headerOverrides = {}) {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const header = encode({ alg: 'RS256', kid: publicKey.kid, ...headerOverrides });
-  const payload = encode({ iss: `https://${env.CF_ACCESS_TEAM_DOMAIN}`, aud: [env.CF_ACCESS_AUD], sub: 'owner-subject', email: env.ADMIN_EMAIL, iat: now / 1000 - 10, exp: now / 1000 + 3600, ...overrides });
+  const payload = encode({ type: 'app', iss: `https://${env.CF_ACCESS_TEAM_DOMAIN}`, aud: [env.CF_ACCESS_AUD], sub: 'owner-subject', email: env.ADMIN_EMAIL, iat: now / 1000 - 10, exp: now / 1000 + 3600, ...overrides });
   const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyPair.privateKey, new TextEncoder().encode(`${header}.${payload}`));
   return `${header}.${payload}.${Buffer.from(signature).toString('base64url')}`;
 }
@@ -24,13 +24,14 @@ function accessRequest(path, token, init = {}) {
 test('Access verifies the signature, issuer, audience, expiry and exact owner', async () => {
   const valid = await jwt();
   assert.deepEqual(await validateAccessIdentity(accessRequest('/admin', valid), env, options), { email: env.ADMIN_EMAIL, subject: 'owner-subject' });
-  for (const claims of [{ email: 'someone@gmail.com' }, { aud: ['other-app'] }, { iss: 'https://other.cloudflareaccess.com' }, { exp: now / 1000 }, { nbf: now / 1000 + 300 }, { sub: '' }]) {
+  for (const claims of [{ email: 'someone@gmail.com' }, { aud: ['other-app'] }, { iss: 'https://other.cloudflareaccess.com' }, { exp: now / 1000 }, { nbf: now / 1000 + 300 }, { sub: '' }, { type: 'service' }, { common_name: 'service-token' }]) {
     assert.equal(await validateAccessIdentity(accessRequest('/admin', await jwt(claims)), env, options), null);
   }
   assert.equal(await validateAccessIdentity(accessRequest('/admin', await jwt({}, { alg: 'none' })), env, options), null);
   const parts = valid.split('.');
   parts[1] = Buffer.from(JSON.stringify({ email: env.ADMIN_EMAIL, iss: `https://${env.CF_ACCESS_TEAM_DOMAIN}`, aud: [env.CF_ACCESS_AUD], sub: 'owner-subject', exp: now / 1000 + 600 })).toString('base64url');
   assert.equal(await validateAccessIdentity(accessRequest('/admin', parts.join('.')), env, options), null);
+  assert.equal(await validateAccessIdentity(accessRequest('/admin', valid), { ...env, ADMIN_EMAIL: undefined }, options), null);
   assert.equal(await validateAccessIdentity(new Request(`${origin}/admin`, { headers: { Cookie: `CF_Authorization=${valid}` } }), env, options)?.then((identity) => identity?.email), env.ADMIN_EMAIL);
 });
 
@@ -53,6 +54,8 @@ test('admin forwarding preserves bodies and queries, removes spoofed gateway hea
   const response = await handleAdminGateway(accessRequest('/api/admin/sink/link/create?dry=1', token, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', Authorization: 'Bearer untrusted-browser-token', 'x-portfolio-gateway': 'spoofed', 'x-forwarded-host': 'evil.test' }, body: '{"slug":"github"}' }), backend, options);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.equal(response.headers.get('X-Frame-Options'), 'DENY');
+  assert.match(response.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
   assert.equal(forwarded[0].url, `${origin}/api/link/create?dry=1`);
   assert.equal(forwarded[0].body, '{"slug":"github"}');
   assert.equal(forwarded[0].headers.get('x-portfolio-gateway'), env.PORTFOLIO_GATEWAY_TOKEN);
@@ -62,6 +65,24 @@ test('admin forwarding preserves bodies and queries, removes spoofed gateway hea
   assert.equal(forwarded.length, 1);
   await handleAdminGateway(accessRequest('/api/admin/overview?range=7d', token), backend, options);
   assert.equal(forwarded[1].url, `${origin}/api/portfolio/overview?range=7d`);
+});
+
+test('the gateway removes alternate proxy headers and preserves multiple cookies', async () => {
+  let forwarded;
+  const backend = { ...env, PORTFOLIO_ADMIN_ORIGIN: 'https://stage.akmalalif.com', ADMIN: { fetch: async (request) => {
+    forwarded = request;
+    const headers = new Headers({ 'Content-Security-Policy': "default-src 'self'; frame-ancestors https://example.com" });
+    headers.append('Set-Cookie', 'visitor=one; Secure; HttpOnly');
+    headers.append('Set-Cookie', 'session=two; Secure; HttpOnly');
+    return new Response('private', { headers });
+  } } };
+  const request = new Request('https://stage.akmalalif.com/admin', { headers: { 'Cf-Access-Jwt-Assertion': await jwt(), Forwarded: 'for=attacker;host=evil.test', 'X-Real-IP': 'spoofed', 'True-Client-IP': 'spoofed', 'X-Original-URL': '/api/link/delete' } });
+  const response = await handleAdminGateway(request, backend, options);
+  assert.equal(response.status, 200);
+  for (const header of ['Forwarded', 'X-Real-IP', 'True-Client-IP', 'X-Original-URL']) assert.equal(forwarded.headers.get(header), null);
+  assert.equal(forwarded.headers.get('x-forwarded-host'), 'stage.akmalalif.com');
+  assert.equal(response.headers.getSetCookie().length, 2);
+  assert.equal(response.headers.get('Content-Security-Policy'), "default-src 'self'; frame-ancestors 'none'");
 });
 
 test('public analytics has a separate, bounded canonical-origin gateway', async () => {
