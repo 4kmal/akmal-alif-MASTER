@@ -35,6 +35,31 @@ Private evidence: `C:/Users/Admin/.codex/backups/akmalalif-admin-2026-10-26/`. T
 
 ## Evidence and release gaps
 
+### First production checkpoint: 2026-10-27
+
+The initial admin Git deployment succeeded from `e0e7f48`, Worker version
+`3faace31-6546-4c89-9a0b-cba13e4a6041`. Its cloud build confirmed Node 24.21.0,
+pnpm 11.2.2 and all intended bindings, including the daily `0 0 * * *` schedule.
+The app's dependency-script policy now records explicit decisions for the
+otherwise unreviewed transitive installation hooks; the global guard remains on.
+
+Twenty-five live checks passed on the admin service: anonymous and owner-route
+denials, native bearer authentication, fresh empty-KV initialization, D1 link
+creation/query/filtering, public 301 redirects with query preservation, removal
+of the verification links, fourteen advertised MCP tools with actual read/write
+calls, private R2 backup, public QR-mark CORS, Analytics Engine counters/hourly
+views and the reviewed-suggestion endpoint. An omitted required `unit` produced
+the expected 400 before the valid hourly query succeeded. The native `/admin`
+entry first normalizes to `/admin/briefing`, which redirects to the private `www`
+dashboard; no owner dashboard page is served on `go`.
+
+Private evidence is `admin-cloud-build.log` and `admin-live-api-results.json`
+beside the setup status. The portfolio gateway cutover and its first-party event
+checks follow this checkpoint. The user submitted the owner PIN, but Codex's
+in-app browser reports `ERR_BLOCKED_BY_CLIENT` on the Access return navigation;
+the authenticated production browser flow and owner-only reports still need
+verification. Authentication has not been relaxed to work around that blocker.
+
 - The Sink README at the pinned commit explicitly describes analytics realtime as 10-second polling plus client-side replay, not a WebSocket or SSE stream. Any release claim should preserve that distinction.
 - Automated tests establish local behavior; deployment, owner login and real provider/source status still require live evidence.
 - Portfolio analytics unit evidence and the private Cloudflare provider/RUM evidence are listed only by path; no token, raw PII, or provider response was copied into this document. The provider report confirms a parent-run check, not a deployed-origin acceptance check.
