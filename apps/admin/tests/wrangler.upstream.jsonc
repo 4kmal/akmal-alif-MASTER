@@ -1,0 +1,38 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "akmalalif-admin-upstream-tests",
+  "main": "../.output/server/index.mjs",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "akmalalif-admin-upstream-test",
+      "database_id": "upstream-test-db",
+      "migrations_dir": "../drizzle"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "upstream-test-kv"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "akmalalif-admin-upstream-test"
+    }
+  ],
+  "vars": {
+    "SITE_TOKEN": "test-site-token",
+    "PORTFOLIO_GATEWAY_TOKEN": "test-gateway-token",
+    "ALLOW_LOCAL_ADMIN": "false",
+    "ADMIN_EMAIL": "owner@example.test",
+    "PORTFOLIO_ADMIN_ORIGIN": "https://www.example.test",
+    "SHORTLINK_ORIGIN": "https://go.example.test",
+    "CF_ACCESS_TEAM_DOMAIN": "",
+    "CF_ACCESS_AUD": "",
+    "NUXT_PUBLIC_LINK_PROXY_ENABLED": "false"
+  }
+}
