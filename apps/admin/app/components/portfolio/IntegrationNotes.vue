@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { normalizePublicShortlinkOrigin } from '@/utils/public-shortlink'
+
 const { public: config } = useRuntimeConfig()
-const publicOrigin = computed(() => new URL(config.shortlinkOrigin).origin)
+const publicOrigin = computed(() => normalizePublicShortlinkOrigin(config.shortlinkOrigin))
 </script>
 
 <template>

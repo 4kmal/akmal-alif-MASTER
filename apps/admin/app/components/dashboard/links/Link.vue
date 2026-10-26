@@ -3,9 +3,15 @@ import type { ComponentPublicInstance } from 'vue'
 import type { DashboardLink } from '@/types/dashboard-links'
 import { CalendarPlus2, Copy, CopyCheck, Ellipsis, Eraser, Flame, Hourglass, Link as LinkIcon, MousePointerClick, QrCode, ShieldAlert, SquarePen, Users } from '@lucide/vue'
 import { useClipboard, useMediaQuery } from '@vueuse/core'
-import { parseURL } from 'ufo'
 import { toast } from 'vue-sonner'
-import { adminAssetURL } from '@/utils/admin-asset'
+import {
+  createPublicShortlinkUrl,
+  getPublicShortlinkAssetUrl,
+  getPublicShortlinkHost,
+  getPublicShortlinkImageUrl,
+  normalizePublicShortlinkOrigin,
+  PUBLIC_PORTFOLIO_ICON_PATH,
+} from '@/utils/public-shortlink'
 
 const props = defineProps<{
   link: DashboardLink
@@ -69,20 +75,12 @@ const counterErrorIds = inject(LINKS_COUNTER_ERROR_IDS_KEY)
 const retryCounters = inject(RETRY_LINK_COUNTERS_KEY)
 const countersError = computed(() => counterErrorIds?.value.has(props.link.id) ?? false)
 
-const requestUrl = useRequestURL()
-const host = requestUrl.host
-const origin = requestUrl.origin
-
-function getLinkHost(url: string): string | undefined {
-  const { host } = parseURL(url)
-  return host
-}
-
-const shortLink = computed(() => `${origin}/${props.link.slug}`)
-const linkIcon = computed(() => {
-  const fallback = encodeURIComponent(`${origin}${adminAssetURL('icon.png')}`)
-  return `https://unavatar.webp.se/${getLinkHost(props.link.url)}?fallback=${fallback}`
-})
+const { public: runtimeConfig } = useRuntimeConfig()
+const publicShortlinkOrigin = computed(() => normalizePublicShortlinkOrigin(runtimeConfig.shortlinkOrigin))
+const publicShortlinkHost = computed(() => getPublicShortlinkHost(publicShortlinkOrigin.value))
+const publicShortlinkIcon = computed(() => getPublicShortlinkAssetUrl(PUBLIC_PORTFOLIO_ICON_PATH, publicShortlinkOrigin.value))
+const shortLink = computed(() => createPublicShortlinkUrl(props.link.slug, publicShortlinkOrigin.value))
+const linkIcon = computed(() => getPublicShortlinkImageUrl(props.link.image, publicShortlinkOrigin.value))
 const isExpired = computed(() => Boolean(props.link.expiration && props.link.expiration <= Math.floor(Date.now() / 1000)))
 const noteText = computed(() => props.link.comment?.trim() ?? '')
 const summaryText = computed(() => props.link.title?.trim() || props.link.description?.trim() || '')
@@ -117,7 +115,7 @@ function copyLink() {
             />
             <AvatarFallback>
               <img
-                :src="adminAssetURL('icon.png')"
+                :src="publicShortlinkIcon"
                 :alt="link.slug"
                 loading="lazy"
               >
@@ -147,7 +145,7 @@ function copyLink() {
                           hidden
                           sm:inline
                         "
-                      >{{ host }}/{{ link.slug }}</span>
+                      >{{ publicShortlinkHost }}/{{ link.slug }}</span>
                     </NuxtLink>
                   </TooltipTrigger>
                   <TooltipContent class="max-w-[90svw] break-all">
@@ -171,7 +169,7 @@ function copyLink() {
                     hidden
                     sm:inline
                   "
-                >{{ host }}/{{ link.slug }}</span>
+                >{{ publicShortlinkHost }}/{{ link.slug }}</span>
               </NuxtLink>
               <span
                 v-if="link.unsafe"

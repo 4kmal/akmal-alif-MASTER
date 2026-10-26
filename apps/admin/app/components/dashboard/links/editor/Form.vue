@@ -6,6 +6,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { toast } from 'vue-sonner'
 import { z } from 'zod'
 import { MAX_URL_LENGTH, nanoid, SlugSchema } from '#shared/schemas/link'
+import { createPublicShortlinkUrl, normalizePublicShortlinkOrigin } from '@/utils/public-shortlink'
 
 const props = defineProps<{
   link: Partial<DashboardLink>
@@ -21,7 +22,8 @@ const emit = defineEmits<{
 
 const { t, locale } = useI18n()
 const linksSearchStore = useDashboardLinksSearchStore()
-const requestUrl = useRequestURL()
+const { public: runtimeConfig } = useRuntimeConfig()
+const publicShortlinkOrigin = computed(() => normalizePublicShortlinkOrigin(runtimeConfig.shortlinkOrigin))
 
 const slugValidator = SlugSchema
 const commentValidator = z.string().max(500).optional()
@@ -159,9 +161,9 @@ watch(currentUrl, (url) => {
   void findDuplicateLink(url, generation)
 }, { immediate: true })
 
-const shortDuplicateLink = computed(() => duplicateLink.value ? `${requestUrl.origin}/${duplicateLink.value.slug}` : '')
+const shortDuplicateLink = computed(() => duplicateLink.value ? createPublicShortlinkUrl(duplicateLink.value.slug, publicShortlinkOrigin.value) : '')
 
-const { previewMode } = useRuntimeConfig().public
+const { previewMode } = runtimeConfig
 const isExpiredLink = computed(() => Boolean(
   props.isEdit
   && props.link.expiration
