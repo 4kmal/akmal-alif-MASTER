@@ -43,6 +43,18 @@ const platformItems = computed<NavItem[]>(() => [
     isActive: isActive('content'),
   },
   {
+    title: 'Blog posts',
+    url: '/admin/blog/posts',
+    icon: DASHBOARD_ROUTES.blogPosts.icon,
+    isActive: isActive('blogPosts'),
+  },
+  {
+    title: 'Blog media',
+    url: '/admin/blog/media',
+    icon: DASHBOARD_ROUTES.blogMedia.icon,
+    isActive: isActive('blogMedia'),
+  },
+  {
     title: 'Engagement',
     url: '/admin/engagement',
     icon: DASHBOARD_ROUTES.engagement.icon,
@@ -92,6 +104,12 @@ const settingsItems = computed<NavItem[]>(() => [
     url: '/admin/realtime',
     icon: DASHBOARD_ROUTES.realtime.icon,
     isActive: isActive('realtime'),
+  },
+  {
+    title: 'Blog settings',
+    url: '/admin/blog/settings',
+    icon: DASHBOARD_ROUTES.blogSettings.icon,
+    isActive: isActive('blogSettings'),
   },
 ])
 </script>

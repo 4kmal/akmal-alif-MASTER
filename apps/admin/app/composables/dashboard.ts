@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Activity, ChartArea, FolderSync, Link, ScanSearch } from '@lucide/vue'
+import { Activity, ChartArea, FolderSync, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
 import { computed } from 'vue'
 import { useRoute } from '#imports'
 
@@ -39,6 +39,21 @@ export const DASHBOARD_ROUTES = {
     paths: ['/admin/content'],
     titleKey: 'Content',
     icon: Link,
+  },
+  blogPosts: {
+    paths: ['/admin/blog', '/admin/blog/posts'],
+    titleKey: 'Blog posts',
+    icon: PenLine,
+  },
+  blogMedia: {
+    paths: ['/admin/blog/media'],
+    titleKey: 'Blog media',
+    icon: Image,
+  },
+  blogSettings: {
+    paths: ['/admin/blog/settings'],
+    titleKey: 'Blog settings',
+    icon: Settings2,
   },
   engagement: {
     paths: ['/admin/engagement'],
@@ -89,8 +104,10 @@ export function useDashboardRoute() {
 
   const currentPage = computed<DashboardRouteName | ''>(() => {
     for (const [page, config] of Object.entries(DASHBOARD_ROUTES)) {
-      if ((config.paths as readonly string[]).includes(route.path))
+      if ((config.paths as readonly string[]).includes(route.path)
+        || (page === 'blogPosts' && route.path.startsWith('/admin/blog/posts/'))) {
         return page as DashboardRouteName
+      }
     }
     return ''
   })
