@@ -1,3 +1,8 @@
 allowBuilds:
+  '@parcel/watcher@2.5.6': false
   esbuild: true
+  maplibre-gl@2.1.9: false
+  sharp@0.34.5: false
+  unrs-resolver@1.12.2: true
+  vue-demi@0.14.10: true
   workerd: true
