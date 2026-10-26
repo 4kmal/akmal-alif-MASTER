@@ -88,6 +88,15 @@ export default defineNuxtConfig({
     '/api/**': {
       cors: false,
     },
+    // QR exports may embed the local portfolio mark from the admin origin.
+    // Keep this opt-in to the one public icon instead of enabling broad asset
+    // or API CORS headers.
+    '/icon/portfolio.svg': {
+      headers: {
+        'Access-Control-Allow-Origin': 'https://www.akmalalif.com',
+        'Vary': 'Origin',
+      },
+    },
     '/_docs/**': {
       headers: { 'X-Robots-Tag': 'noindex, follow' },
     },

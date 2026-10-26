@@ -1,8 +1,38 @@
 import type { H3Event } from 'h3'
+import { getHeader } from 'h3'
 import { SlugSchema } from '#shared/schemas/link'
+import { getRuntimeString } from './runtime-config'
 
 const slugValidator = SlugSchema
 const imageKeyPattern = /^images\/([^/]+)\/([\w-]{10}\.(?:jpeg|png|webp|gif))$/
+
+function normalizeOrigin(value: string): string | null {
+  try {
+    const origin = new URL(value).origin
+    return origin === 'null' ? null : origin
+  }
+  catch {
+    return null
+  }
+}
+
+function setPublicImageCors(event: H3Event) {
+  const pathname = getRequestURL(event).pathname
+  if (!pathname.startsWith('/_assets/images/'))
+    return
+
+  const requestOrigin = normalizeOrigin(getHeader(event, 'origin') || '')
+  if (!requestOrigin)
+    return
+
+  const configuredOrigin = getRuntimeString(event, 'portfolioAdminOrigin', 'PORTFOLIO_ADMIN_ORIGIN')
+  const allowedOrigin = normalizeOrigin(configuredOrigin || 'https://www.akmalalif.com')
+  if (!allowedOrigin || requestOrigin !== allowedOrigin)
+    return
+
+  setHeader(event, 'Access-Control-Allow-Origin', allowedOrigin)
+  setHeader(event, 'Vary', 'Origin')
+}
 
 function validateImageKey(event: H3Event, key: string): { slug: string, filename: string } {
   // Nitro decodes catch-all route parameters before exposing them. Inspect the
@@ -47,5 +77,6 @@ export async function serveImageAsset(event: H3Event): Promise<ReadableStream | 
   setHeader(event, 'Content-Type', object.httpMetadata?.contentType || 'application/octet-stream')
   setHeader(event, 'Cache-Control', 'public, max-age=31536000, immutable')
   setHeader(event, 'ETag', object.etag)
+  setPublicImageCors(event)
   return object.body
 }
