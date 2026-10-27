@@ -23,7 +23,7 @@ interface JudgingDeviceContext {
   expiresAt: string
 }
 
-interface JudgingRecordRow {
+export interface JudgingRecordRow {
   event_id: string
   record_key: string
   version: number
@@ -153,7 +153,7 @@ export async function validateRecordKey(key: unknown): Promise<string> {
   throw createError({ statusCode: 400, statusMessage: 'Record key is not part of this judging event' })
 }
 
-function parseRecord(row: JudgingRecordRow): JudgingRecord {
+export function parseJudgingRecordRow(row: JudgingRecordRow): JudgingRecord {
   let data: unknown
   try {
     data = JSON.parse(row.data_json)
@@ -171,12 +171,12 @@ function parseRecord(row: JudgingRecordRow): JudgingRecord {
 
 export async function getJudgingRecord(db: DbLike, key: string): Promise<JudgingRecord | null> {
   const row = first<JudgingRecordRow>(await db.prepare('SELECT event_id, record_key, version, data_json, updated_at, updated_by FROM judging_records WHERE event_id = ? AND record_key = ? LIMIT 1').bind(JUDGING_EVENT_ID, key).all())
-  return row ? parseRecord(row) : null
+  return row ? parseJudgingRecordRow(row) : null
 }
 
 export async function listJudgingRecords(db: DbLike): Promise<JudgingRecord[]> {
   const result = await db.prepare('SELECT event_id, record_key, version, data_json, updated_at, updated_by FROM judging_records WHERE event_id = ? ORDER BY record_key ASC').bind(JUDGING_EVENT_ID).all()
-  return rows<JudgingRecordRow>(result).map(parseRecord)
+  return rows<JudgingRecordRow>(result).map(parseJudgingRecordRow)
 }
 
 function canonicalJson(value: unknown): string {
@@ -797,7 +797,7 @@ export async function judgingState(db: DbLike, event?: H3Event): Promise<{ assig
         FROM judging_records WHERE event_id = ? AND record_key IN (${placeholders}) ORDER BY record_key ASC`)
       .bind(JUDGING_EVENT_ID, ...chunk)
       .all()
-    records.push(...rows<JudgingRecordRow>(result).map(parseRecord))
+    records.push(...rows<JudgingRecordRow>(result).map(parseJudgingRecordRow))
   }
   records.sort((left, right) => left.key.localeCompare(right.key))
   return { assignment: ASSIGNMENT, records, serverTime: new Date().toISOString(), cursor }

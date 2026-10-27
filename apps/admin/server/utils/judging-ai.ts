@@ -5,9 +5,9 @@ import { parseAiResponse } from './ai'
 import {
   changes,
   first,
-  getJudgingRecord,
   judgingEnv,
-  listJudgingRecords,
+  JUDGING_EVENT_ID,
+  parseJudgingRecordRow,
   recordJudgingEvent,
   requireJudgingDb,
   rows,
@@ -164,26 +164,40 @@ function assertTeam(teamId: unknown, teamIds: readonly string[]): string {
   return teamId
 }
 
-function recordTeamId(record: { data: Record<string, unknown> } | undefined): string | null {
-  const teamId = record?.data.teamId
-  return typeof teamId === 'string' ? teamId : null
-}
-
 export async function buildAssessmentInput(db: D1Database, teamId: string): Promise<AssessmentInput> {
-  const records = await listJudgingRecords(db)
-  const intakeRecord = records.find(record => record.key === `intake:${teamId}`)
-  const reviewRecord = records.find(record => record.key === `review:${teamId}`)
+  const metadataRows = rows<{
+    event_id: string
+    record_key: string
+    version: number
+    data_json: string
+    updated_at: string
+    updated_by: string
+  }>(await db.prepare(`SELECT event_id, record_key, version, data_json, updated_at, updated_by
+    FROM judging_records
+    WHERE event_id = ? AND record_key IN (?, ?)
+    ORDER BY record_key ASC`).bind(JUDGING_EVENT_ID, `intake:${teamId}`, `review:${teamId}`).all())
+  const metadataRecords = metadataRows.map(parseJudgingRecordRow)
+  const intakeRecord = metadataRecords.find(record => record.key === `intake:${teamId}`)
+  const reviewRecord = metadataRecords.find(record => record.key === `review:${teamId}`)
   const intake = intakeRecord?.data ?? null
   const review = reviewRecord?.data ?? null
   const declaredEvidenceIds = Array.isArray(intake?.evidenceIds)
     ? intake.evidenceIds.filter((id): id is string => typeof id === 'string')
     : []
-  const evidenceRecords = records
-    .filter(record => record.key.startsWith('evidence:'))
-    .filter((record) => {
-      const dataTeam = recordTeamId(record)
-      return dataTeam === teamId || declaredEvidenceIds.includes(record.key.slice('evidence:'.length))
-    })
+  const evidenceRows = rows<{
+    event_id: string
+    record_key: string
+    version: number
+    data_json: string
+    updated_at: string
+    updated_by: string
+  }>(await db.prepare(`SELECT event_id, record_key, version, data_json, updated_at, updated_by
+    FROM judging_records
+    WHERE event_id = ?
+      AND record_key LIKE 'evidence:%'
+      AND json_extract(data_json, '$.teamId') = ?
+    ORDER BY record_key ASC`).bind(JUDGING_EVENT_ID, teamId).all())
+  const evidenceRecords = evidenceRows.map(parseJudgingRecordRow)
   const byId = new Map(evidenceRecords.map(record => [record.key.slice('evidence:'.length), record.data]))
   const evidence = (declaredEvidenceIds.length ? declaredEvidenceIds : [...byId.keys()])
     .map(id => byId.get(id))

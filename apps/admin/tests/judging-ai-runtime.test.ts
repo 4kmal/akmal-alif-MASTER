@@ -34,9 +34,12 @@ class SqliteStatement implements StatementLike {
 }
 
 class SqliteD1 {
+  readonly queries: string[] = []
+
   constructor(readonly db: DatabaseSync) {}
 
   prepare(sql: string): StatementLike {
+    this.queries.push(sql)
     return new SqliteStatement(this.db, sql)
   }
 
@@ -103,6 +106,61 @@ describe('judging AI runtime contract', () => {
 
   beforeEach(() => {
     database = createDatabase()
+  })
+
+  it('loads only the requested team evidence and marks declared cross-team evidence missing', async () => {
+    const ownEvidenceId = 'a'.repeat(32)
+    const foreignEvidenceId = 'b'.repeat(32)
+    insertRecord(database, 'intake:01-console', {
+      teamId: '01-console',
+      repoUrl: 'https://github.com/example/repo',
+      branch: 'main',
+      sha: 'c'.repeat(40),
+      retrievedAt: '2026-10-28T00:00:00.000Z',
+      snapshotPath: 'snapshots/01-console',
+      verified: true,
+      evidenceIds: [ownEvidenceId, foreignEvidenceId],
+      artifacts: [],
+      links: [],
+      demoParity: 'unverified',
+      issues: [],
+      declaredDemoCommits: [],
+      previousSnapshots: [],
+    })
+    insertRecord(database, `evidence:${ownEvidenceId}`, {
+      id: ownEvidenceId,
+      teamId: '01-console',
+      snapshotSha: 'c'.repeat(40),
+      path: 'README.md',
+      kind: 'source',
+      sha256: 'd'.repeat(64),
+      text: 'Own team evidence.',
+      lines: 1,
+      coverage: 'README',
+      createdAt: '2026-10-28T00:00:00.000Z',
+    })
+    insertRecord(database, `evidence:${foreignEvidenceId}`, {
+      id: foreignEvidenceId,
+      teamId: '02-ctrl-ai',
+      snapshotSha: 'e'.repeat(40),
+      path: 'README.md',
+      kind: 'source',
+      sha256: 'f'.repeat(64),
+      text: 'Foreign team evidence.',
+      lines: 1,
+      coverage: 'README',
+      createdAt: '2026-10-28T00:00:00.000Z',
+    })
+
+    const input = await buildAssessmentInput(database as never, '01-console')
+
+    expect(input.evidence.map(evidence => evidence.id)).toEqual([ownEvidenceId])
+    expect(input.evidence.some(evidence => evidence.id === foreignEvidenceId)).toBe(false)
+    expect(input.missing).toContain(`evidence:${foreignEvidenceId}`)
+    const recordQueries = database.queries.filter(query => query.includes('FROM judging_records'))
+    expect(recordQueries).toHaveLength(2)
+    expect(recordQueries.some(query => query.includes('record_key IN (?, ?)'))).toBe(true)
+    expect(recordQueries.some(query => query.includes("json_extract(data_json, '$.teamId') = ?"))).toBe(true)
   })
 
   it('uses a bounded JSON-generation request and leaves the next job queued for a fresh poll', async () => {
