@@ -973,7 +973,7 @@ function isBrowserDraftKey(key: string) {
 }
 
 function readBrowserDraftStore() {
-  if (!props.local || typeof localStorage === 'undefined')
+  if (typeof localStorage === 'undefined')
     return {} as Record<string, BrowserDraft>
   const raw = localStorage.getItem(DRAFT_STORAGE_KEY)
   if (!raw || raw.length > MAX_DRAFT_BYTES)
@@ -1011,7 +1011,7 @@ function readBrowserDraftStore() {
 }
 
 function writeBrowserDraftStore() {
-  if (!props.local || typeof localStorage === 'undefined')
+  if (typeof localStorage === 'undefined')
     return
   try {
     const entries = Object.fromEntries(Object.entries(browserDrafts).map(([key, draft]) => [key, {
@@ -1040,7 +1040,7 @@ function writeBrowserDraftStore() {
 }
 
 function persistBrowserDraft(key: string) {
-  if (!props.local || !isBrowserDraftKey(key))
+  if (!isBrowserDraftKey(key))
     return
   try {
     const pending = pendingSnapshots.get(key)
@@ -1066,8 +1066,6 @@ function persistBrowserDraft(key: string) {
 }
 
 function clearBrowserDraft(key: string) {
-  if (!props.local)
-    return
   pendingSnapshots.delete(key)
   delete browserDrafts[key]
   writeBrowserDraftStore()
@@ -1108,8 +1106,6 @@ function applyBrowserDraft(draft: BrowserDraft) {
 }
 
 function recoverBrowserDrafts() {
-  if (!props.local)
-    return
   for (const draft of Object.values(browserDrafts)) {
     if (recoveredDraftKeys.has(draft.key))
       continue

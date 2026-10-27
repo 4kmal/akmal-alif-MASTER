@@ -259,6 +259,24 @@ describe('judgingWorkspace save behavior', () => {
     expect(fetchCalls.find(call => call.url.endsWith('/records'))?.body?.data?.name).toBe('Offline edit')
   })
 
+  it('recovers an offline owner edit after remount without attempting an unauthenticated save', async () => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
+    mountAdmin()
+    await settle()
+    setInput(nameInput(host), 'Offline owner edit')
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+    expect(JSON.parse(localStorage.getItem('sdc-judging-drafts-v1') ?? '{}').judge.data.name).toBe('Offline owner edit')
+    app?.unmount()
+    app = null
+    host.innerHTML = ''
+    mountAdmin()
+    await settle()
+    expect(nameInput(host).value).toBe('Offline owner edit')
+    expect(fetchCalls.some(call => call.url.endsWith('/records'))).toBe(false)
+  })
+
   it('keeps raw decimal scores for persistence while displaying the weighted total to one decimal', async () => {
     delayedFirstSave = false
     mountLocal()
