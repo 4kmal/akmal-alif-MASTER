@@ -320,6 +320,16 @@ const evidenceLink = ref('')
 const evidenceLinkMessage = ref('')
 const newNote = ref('')
 const assessmentJobs = ref<AssessmentJob[]>([])
+const latestAssessmentJobs = computed(() => {
+  const teamsSeen = new Set<string>()
+  return assessmentJobs.value.filter((job) => {
+    if (teamsSeen.has(job.teamId))
+      return false
+    teamsSeen.add(job.teamId)
+    return true
+  })
+})
+const priorAssessmentJobs = computed(() => assessmentJobs.value.filter(job => !latestAssessmentJobs.value.some(latest => latest.id === job.id)))
 const assessmentMessage = ref('')
 const exportMessage = ref('')
 const recoveryMessage = ref('')
@@ -2317,7 +2327,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="job-list">
               <div
-                v-for="job in assessmentJobs" :key="job.id" class="job-row"
+                v-for="job in latestAssessmentJobs" :key="job.id" class="job-row"
               >
                 <div>
                   <strong>{{ teamName(job.teamId) }}</strong><small>{{ job.message ?? job.status }}</small><span
@@ -2356,6 +2366,16 @@ onBeforeUnmount(() => {
                 No assessment jobs queued.
               </p>
             </div>
+            <details v-if="priorAssessmentJobs.length" class="assessment-history">
+              <summary>Earlier attempts ({{ priorAssessmentJobs.length }})</summary>
+              <ol>
+                <li v-for="job in priorAssessmentJobs" :key="job.id">
+                  <strong>{{ teamName(job.teamId) }}</strong>
+                  <span>{{ job.message ?? job.status }}</span>
+                  <time v-if="job.updatedAt" :datetime="job.updatedAt">{{ formatDateTime(job.updatedAt) }}</time>
+                </li>
+              </ol>
+            </details>
           </div>
         </div>
 
@@ -3577,6 +3597,32 @@ button:disabled {
   align-content: start;
   gap: 0.3rem;
 }
+.assessment-history {
+  border-top: 1px solid var(--judge-border);
+  padding-top: 0.6rem;
+  font-size: 0.72rem;
+}
+.assessment-history summary {
+  cursor: pointer;
+}
+.assessment-history summary:focus-visible {
+  outline: 2px solid var(--judge-yellow);
+  outline-offset: 2px;
+}
+.assessment-history ol {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+.assessment-history li {
+  display: grid;
+  gap: 0.2rem;
+  overflow-wrap: anywhere;
+}
+.assessment-history li span,
+.assessment-history time {
+  color: var(--judge-muted);
+}
 .job-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(8rem, 0.45fr) auto;
@@ -4454,6 +4500,15 @@ button:disabled {
   }
   .repo-check label {
     flex: 0 1 auto;
+  }
+  .deployment-links li {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+  }
+  .deployment-links li span {
+    flex: 0 1 auto;
+    overflow-wrap: anywhere;
   }
   .ai-score-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));

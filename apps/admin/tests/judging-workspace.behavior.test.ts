@@ -628,6 +628,21 @@ describe('judgingWorkspace save behavior', () => {
     expect(fetchCalls.some(call => call.url.endsWith('/assessments/jobs'))).toBe(false)
   })
 
+  it('keeps the latest attempt in the queue and preserves earlier attempts in a collapsed history', async () => {
+    jobsPayload = [
+      { id: 'current-job', teamId: '01-console', status: 'running', progress: 50 },
+      { id: 'earlier-job', teamId: '01-console', status: 'failed', progress: 100, error: 'Earlier provider failure' },
+    ]
+    mountAdmin()
+    await settle()
+    expect(host.querySelectorAll('.job-list .job-row')).toHaveLength(1)
+    expect(host.querySelector('.job-list')?.textContent).toContain('running')
+    const history = host.querySelector<HTMLDetailsElement>('details.assessment-history')
+    expect(history?.open).toBe(false)
+    expect(history?.textContent).toContain('Earlier provider failure')
+    expect(history?.querySelector('summary')?.textContent).toContain('Earlier attempts (1)')
+  })
+
   it('exposes workbench tabs with roving focus and Home/End keyboard navigation', async () => {
     mountLocal()
     await settle()
