@@ -1,6 +1,7 @@
 import type { DOMOutputSpec } from '@tiptap/pm/model'
 import type { BlogMediaAttrs } from '@/utils/blog-studio'
 import { mergeAttributes, Node } from '@tiptap/vue-3'
+import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 
 function readMediaAttributes(element: HTMLElement) {
   const figure = element.tagName.toLowerCase() === 'figure' ? element : null
@@ -71,5 +72,87 @@ export const BlogMedia = Node.create({
       'data-align': align,
       'style': `width:${width}%;margin-inline:${align === 'center' ? 'auto' : align === 'right' ? 'auto 0' : '0 auto'};`,
     }), ...children]
+  },
+})
+
+export const BlogGallery = Node.create({
+  name: 'blogGallery',
+  group: 'block',
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return {
+      manifestId: { default: '' },
+    }
+  },
+
+  parseHTML() {
+    return [{
+      tag: 'figure[data-blog-gallery]',
+      getAttrs: (element: HTMLElement) => ({ manifestId: element.dataset.manifestId || '' }),
+    }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const manifestId = typeof HTMLAttributes.manifestId === 'string' ? HTMLAttributes.manifestId : ''
+    return ['figure', mergeAttributes({ 'data-blog-gallery': 'true', 'data-manifest-id': manifestId }, HTMLAttributes), [
+      'div',
+      {
+        'class': 'blog-gallery-node',
+        'data-gallery-manifest-id': manifestId,
+      },
+      manifestId ? `Gallery ${manifestId}` : 'Gallery placeholder',
+    ]]
+  },
+})
+
+export const BlogYouTube = Node.create({
+  name: 'blogYouTube',
+  group: 'block',
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return {
+      videoId: { default: '' },
+      title: { default: '' },
+    }
+  },
+
+  parseHTML() {
+    return [{
+      tag: 'figure[data-blog-youtube]',
+      getAttrs: (element: HTMLElement) => ({
+        videoId: normalizeYouTubeVideoId(element.dataset.videoId) ?? '',
+        title: element.dataset.title || element.querySelector('figcaption')?.textContent || '',
+      }),
+    }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const videoId = normalizeYouTubeVideoId(HTMLAttributes.videoId) ?? ''
+    const title = typeof HTMLAttributes.title === 'string' ? HTMLAttributes.title : ''
+    if (!videoId) {
+      return ['figure', { 'data-blog-youtube': 'true', 'data-video-id': '' }, [
+        'div',
+        { class: 'blog-youtube-node blog-youtube-node--invalid' },
+        'YouTube video ID is invalid',
+      ]]
+    }
+    const iframe: DOMOutputSpec = ['iframe', {
+      'src': `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}`,
+      'title': title || 'YouTube video',
+      'loading': 'lazy',
+      'referrerpolicy': 'strict-origin-when-cross-origin',
+      'allow': 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+      'allowfullscreen': 'true',
+      'data-blog-youtube': 'true',
+      'data-video-id': videoId,
+    }]
+    const children: DOMOutputSpec[] = [iframe]
+    if (title)
+      children.push(['figcaption', {}, title])
+    return ['figure', mergeAttributes({ 'data-blog-youtube': 'true', 'data-video-id': videoId, 'data-title': title }, HTMLAttributes), ...children]
   },
 })

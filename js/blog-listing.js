@@ -31,7 +31,11 @@ function normaliseCategories(categories) {
     if (!slug || !name || seenSlugs.has(slug)) continue;
 
     seenSlugs.add(slug);
-    uniqueCategories.push({ slug, name });
+    uniqueCategories.push({
+      slug,
+      name,
+      icon_key: String(category?.icon_key ?? category?.iconKey ?? '').trim().toLowerCase(),
+    });
   }
 
   return uniqueCategories;
@@ -43,7 +47,7 @@ function renderCategories(container, categories) {
   container.innerHTML = [
     `<button type="button" class="category-btn active" data-category="all" aria-pressed="true">${renderBlogFilterIcon('all')}<span>All</span></button>`,
     ...uniqueCategories.map((category) => (
-      `<button type="button" class="category-btn" data-category="${escapeHtml(category.slug)}" aria-pressed="false">${renderBlogFilterIcon(category.slug)}<span>${escapeHtml(category.name)}</span></button>`
+      `<button type="button" class="category-btn" data-category="${escapeHtml(category.slug)}" aria-pressed="false">${renderBlogFilterIcon(category.slug, category.icon_key)}<span>${escapeHtml(category.name)}</span></button>`
     )),
   ].join('');
 }

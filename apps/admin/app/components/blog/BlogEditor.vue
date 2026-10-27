@@ -3,6 +3,7 @@
 import type { Editor } from '@tiptap/vue-3'
 import type { BlogDocxImportReview } from '@/composables/useBlogDocuments'
 import type { BlogAsset, BlogDraft, BlogMediaAttrs, BlogPostDetail, BlogRevision, LegacyConversionResult } from '@/utils/blog-studio'
+import type { GallerySummary } from '@/utils/content-calendar'
 import { Archive, ArrowLeft, Check, Clock3, Download, ExternalLink, FileText, History, LoaderCircle, PanelRight, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Upload, X } from '@lucide/vue'
 import { EditorContent } from '@tiptap/vue-3'
 import { useBlogApi } from '@/composables/useBlogApi'
@@ -12,6 +13,7 @@ import { useBlogEditor } from '@/composables/useBlogEditor'
 import { convertLegacyHtmlToTiptap } from '@/composables/useBlogLegacyConversion'
 import { preserveDraftEditsAfterServerSave, rebaseDraftOntoServer } from '@/composables/useBlogStudio'
 import { cloneDraft, createEmptyDraft, formatDate, isStaleDraftError } from '@/utils/blog-studio'
+import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 import { getBlogPosterAssets } from './blog-media-library-state'
 import BlogModal from './BlogModal.vue'
 
@@ -34,6 +36,13 @@ const inspectorOpen = ref(true)
 const mediaDialogOpen = ref(false)
 const mediaAssets = ref<BlogAsset[]>([])
 const mediaLoading = ref(false)
+const galleryDialogOpen = ref(false)
+const gallerySummaries = ref<GallerySummary[]>([])
+const galleryLoading = ref(false)
+const youtubeDialogOpen = ref(false)
+const youtubeVideoId = ref('')
+const youtubeTitle = ref('')
+const youtubeError = ref('')
 const selectedMediaAttrs = ref<BlogMediaAttrs | null>(null)
 const legacyReview = ref<LegacyConversionResult | null>(null)
 const legacyReviewOpen = ref(false)
@@ -47,6 +56,7 @@ const staleApplyLoading = ref(false)
 const staleLocalDraft = ref<BlogDraft | null>(null)
 const localRecoveryReviewAvailable = ref(false)
 const isPublishing = ref(false)
+const publishReviewOpen = ref(false)
 const statusNotice = ref('')
 const docxInput = ref<HTMLInputElement | null>(null)
 const docxReview = ref<BlogDocxImportReview | null>(null)
@@ -71,6 +81,9 @@ const editorState = useBlogEditor({
     editSequence += 1
     if (autosave.state.value === 'stale' || staleReviewOpen.value || localRecoveryReviewAvailable.value)
       staleLocalDraft.value = cloneDraft(draft.value)
+    refreshSelectedMedia(editor)
+  },
+  onSelectionUpdate(editor) {
     refreshSelectedMedia(editor)
   },
 })
@@ -399,10 +412,9 @@ watch(() => autosave.state.value, (value) => {
 })
 
 async function publish() {
-  if (!detail.value || !draft.value || isPublishing.value)
+  if (!detail.value || !draft.value || isPublishing.value || !publishReviewOpen.value)
     return
-  if (!window.confirm('Publish this version to the public portfolio?'))
-    return
+  publishReviewOpen.value = false
   const publishingPostId = postId.value
   isPublishing.value = true
   try {
@@ -543,6 +555,51 @@ async function openMediaDialog() {
   await loadMediaAssets()
 }
 
+async function openGalleryDialog() {
+  galleryDialogOpen.value = true
+  galleryLoading.value = true
+  try {
+    const result = await api.listGalleries()
+    gallerySummaries.value = result.galleries.filter(gallery => gallery.status === 'finalized')
+  }
+  catch (reason: unknown) {
+    error.value = reason instanceof Error ? reason.message : 'Could not load finalized galleries.'
+  }
+  finally {
+    galleryLoading.value = false
+  }
+}
+
+function insertGallery(manifestId: string) {
+  if (!editorState.insertGallery(manifestId)) {
+    error.value = 'That gallery is no longer available. Refresh the gallery list and try again.'
+    return
+  }
+  galleryDialogOpen.value = false
+  statusNotice.value = 'Gallery inserted'
+}
+
+function openYouTubeDialog() {
+  youtubeVideoId.value = ''
+  youtubeTitle.value = ''
+  youtubeError.value = ''
+  youtubeDialogOpen.value = true
+}
+
+function insertYouTube() {
+  const videoId = normalizeYouTubeVideoId(youtubeVideoId.value)
+  if (!videoId) {
+    youtubeError.value = 'Use a valid 11-character YouTube video ID or URL.'
+    return
+  }
+  if (!editorState.insertYouTube(videoId, youtubeTitle.value)) {
+    youtubeError.value = 'This YouTube video could not be inserted.'
+    return
+  }
+  youtubeDialogOpen.value = false
+  statusNotice.value = 'YouTube video inserted'
+}
+
 function insertAsset(asset: BlogAsset) {
   editorState.insertMedia({ assetId: asset.id, kind: asset.kind, src: asset.source_url, alt: asset.name, caption: '', width: 100, align: 'left' })
   mediaDialogOpen.value = false
@@ -642,8 +699,10 @@ onMounted(() => {
   void loadMediaAssets()
 })
 watch(postId, (value, previous) => {
-  if (value && value !== previous)
+  if (value && value !== previous) {
+    publishReviewOpen.value = false
     void load()
+  }
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
@@ -690,7 +749,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <button v-else type="button" class="blog-button blog-button--quiet" @click="updateStatus('archived')">
           <Archive :size="16" /> Archive
         </button>
-        <button type="button" class="blog-button blog-button--primary" :disabled="isPublishing || isStale" @click="publish">
+        <button type="button" class="blog-button blog-button--primary" :disabled="isPublishing || isStale || loading" @click="publishReviewOpen = true">
           <Send :size="16" /> {{ isPublishing ? 'Publishing…' : 'Publish' }}
         </button>
       </div>
@@ -714,7 +773,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         Review conflict
       </button>
     </p>
-    <p v-else-if="localRecoveryReviewAvailable && !staleReviewOpen" class="blog-alert blog-alert--notice" role="status">
+    <p
+      v-else-if="localRecoveryReviewAvailable && !staleReviewOpen" class="
+        blog-alert blog-alert--notice
+      " role="status"
+    >
       <ShieldCheck :size="16" /> A local recovery copy is available for this draft.
       <button type="button" class="blog-text-button" @click="openConflictReview">
         Review recovery copy
@@ -726,7 +789,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </div>
     <template v-else>
       <section class="blog-editor-shell">
-        <BlogRibbon :editor="activeEditor" :find-text="editorState.findText" :replace-text="editorState.replaceText" @insert-media="openMediaDialog" />
+        <BlogRibbon :editor="activeEditor" :find-text="editorState.findText" :replace-text="editorState.replaceText" @insert-media="openMediaDialog" @insert-gallery="openGalleryDialog" @insert-you-tube="openYouTubeDialog" />
         <div class="blog-editor-body">
           <div class="blog-editor-paper-wrap">
             <EditorContent :editor="editor" />
@@ -746,17 +809,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <summary>Add category</summary>
               <form class="blog-taxonomy-create" @submit.prevent="addTaxonomy('category')">
                 <label class="blog-field"><span>New category</span><input v-model="taxonomyNames.category" required maxlength="160" :disabled="taxonomySaving !== null" autocomplete="off"></label>
-                <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.category.trim()">{{ taxonomySaving === 'category' ? 'Adding…' : 'Add category' }}</button>
+                <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.category.trim()">
+                  {{ taxonomySaving === 'category' ? 'Adding…' : 'Add category' }}
+                </button>
               </form>
             </details>
             <fieldset class="blog-field blog-tag-options">
               <legend>Tags</legend>
-              <p v-if="!taxonomy.tags.length" class="blog-inspector__empty">Add a tag to start organizing this post.</p>
-              <label v-for="tag in taxonomy.tags" :key="tag.id" class="blog-toggle"><input type="checkbox" :checked="draft.tag_ids.includes(tag.id)" @change="setDraftField('tag_ids', ($event.target as HTMLInputElement).checked ? [...draft.tag_ids, tag.id] : draft.tag_ids.filter(id => id !== tag.id))"><span>{{ tag.name }}</span></label>
+              <p v-if="!taxonomy.tags.length" class="blog-inspector__empty">
+                Add a tag to start organizing this post.
+              </p>
+              <label
+                v-for="tag in taxonomy.tags" :key="tag.id" class="blog-toggle"
+              ><input type="checkbox" :checked="draft.tag_ids.includes(tag.id)" @change="setDraftField('tag_ids', ($event.target as HTMLInputElement).checked ? [...draft.tag_ids, tag.id] : draft.tag_ids.filter(id => id !== tag.id))"><span>{{ tag.name }}</span></label>
             </fieldset>
             <form class="blog-taxonomy-create" @submit.prevent="addTaxonomy('tag')">
               <label class="blog-field"><span>New tag</span><input v-model="taxonomyNames.tag" required maxlength="160" :disabled="taxonomySaving !== null" autocomplete="off"></label>
-              <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.tag.trim()">{{ taxonomySaving === 'tag' ? 'Adding…' : 'Add tag' }}</button>
+              <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.tag.trim()">
+                {{ taxonomySaving === 'tag' ? 'Adding…' : 'Add tag' }}
+              </button>
             </form>
             <label class="blog-field"><span>Cover image URL</span><input :value="draft.cover_image_url" type="url" placeholder="Protected asset URL" @input="setDraftField('cover_image_url', ($event.target as HTMLInputElement).value)"></label>
             <label class="blog-field"><span>Cover alt text</span><input :value="draft.cover_image_alt" @input="setDraftField('cover_image_alt', ($event.target as HTMLInputElement).value)"></label>
@@ -785,15 +856,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                     class="blog-field"
                   ><span>Alt text</span><input :value="selectedMediaAttrs.alt" @input="updateSelectedMedia('alt', ($event.target as HTMLInputElement).value)"></label><label
                     class="blog-field"
-                  ><span>Caption</span><input :value="selectedMediaAttrs.caption" @input="updateSelectedMedia('caption', ($event.target as HTMLInputElement).value)"></label><template v-if="selectedMediaAttrs.kind === 'video'"><label
-                    class="blog-field"
-                  ><span>Poster frame</span><select :value="selectedMediaAttrs.posterAssetId ?? ''" @change="updateSelectedMedia('posterAssetId', ($event.target as HTMLSelectElement).value)"><option value="">No poster</option><option v-for="asset in posterAssets" :key="asset.id" :value="asset.id">{{ asset.name }} · {{ asset.kind }}</option></select></label><p v-if="selectedPosterAsset" class="blog-inspector__media-note">
-                    Using {{ selectedPosterAsset.name }} as the video poster.
-                  </p><p v-else class="blog-inspector__media-note">
-                    Choose a ready image or GIF asset. Generate named posters in the media library first.
-                  </p><button type="button" class="blog-text-button" :disabled="mediaLoading" @click="loadMediaAssets">
-                    <RefreshCw :size="14" :class="{ 'blog-spin': mediaLoading }" /> {{ mediaLoading ? 'Refreshing…' : 'Refresh poster choices' }}
-                  </button></template>
+                  ><span>Caption</span><input :value="selectedMediaAttrs.caption" @input="updateSelectedMedia('caption', ($event.target as HTMLInputElement).value)"></label><template v-if="selectedMediaAttrs.kind === 'video'">
+                    <label
+                      class="blog-field"
+                    ><span>Poster frame</span><select :value="selectedMediaAttrs.posterAssetId ?? ''" @change="updateSelectedMedia('posterAssetId', ($event.target as HTMLSelectElement).value)"><option value="">No poster</option><option v-for="asset in posterAssets" :key="asset.id" :value="asset.id">{{ asset.name }} · {{ asset.kind }}</option></select></label><p
+                      v-if="selectedPosterAsset" class="
+                        blog-inspector__media-note
+                      "
+                    >
+                      Using {{ selectedPosterAsset.name }} as the video poster.
+                    </p><p v-else class="blog-inspector__media-note">
+                      Choose a ready image or GIF asset. Generate named posters in the media library first.
+                    </p><button type="button" class="blog-text-button" :disabled="mediaLoading" @click="loadMediaAssets">
+                      <RefreshCw :size="14" :class="{ 'blog-spin': mediaLoading }" /> {{ mediaLoading ? 'Refreshing…' : 'Refresh poster choices' }}
+                    </button>
+                  </template>
                 </template><p
                   v-else class="blog-inspector__empty"
                 >
@@ -839,6 +916,38 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </div>
       </div>
     </template>
+
+    <BlogModal
+      v-model:open="publishReviewOpen"
+      title="Publish article"
+      description="Confirm publication of this working draft to the public portfolio."
+    >
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">
+            Publication review
+          </p>
+          <h2>Publish this article?</h2>
+        </div>
+        <button type="button" class="blog-icon-button" aria-label="Cancel publication" @click="publishReviewOpen = false">
+          <X :size="18" />
+        </button>
+      </div>
+      <p class="blog-page-intro">
+        {{ draft.title || 'Untitled article' }}
+      </p>
+      <p class="blog-panel__note">
+        The saved working draft and its approved media will become public at /blog/{{ draft.slug }}.
+      </p>
+      <div class="blog-modal__actions">
+        <button type="button" class="blog-button" @click="publishReviewOpen = false">
+          Keep private
+        </button>
+        <button type="button" class="blog-button blog-button--primary" :disabled="isPublishing || isStale || loading" @click="publish">
+          <Send :size="16" /> Publish article
+        </button>
+      </div>
+    </BlogModal>
 
     <BlogModal
       v-if="legacyReview"
@@ -1061,6 +1170,71 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <ExternalLink :size="15" /> Open media library
         </NuxtLink>
       </div>
+    </BlogModal>
+    <BlogModal v-model:open="galleryDialogOpen" title="Insert gallery" modal-class="blog-modal--wide">
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">
+            Insert
+          </p>
+          <h2>Finalized galleries</h2>
+        </div>
+        <button type="button" class="blog-icon-button" aria-label="Close gallery picker" @click="galleryDialogOpen = false">
+          <X :size="18" />
+        </button>
+      </div>
+      <p class="blog-modal__intro">
+        Only immutable finalized revisions can appear in a published article.
+      </p>
+      <div v-if="galleryLoading" class="blog-state blog-state--small">
+        <LoaderCircle :size="18" class="blog-spin" /> Loading galleries…
+      </div>
+      <div v-else-if="!gallerySummaries.length" class="blog-empty-note">
+        No finalized galleries yet. Create one in the Galleries workspace.
+      </div>
+      <div v-else class="blog-picker-grid">
+        <button
+          v-for="gallery in gallerySummaries" :key="`${gallery.id}:${gallery.revision}`" type="button" class="
+            blog-picker-card
+          " @click="insertGallery(gallery.manifest_id || gallery.id)"
+        >
+          <span class="blog-picker-card__video" aria-hidden="true"><FileText :size="20" /></span>
+          <strong>{{ gallery.title || 'Untitled gallery' }}</strong>
+          <span>Revision {{ gallery.revision }} · {{ gallery.page_count }} pages</span>
+        </button>
+      </div>
+      <div class="blog-modal__footer">
+        <NuxtLink to="/admin/blog/galleries" class="blog-button">
+          <ExternalLink :size="15" /> Open galleries
+        </NuxtLink>
+      </div>
+    </BlogModal>
+    <BlogModal v-model:open="youtubeDialogOpen" title="Insert YouTube video">
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">
+            Insert
+          </p>
+          <h2>YouTube video</h2>
+        </div>
+        <button type="button" class="blog-icon-button" aria-label="Close YouTube dialog" @click="youtubeDialogOpen = false">
+          <X :size="18" />
+        </button>
+      </div>
+      <form class="blog-modal__form" @submit.prevent="insertYouTube">
+        <label class="blog-field"><span>Video ID or URL</span><input v-model="youtubeVideoId" required maxlength="200" placeholder="hez2yR4GyTA" autocomplete="off"></label>
+        <label class="blog-field"><span>Title (optional)</span><input v-model="youtubeTitle" maxlength="180" placeholder="Talk title"></label>
+        <p v-if="youtubeError" class="blog-alert blog-alert--error" role="alert">
+          {{ youtubeError }}
+        </p>
+        <div class="blog-modal__footer">
+          <button
+            type="submit" class="blog-button blog-button--primary"
+          >
+            Insert video
+          </button>
+        </div>
+      </form>
     </BlogModal>
     <BlogModal v-if="docxReview" :open="true" title="DOCX import review" modal-class="blog-modal--wide" @update:open="docxReview = null">
       <div

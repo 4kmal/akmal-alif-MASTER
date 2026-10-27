@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import type { Editor } from '@tiptap/vue-3'
 import type { BlogRibbonTab } from './blog-ribbon-state'
-import { Bold, CheckSquare, Code2, Highlighter, ImagePlus, Italic, Link2, List, ListOrdered, Minus, Palette, Quote, Redo2, Search, Strikethrough, Subscript, Superscript, Table2, Type, Underline, Undo2 } from '@lucide/vue'
+import { Bold, CheckSquare, Code2, GalleryHorizontalEnd, Highlighter, ImagePlus, Italic, Link2, List, ListOrdered, Minus, Palette, Quote, Redo2, Search, Strikethrough, Subscript, Superscript, Table2, Type, Underline, Undo2, Video } from '@lucide/vue'
 import { BLOG_RIBBON_TABS, moveBlogRibbonTab } from './blog-ribbon-state'
 
 const props = defineProps<{
@@ -13,6 +13,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   insertMedia: []
+  insertGallery: []
+  insertYouTube: []
 }>()
 
 const tabs = BLOG_RIBBON_TABS
@@ -267,6 +269,12 @@ function onTabKeydown(event: KeyboardEvent, index: number) {
         <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertMedia')">
           <ImagePlus :size="16" /> Media
         </button>
+        <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertGallery')">
+          <GalleryHorizontalEnd :size="16" /> Gallery
+        </button>
+        <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertYouTube')">
+          <Video :size="16" /> YouTube
+        </button>
         <button type="button" class="blog-tool blog-tool--wide" @click="run(editor => editor.chain().focus().setHorizontalRule().run())">
           <Minus :size="16" /> Rule
         </button>
@@ -339,6 +347,12 @@ function onTabKeydown(event: KeyboardEvent, index: number) {
       <div class="blog-ribbon__group">
         <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertMedia')">
           <ImagePlus :size="16" /> Insert media
+        </button>
+        <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertGallery')">
+          <GalleryHorizontalEnd :size="16" /> Insert gallery
+        </button>
+        <button type="button" class="blog-tool blog-tool--wide" @click="emit('insertYouTube')">
+          <Video :size="16" /> Insert YouTube
         </button>
         <span class="blog-ribbon__hint">Select a media block to edit width, alignment, alt text, caption and poster.</span>
       </div>

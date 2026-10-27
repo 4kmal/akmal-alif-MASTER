@@ -7,6 +7,11 @@ const BLOG_ARTWORK_BY_SLUG = Object.freeze({
   'versatility-humanoid-robots': 'robot-workstation',
   'hexapod-robots-military': 'hexapod',
   'work-life-balance-burnout': 'burnout-desk',
+  'tuju-local-builders-open-map-data': 'civic-map',
+  'internet-jenga-tower-php2shell': 'security-jenga',
+  'mods-worlds-remember-enrage-nightcoop': 'persistent-world',
+  'dream-1-zero-shot-robotics': 'bimanual-robot',
+  'dumb-money-gamestop-shared-story': 'shared-story',
 });
 
 const BLOG_ARTWORK_SLUG_BY_NAME = Object.freeze(
@@ -82,6 +87,76 @@ const BLOG_ARTWORK_SVGS = Object.freeze({
         <rect class="blog-artwork-line" x="235" y="88" width="4" height="16" />
       </g>
     </svg>`,
+  'civic-map': `
+    <svg class="blog-card-sprite blog-card-sprite--civic-map" data-blog-artwork="civic-map" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
+      <rect class="blog-artwork-bg" width="320" height="180" />
+      <rect class="blog-artwork-shadow" x="24" y="140" width="272" height="4" />
+      <rect class="blog-artwork-deep" x="58" y="34" width="204" height="98" />
+      <path class="blog-artwork-line" d="M70 55h178v12H70zM70 76h178v8H70zM70 94h114v8H70zM70 112h82v8H70z" />
+      <path class="blog-artwork-mid" d="M84 48 116 34l25 18 37-8 28 19 35-13 22 20v47l-44 7-34-18-36 15-38-20-27 15Z" />
+      <rect class="blog-artwork-accent" x="103" y="67" width="10" height="10" />
+      <rect class="blog-artwork-accent" x="186" y="83" width="10" height="10" />
+      <rect class="blog-artwork-accent" x="218" y="105" width="10" height="10" />
+      <g class="blog-artwork-motion blog-artwork-motion--map" data-blog-artwork-motion>
+        <rect class="blog-artwork-accent" x="154" y="46" width="12" height="12" />
+      </g>
+    </svg>`,
+  'security-jenga': `
+    <svg class="blog-card-sprite blog-card-sprite--security-jenga" data-blog-artwork="security-jenga" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
+      <rect class="blog-artwork-bg" width="320" height="180" />
+      <rect class="blog-artwork-shadow" x="52" y="140" width="214" height="4" />
+      <g class="blog-artwork-deep">
+        <rect x="108" y="122" width="102" height="13" /><rect x="108" y="103" width="102" height="13" />
+        <rect x="108" y="84" width="102" height="13" /><rect x="108" y="65" width="102" height="13" />
+      </g>
+      <g class="blog-artwork-mid">
+        <rect x="122" y="46" width="74" height="13" /><rect x="122" y="27" width="74" height="13" />
+      </g>
+      <path class="blog-artwork-line" d="M116 128h24m12 0h20m12 0h20M116 109h22m16 0h30m12 0h14M116 90h40m14 0h28M116 71h24m14 0h38" />
+      <g class="blog-artwork-motion blog-artwork-motion--jenga" data-blog-artwork-motion>
+        <rect class="blog-artwork-accent" x="206" y="84" width="14" height="13" />
+      </g>
+    </svg>`,
+  'persistent-world': `
+    <svg class="blog-card-sprite blog-card-sprite--persistent-world" data-blog-artwork="persistent-world" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
+      <rect class="blog-artwork-bg" width="320" height="180" />
+      <rect class="blog-artwork-shadow" x="26" y="139" width="268" height="5" />
+      <rect class="blog-artwork-deep" x="54" y="49" width="212" height="84" />
+      <rect class="blog-artwork-mid" x="68" y="63" width="184" height="56" />
+      <path class="blog-artwork-line" d="M68 78h184M68 95h184M98 63v56M132 63v56M166 63v56M200 63v56M234 63v56" />
+      <rect class="blog-artwork-accent" x="106" y="77" width="16" height="16" />
+      <rect class="blog-artwork-accent" x="174" y="95" width="16" height="16" />
+      <g class="blog-artwork-motion blog-artwork-motion--world" data-blog-artwork-motion>
+        <rect class="blog-artwork-accent" x="208" y="77" width="16" height="16" />
+      </g>
+    </svg>`,
+  'bimanual-robot': `
+    <svg class="blog-card-sprite blog-card-sprite--bimanual-robot" data-blog-artwork="bimanual-robot" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
+      <rect class="blog-artwork-bg" width="320" height="180" />
+      <rect class="blog-artwork-shadow" x="35" y="140" width="250" height="4" />
+      <rect class="blog-artwork-surface" x="74" y="128" width="172" height="10" />
+      <rect class="blog-artwork-deep" x="126" y="69" width="68" height="58" />
+      <rect class="blog-artwork-mid" x="139" y="53" width="42" height="18" />
+      <rect class="blog-artwork-accent" x="147" y="59" width="8" height="6" /><rect class="blog-artwork-accent" x="166" y="59" width="8" height="6" />
+      <path class="blog-artwork-deep" d="M126 78 96 88 80 112 93 117 112 101 126 96ZM194 78l30 10 16 24-13 5-19-16-14-5Z" />
+      <path class="blog-artwork-mid" d="M84 112h20v18H84zM216 112h20v18h-20z" />
+      <g class="blog-artwork-motion blog-artwork-motion--arms" data-blog-artwork-motion>
+        <rect class="blog-artwork-accent" x="74" y="107" width="12" height="9" /><rect class="blog-artwork-accent" x="234" y="107" width="12" height="9" />
+      </g>
+    </svg>`,
+  'shared-story': `
+    <svg class="blog-card-sprite blog-card-sprite--shared-story" data-blog-artwork="shared-story" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
+      <rect class="blog-artwork-bg" width="320" height="180" />
+      <rect class="blog-artwork-shadow" x="24" y="139" width="272" height="5" />
+      <rect class="blog-artwork-deep" x="48" y="50" width="224" height="80" />
+      <rect class="blog-artwork-mid" x="65" y="66" width="64" height="48" />
+      <rect class="blog-artwork-mid" x="191" y="66" width="64" height="48" />
+      <path class="blog-artwork-line" d="M76 78h42v5H76zM76 91h30v5H76zM202 78h42v5h-42zM202 91h30v5h-30z" />
+      <path class="blog-artwork-accent" d="m129 78 22 9-22 9v-7h-17v-4h17zM191 78l-22 9 22 9v-7h17v-4h-17z" />
+      <g class="blog-artwork-motion blog-artwork-motion--story" data-blog-artwork-motion>
+        <rect class="blog-artwork-accent" x="143" y="107" width="34" height="7" />
+      </g>
+    </svg>`,
 });
 
 const BLOG_FILTER_ICONS = Object.freeze({
@@ -113,6 +188,54 @@ const BLOG_FILTER_ICONS = Object.freeze({
       <rect x="14" y="13" width="4" height="4" fill="currentColor" />
       <rect x="8" y="8" width="4" height="4" fill="var(--blog-accent)" />
     </svg>`,
+  'civic-tech': `
+    <svg class="blog-filter-icon blog-filter-icon--civic-tech" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M2 16h16v2H2zM4 14h2V8H4v6Zm5 0h2V5H9v9Zm5 0h2V2h-2v12Z" fill="currentColor" />
+      <rect x="3" y="3" width="3" height="3" fill="var(--blog-accent)" /><rect x="8" y="2" width="3" height="3" fill="var(--blog-accent)" /><rect x="14" y="7" width="3" height="3" fill="var(--blog-accent)" />
+    </svg>`,
+  cybersecurity: `
+    <svg class="blog-filter-icon blog-filter-icon--cybersecurity" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M10 2 17 5v5c0 4-2.7 6.5-7 8-4.3-1.5-7-4-7-8V5l7-3Z" fill="currentColor" />
+      <path d="M7 10h6v4H7z" fill="var(--blog-accent)" /><rect x="8" y="7" width="4" height="4" fill="var(--blog-accent)" />
+    </svg>`,
+  'game-development': `
+    <svg class="blog-filter-icon blog-filter-icon--game-development" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M3 8c1-3 3-4 7-4s6 1 7 4l1 6c.4 2-2 3-3.4 1.5L12 13H8l-2.6 2.5C4 17 1.6 16 2 14l1-6Z" fill="currentColor" />
+      <path d="M5 9h4v2H5V9Zm1-1h2v4H6V8Z" fill="var(--blog-accent)" /><rect x="13" y="8" width="2" height="2" fill="var(--blog-accent)" /><rect x="15" y="10" width="2" height="2" fill="var(--blog-accent)" />
+    </svg>`,
+  robotics: `
+    <svg class="blog-filter-icon blog-filter-icon--robotics" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <rect x="5" y="5" width="10" height="9" fill="currentColor" /><rect x="8" y="2" width="4" height="3" fill="currentColor" />
+      <rect x="7" y="8" width="2" height="2" fill="var(--blog-accent)" /><rect x="11" y="8" width="2" height="2" fill="var(--blog-accent)" />
+      <path d="M2 8h3v2H2v-2Zm13 0h3v2h-3V8ZM7 14h2v4H7v-4Zm4 0h2v4h-2v-4Z" fill="currentColor" />
+    </svg>`,
+  anthem: `
+    <svg class="blog-filter-icon blog-filter-icon--anthem" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M4 3h2v11.5a3.5 3.5 0 1 1-2 0V3Zm2 2h9v2H6V5Zm9 0h2v8.5a3.5 3.5 0 1 1-2 0V5Z" fill="currentColor" />
+      <circle cx="4" cy="16" r="2" fill="var(--blog-accent)" /><circle cx="15" cy="16" r="2" fill="var(--blog-accent)" />
+    </svg>`,
+  'internet-culture': `
+    <svg class="blog-filter-icon blog-filter-icon--internet-culture" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <rect x="2" y="3" width="7" height="6" fill="currentColor" /><rect x="11" y="11" width="7" height="6" fill="currentColor" />
+      <path d="M9 6h2v2H9V6Zm0 6h2v2H9v-2Z" fill="var(--blog-accent)" /><path d="M6 9v2h8V9h2v4h-2v2H6v-2H4V9h2Z" fill="currentColor" />
+    </svg>`,
+});
+
+const BLOG_FILTER_ICON_ALIASES = Object.freeze({
+  'civic-tech': 'civic-tech',
+  civictech: 'civic-tech',
+  civic: 'civic-tech',
+  cybersecurity: 'cybersecurity',
+  'cyber-security': 'cybersecurity',
+  security: 'cybersecurity',
+  'game-development': 'game-development',
+  'game-dev': 'game-development',
+  gamedev: 'game-development',
+  robotics: 'robotics',
+  anthem: 'anthem',
+  'internet-culture': 'internet-culture',
+  internetculture: 'internet-culture',
+  internet: 'internet-culture',
 });
 
 function normaliseLegacyPath(value) {
@@ -139,7 +262,7 @@ export function isLegacyBlogThumbnail(value) {
 
 export function resolveBlogThumbnail(post) {
   const slug = String(post?.slug ?? '').trim();
-  const coverUrl = String(post?.cover_image_url ?? '').trim();
+  const coverUrl = String(post?.cover_image_url ?? post?.cover_url ?? post?.cover_image ?? '').trim();
   const artwork = BLOG_ARTWORK_BY_SLUG[slug];
 
   if (artwork && (!coverUrl || isLegacyBlogThumbnail(coverUrl))) {
@@ -149,7 +272,7 @@ export function resolveBlogThumbnail(post) {
   return {
     type: 'image',
     src: coverUrl || LEGACY_BLOG_THUMBNAIL,
-    alt: String(post?.cover_image_alt || post?.title || 'Blog post'),
+    alt: String(post?.cover_image_alt || post?.cover_alt || post?.title || 'Blog post'),
   };
 }
 
@@ -157,8 +280,13 @@ export function renderBlogSprite(artwork) {
   return BLOG_ARTWORK_SVGS[artwork] ?? '';
 }
 
-export function renderBlogFilterIcon(slug) {
-  return BLOG_FILTER_ICONS[String(slug ?? '').trim().toLowerCase()] ?? '';
+export function renderBlogFilterIcon(slug, preferredIconKey = '') {
+  const slugKey = String(slug ?? '').trim().toLowerCase();
+  const preferredKey = String(preferredIconKey ?? '').trim().toLowerCase();
+  const iconKey = BLOG_FILTER_ICON_ALIASES[preferredKey]
+    || BLOG_FILTER_ICON_ALIASES[slugKey]
+    || slugKey;
+  return BLOG_FILTER_ICONS[iconKey] ?? '';
 }
 
 function getReducedMotion(windowRef) {

@@ -55,6 +55,18 @@ const platformItems = computed<NavItem[]>(() => [
     isActive: isActive('blogMedia'),
   },
   {
+    title: 'Galleries',
+    url: '/admin/blog/galleries',
+    icon: DASHBOARD_ROUTES.galleries.icon,
+    isActive: isActive('galleries'),
+  },
+  {
+    title: 'Calendar',
+    url: '/admin/calendar',
+    icon: DASHBOARD_ROUTES.calendar.icon,
+    isActive: isActive('calendar'),
+  },
+  {
     title: 'Engagement',
     url: '/admin/engagement',
     icon: DASHBOARD_ROUTES.engagement.icon,

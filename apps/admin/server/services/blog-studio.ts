@@ -6,6 +6,8 @@ import { getRuntimeString } from '../utils/runtime-config'
 export const BLOG_UPLOAD_PART_SIZE = 10 * 1024 * 1024
 export const BLOG_MAX_SOURCE_SIZE = 250 * 1024 * 1024
 export const BLOG_MAX_UPLOAD_PARTS = Math.ceil(BLOG_MAX_SOURCE_SIZE / BLOG_UPLOAD_PART_SIZE)
+export const BLOG_GALLERY_MAX_PAGES = 512
+export const BLOG_GALLERY_SOURCE_MIME = 'application/pdf'
 const BLOG_MAX_JSON_BODY_BYTES = BLOG_MAX_CANONICAL_BYTES * 2 + 64 * 1024
 const BLOG_MAX_PROJECT_DEPTH = 64
 const BLOG_MAX_PROJECT_NODES = 10_000
@@ -39,6 +41,7 @@ export interface BlogDraft {
   meta_description: string | null
   content_json: Record<string, unknown> | null
   content_html: string
+  gallery_manifest_ids: string[]
   updated_at: string
 }
 
@@ -80,6 +83,7 @@ interface DraftInput {
   content_json: Record<string, unknown> | null
   content_html: string
   asset_ids: string[]
+  gallery_manifest_ids: string[]
 }
 
 function rows<T = Record<string, unknown>>(result: unknown): T[] {
@@ -446,9 +450,135 @@ async function tagsFor(db: D1Like, postId: string, draft = true): Promise<string
   return rows<{ tag_id: string }>(result).map(row => row.tag_id)
 }
 
-async function assetReferencesFor(db: D1Like, postId: string, scope: 'draft' | 'published' = 'draft'): Promise<string[]> {
-  const result = await db.prepare('SELECT asset_id FROM blog_post_asset_refs WHERE post_id = ? AND scope = ? ORDER BY asset_id ASC').bind(postId, scope).all()
-  return rows<{ asset_id: string }>(result).map(row => row.asset_id)
+async function galleryReferencesFor(db: D1Like, postId: string, scope: 'draft' | 'published' = 'draft'): Promise<string[]> {
+  const result = await db.prepare('SELECT manifest_id FROM blog_post_gallery_refs WHERE post_id = ? AND scope = ? ORDER BY manifest_id ASC').bind(postId, scope).all()
+  return rows<{ manifest_id: string }>(result).map(row => row.manifest_id)
+}
+
+function galleryIdsFromDocument(value: unknown, result: string[] = []): string[] {
+  if (!value || typeof value !== 'object')
+    return result
+  if (Array.isArray(value)) {
+    for (const child of value)
+      galleryIdsFromDocument(child, result)
+    return result
+  }
+  const record = value as Record<string, unknown>
+  if (record.type === 'blogGallery' && record.attrs && typeof record.attrs === 'object') {
+    const manifestId = (record.attrs as Record<string, unknown>).manifestId
+    if (typeof manifestId === 'string' && !result.includes(manifestId))
+      result.push(manifestId)
+  }
+  for (const child of Object.values(record))
+    galleryIdsFromDocument(child, result)
+  return result
+}
+
+async function galleryManifestAssetIds(db: D1Like, actor: string, manifestIds: string[], postId?: string): Promise<string[]> {
+  if (!manifestIds.length)
+    return []
+  const placeholders = manifestIds.map(() => '?').join(',')
+  const params: unknown[] = [...manifestIds, actor]
+  let postClause = ''
+  if (postId) {
+    postClause = ' AND g.post_id = ?'
+    params.push(postId)
+  }
+  const result = await db.prepare(`
+    SELECT DISTINCT mp.asset_id, mp.thumbnail_asset_id
+    FROM blog_gallery_manifests AS m
+    INNER JOIN blog_galleries AS g ON g.id = m.gallery_id
+    INNER JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = m.id
+    WHERE m.id IN (${placeholders})
+      AND mp.visible = 1
+      AND g.created_by = ?${postClause}
+  `).bind(...params).all()
+  const ids: string[] = []
+  for (const row of rows<{ asset_id: string, thumbnail_asset_id: string }>(result)) {
+    for (const id of [row.asset_id, row.thumbnail_asset_id]) {
+      if (id && !ids.includes(id))
+        ids.push(id)
+    }
+  }
+  return ids
+}
+
+async function galleryResolver(db: D1Like, actor: string, postId?: string) {
+  return async (manifestId: string) => {
+    const params: unknown[] = [manifestId, actor]
+    const postClause = postId ? ' AND g.post_id = ?' : ''
+    if (postId)
+      params.push(postId)
+    const row = first<{ id: string, title: string, page_count: number }>(await db.prepare(`
+      SELECT m.id, m.title, COUNT(mp.page_id) AS page_count
+      FROM blog_gallery_manifests AS m
+      INNER JOIN blog_galleries AS g ON g.id = m.gallery_id
+      LEFT JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = m.id
+      WHERE m.id = ? AND g.created_by = ?${postClause}
+      GROUP BY m.id, m.title
+      LIMIT 1
+    `).bind(...params).all())
+    if (!row)
+      return null
+    const firstPage = first<{ asset_id: string, thumbnail_asset_id: string | null }>(await db.prepare(`
+      SELECT mp.asset_id, mp.thumbnail_asset_id
+      FROM blog_gallery_manifest_pages AS mp
+      WHERE mp.manifest_id = ? AND mp.visible = 1
+      ORDER BY mp.sort_order ASC, mp.original_page ASC
+      LIMIT 1
+    `).bind(row.id).all())
+    return {
+      id: row.id,
+      title: row.title,
+      pageCount: Number(row.page_count),
+      firstPage: firstPage ? { assetId: firstPage.asset_id, thumbnailAssetId: firstPage.thumbnail_asset_id } : null,
+    }
+  }
+}
+
+async function validateGalleryReferences(db: D1Like, actor: string, postId: string | undefined, manifestIds: string[]): Promise<void> {
+  if (!manifestIds.length)
+    return
+  if (!postId)
+    throw createError({ statusCode: 400, statusMessage: 'Save the post before adding a gallery' })
+  const placeholders = manifestIds.map(() => '?').join(',')
+  const params: unknown[] = [...manifestIds, actor, postId]
+  const result = await db.prepare(`
+    SELECT m.id
+    FROM blog_gallery_manifests AS m
+    INNER JOIN blog_galleries AS g ON g.id = m.gallery_id
+    WHERE m.id IN (${placeholders}) AND g.created_by = ? AND g.post_id = ?
+  `).bind(...params).all()
+  const found = new Set(rows<{ id: string }>(result).map(row => row.id))
+  if (manifestIds.some(id => !found.has(id)))
+    throw createError({ statusCode: 400, statusMessage: 'Referenced gallery manifest is unavailable' })
+}
+
+async function validateGalleryManifestAssets(db: D1Like, actor: string, postId: string, manifestIds: string[]): Promise<void> {
+  if (!manifestIds.length)
+    return
+  const placeholders = manifestIds.map(() => '?').join(',')
+  const result = await db.prepare(`
+    SELECT m.id,
+      COUNT(mp.page_id) AS page_count,
+      SUM(CASE WHEN mp.visible IN (0, 1)
+        AND a.status = 'ready' AND a.created_by = ?
+        AND ta.status = 'ready' AND ta.created_by = ?
+        THEN 1 ELSE 0 END) AS ready_count
+    FROM blog_gallery_manifests AS m
+    INNER JOIN blog_galleries AS g ON g.id = m.gallery_id
+    LEFT JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = m.id
+    LEFT JOIN blog_assets AS a ON a.id = mp.asset_id
+    LEFT JOIN blog_assets AS ta ON ta.id = mp.thumbnail_asset_id
+    WHERE m.id IN (${placeholders}) AND g.post_id = ? AND g.created_by = ?
+    GROUP BY m.id
+  `).bind(actor, actor, ...manifestIds, postId, actor).all()
+  const found = new Map(rows<{ id: string, page_count: number, ready_count: number }>(result).map(row => [row.id, row]))
+  for (const manifestId of manifestIds) {
+    const row = found.get(manifestId)
+    if (!row || Number(row.page_count) < 1 || Number(row.page_count) !== Number(row.ready_count))
+      throw createError({ statusCode: 400, statusMessage: 'Every gallery page and thumbnail must be ready before publishing' })
+  }
 }
 
 function parseContentJson(value: unknown): Record<string, unknown> | null {
@@ -642,11 +772,15 @@ async function draftInputFromBody(db: D1Like, actor: string, body: Record<string
   const contentJson = parseContentJson(body.content_json === undefined ? current?.content_json : body.content_json)
   let contentHtml: string
   let assetIds: string[] = []
+  let galleryManifestIds: string[] = []
   const htmlMediaRequirements = new Map<string, HtmlMediaKind[][]>()
   if (contentJson) {
     assetIds = mediaIdsFromDocument(contentJson)
+    galleryManifestIds = galleryIdsFromDocument(contentJson).map(id => idField(id, 'gallery manifest id'))
+    await validateGalleryReferences(db, actor, postId, galleryManifestIds)
     const resolveMedia = await mediaResolver(db, actor, await approvedLegacyMediaPaths(db, postId))
-    contentHtml = await renderTiptapDocument(contentJson, { mode: 'public', resolveMedia })
+    const resolveGallery = await galleryResolver(db, actor, postId)
+    contentHtml = await renderTiptapDocument(contentJson, { mode: 'public', resolveMedia, resolveGallery })
   }
   else {
     const suppliedContentHtml = body.content_html === undefined ? current?.content_html ?? '' : body.content_html
@@ -670,10 +804,25 @@ async function draftInputFromBody(db: D1Like, actor: string, body: Record<string
   }
   if (coverAssetId && !assetIds.includes(coverAssetId))
     assetIds.push(coverAssetId)
+  const galleryAssetIds = await galleryManifestAssetIds(db, actor, galleryManifestIds, postId)
+  for (const assetId of galleryAssetIds) {
+    if (!assetIds.includes(assetId))
+      assetIds.push(assetId)
+  }
   if (blogByteLength(contentHtml) > BLOG_MAX_CANONICAL_BYTES)
     throw createError({ statusCode: 400, statusMessage: 'Rendered content is too large' })
+  const assets = new Map<string, { id: string, kind: HtmlMediaKind, created_by: string, status: string }>()
+  if (assetIds.length) {
+    const assetResult = await db.prepare(`
+      SELECT a.id, a.kind, a.created_by, a.status
+      FROM blog_assets AS a
+      INNER JOIN json_each(?) AS requested ON requested.value = a.id
+    `).bind(JSON.stringify(assetIds)).all()
+    for (const asset of rows<{ id: string, kind: HtmlMediaKind, created_by: string, status: string }>(assetResult))
+      assets.set(asset.id, asset)
+  }
   for (const assetId of assetIds) {
-    const asset = await first<{ id: string, kind: HtmlMediaKind, created_by: string, status: string }>(await db.prepare('SELECT id, kind, created_by, status FROM blog_assets WHERE id = ?').bind(assetId).all())
+    const asset = assets.get(assetId)
     const requirements = htmlMediaRequirements.get(assetId) ?? []
     const validHtmlKind = !requirements.length || requirements.every(kinds => asset ? kinds.includes(asset.kind) : false)
     const validCoverKind = coverAssetId !== assetId || asset?.kind === 'image' || asset?.kind === 'gif'
@@ -694,10 +843,11 @@ async function draftInputFromBody(db: D1Like, actor: string, body: Record<string
     content_json: contentJson,
     content_html: contentHtml,
     asset_ids: assetIds,
+    gallery_manifest_ids: galleryManifestIds,
   }
 }
 
-function draftFromRow(row: Record<string, unknown>, tagIds: string[]): BlogDraft {
+function draftFromRow(row: Record<string, unknown>, tagIds: string[], galleryManifestIds: string[] = []): BlogDraft {
   let contentJson: Record<string, unknown> | null = null
   if (typeof row.content_json === 'string' && row.content_json) {
     try {
@@ -722,6 +872,7 @@ function draftFromRow(row: Record<string, unknown>, tagIds: string[]): BlogDraft
     meta_description: row.meta_description == null ? null : String(row.meta_description),
     content_json: contentJson,
     content_html: String(row.content_html ?? ''),
+    gallery_manifest_ids: galleryManifestIds,
     updated_at: String(row.updated_at ?? new Date(0).toISOString()),
   }
 }
@@ -795,7 +946,7 @@ async function loadDetail(db: D1Like, postId: string): Promise<BlogDetail> {
     content_json: row.draft_content_json,
     content_html: row.draft_content_html,
     updated_at: row.draft_updated_at,
-  }, await tagsFor(db, postId))
+  }, await tagsFor(db, postId), await galleryReferencesFor(db, postId))
   return { post: postFromRow(row, draft), draft }
 }
 
@@ -895,8 +1046,14 @@ export async function createBlogPost(event: H3Event, body: Record<string, unknow
   ]
   for (const tagId of initial.tag_ids)
     statements.push(db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) VALUES (?, ?)').bind(id, tagId))
-  for (const assetId of initial.asset_ids)
-    statements.push(db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) VALUES (?, ?, \'draft\')').bind(id, assetId))
+  statements.push(db.prepare(`
+    INSERT INTO blog_post_asset_refs (post_id, asset_id, scope)
+    SELECT ?, value, 'draft' FROM json_each(?)
+  `).bind(id, JSON.stringify(initial.asset_ids)))
+  statements.push(db.prepare(`
+    INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+    SELECT ?, value, 'draft' FROM json_each(?)
+  `).bind(id, JSON.stringify(initial.gallery_manifest_ids)))
   statements.push(auditInsert(db, actor, 'post.create', id, { status: 'draft', version: 1 }))
   try {
     await db.batch(statements)
@@ -917,6 +1074,13 @@ async function currentDraftVersion(db: D1Like, postId: string): Promise<number> 
   const row = first<{ version: number }>(await db.prepare('SELECT version FROM blog_post_drafts WHERE post_id = ?').bind(postId).all())
   if (!row)
     throw createError({ statusCode: 404, statusMessage: 'Blog post draft not found' })
+  return Number(row.version)
+}
+
+async function currentGalleryVersion(db: D1Like, actor: string, galleryId: string): Promise<number> {
+  const row = first<{ version: number }>(await db.prepare('SELECT version FROM blog_galleries WHERE id = ? AND created_by = ?').bind(galleryId, actor).all())
+  if (!row)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery not found' })
   return Number(row.version)
 }
 
@@ -946,7 +1110,17 @@ export async function updateBlogDraft(event: H3Event, postId: string): Promise<B
     db.prepare('DELETE FROM blog_post_draft_tags WHERE post_id = ? AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...next.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
-    ...next.asset_ids.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    db.prepare(`
+      INSERT INTO blog_post_asset_refs (post_id, asset_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(next.asset_ids), postId, token),
+    db.prepare('DELETE FROM blog_post_gallery_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
+    db.prepare(`
+      INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(next.gallery_manifest_ids), postId, token),
     auditInsert(db, actor, 'post.draft', postId, { status: 'draft', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
   const result = await db.batch(statements)
@@ -1012,7 +1186,17 @@ export async function restoreBlogPost(event: H3Event, postId: string): Promise<B
     db.prepare('DELETE FROM blog_post_draft_tags WHERE post_id = ? AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...restored.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
-    ...restored.asset_ids.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    db.prepare(`
+      INSERT INTO blog_post_asset_refs (post_id, asset_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(restored.asset_ids), postId, token),
+    db.prepare('DELETE FROM blog_post_gallery_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
+    db.prepare(`
+      INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(restored.gallery_manifest_ids), postId, token),
     db.prepare(`INSERT INTO blog_post_revisions (post_id, version, kind, snapshot_json, created_at, created_by)
       SELECT ?, ?, 'restore', ?, ?, ?
       WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)`)
@@ -1040,19 +1224,46 @@ export async function publishBlogPost(event: H3Event, postId: string): Promise<B
   const slugOwner = first<{ id: string }>(await db.prepare('SELECT id FROM blog_posts WHERE slug = ? AND id <> ? LIMIT 1').bind(current.draft.slug, postId).all())
   if (slugOwner)
     throw createError({ statusCode: 409, statusMessage: 'A post with this slug already exists' })
+  await validateGalleryReferences(db, actor, postId, current.draft.gallery_manifest_ids)
+  await validateGalleryManifestAssets(db, actor, postId, current.draft.gallery_manifest_ids)
   const token = crypto.randomUUID()
   const now = new Date().toISOString()
   const publishedAt = current.post.published_at || now
   const nextVersion = version + 1
   const revisionSnapshot = snapshotDraft({ ...current.draft, version: nextVersion, updated_at: now })
-  const draftAssetIds = await assetReferencesFor(db, postId)
   const statements = [
     db.prepare('UPDATE blog_post_drafts SET version = ?, mutation_token = ? WHERE post_id = ? AND version = ?').bind(nextVersion, token, postId, version),
     db.prepare(`UPDATE blog_posts SET slug = ?, title = ?, excerpt = ?, content_html = ?, cover_image_url = ?, cover_image_alt = ?, category_id = ?, status = 'published', read_minutes = ?, meta_title = ?, meta_description = ?, published_at = ?, published_version = ?, updated_by = ?, updated_at = ? WHERE id = ? AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)`).bind(current.draft.slug, current.draft.title, current.draft.excerpt, current.draft.content_html, current.draft.cover_image_url, current.draft.cover_image_alt, current.draft.category_id, current.draft.read_minutes, current.draft.meta_title, current.draft.meta_description, publishedAt, nextVersion, actor, now, postId, postId, token, nextVersion),
     db.prepare('DELETE FROM blog_post_tags WHERE post_id = ? AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...current.draft.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'published\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
-    ...draftAssetIds.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'published\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    db.prepare(`
+      INSERT INTO blog_post_asset_refs (post_id, asset_id, scope)
+      SELECT ?, asset_id, 'published'
+      FROM blog_post_asset_refs
+      WHERE post_id = ? AND scope = 'draft'
+        AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+      UNION
+      SELECT ?, mp.asset_id, 'published'
+      FROM blog_post_gallery_refs AS gr
+      INNER JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = gr.manifest_id
+      WHERE gr.post_id = ? AND gr.scope = 'draft' AND mp.visible = 1
+        AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+      UNION
+      SELECT ?, mp.thumbnail_asset_id, 'published'
+      FROM blog_post_gallery_refs AS gr
+      INNER JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = gr.manifest_id
+      WHERE gr.post_id = ? AND gr.scope = 'draft' AND mp.visible = 1
+        AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, postId, postId, token, postId, postId, postId, token, postId, postId, postId, token),
+    db.prepare('DELETE FROM blog_post_gallery_refs WHERE post_id = ? AND scope = \'published\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
+    db.prepare(`
+      INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+      SELECT ?, manifest_id, 'published'
+      FROM blog_post_gallery_refs
+      WHERE post_id = ? AND scope = 'draft'
+        AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, postId, postId, token),
     db.prepare('INSERT INTO blog_post_revisions (post_id, version, kind, snapshot_json, created_at, created_by) SELECT ?, ?, \'publish\', ?, ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)').bind(postId, nextVersion, revisionSnapshot, now, actor, postId, token, nextVersion),
     auditInsert(db, actor, 'post.publish', postId, { status: 'published', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
@@ -1095,7 +1306,11 @@ export async function previewBlogPost(event: H3Event, postId: string): Promise<s
   const db = requireDb(event)
   const detail = await loadDetail(db, postId)
   const content = detail.draft.content_json
-    ? await renderTiptapDocument(detail.draft.content_json, { mode: 'preview', resolveMedia: await mediaResolver(db, actor, await approvedLegacyMediaPaths(db, postId)) })
+    ? await renderTiptapDocument(detail.draft.content_json, {
+        mode: 'preview',
+        resolveMedia: await mediaResolver(db, actor, await approvedLegacyMediaPaths(db, postId)),
+        resolveGallery: await galleryResolver(db, actor, postId),
+      })
     : sanitizeLegacyBlogHtml(detail.draft.content_html)
   const title = detail.draft.title.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   const description = detail.draft.excerpt.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -1132,10 +1347,37 @@ export async function getBlogTaxonomy(event: H3Event) {
   blogActor(event)
   const db = requireDb(event)
   const [categories, tags] = await Promise.all([
-    db.prepare('SELECT id, slug, name, description, color_class, sort_order, is_active FROM blog_categories ORDER BY sort_order ASC, name ASC').all(),
+    db.prepare('SELECT id, slug, name, description, color_class, sort_order, is_active, icon_key, version FROM blog_categories ORDER BY sort_order ASC, name ASC').all(),
     db.prepare('SELECT id, slug, name FROM blog_tags ORDER BY name ASC').all(),
   ])
   return { categories: rows(categories), tags: rows(tags) }
+}
+
+const BLOG_CATEGORY_ICON_KEYS = new Set([
+  'civic-tech',
+  'cybersecurity',
+  'game-development',
+  'robotics',
+  'anthem',
+  'internet-culture',
+  'psychology',
+  'machine-learning',
+  'neuroscience',
+  'technology',
+  'design',
+  'education',
+  'music',
+  'news',
+  'personal',
+  'projects',
+  'general',
+])
+
+function categoryIconKey(value: unknown, fallback = 'general'): string {
+  const key = value == null || value === '' ? fallback : stringField(value, 'icon_key', 80).toLowerCase()
+  if (!BLOG_CATEGORY_ICON_KEYS.has(key))
+    throw createError({ statusCode: 400, statusMessage: 'icon_key is not allowed' })
+  return key
 }
 
 export async function createBlogTaxonomy(event: H3Event) {
@@ -1150,8 +1392,9 @@ export async function createBlogTaxonomy(event: H3Event) {
   const now = new Date().toISOString()
   if (body.kind === 'category') {
     const sortOrder = integerField(body.sort_order, 'sort_order', -1_000_000, 1_000_000, 0)
+    const iconKey = categoryIconKey(body.icon_key)
     await db.batch([
-      db.prepare('INSERT INTO blog_categories (id, slug, name, description, color_class, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').bind(id, slug, name, nullableString(body.description, 'description', 500), nullableString(body.color_class, 'color_class', 80), sortOrder, now, now),
+      db.prepare('INSERT INTO blog_categories (id, slug, name, description, color_class, sort_order, is_active, icon_key, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?)').bind(id, slug, name, nullableString(body.description, 'description', 500), nullableString(body.color_class, 'color_class', 80), sortOrder, iconKey, now, now),
       auditInsert(db, actor, 'taxonomy.create', id, { status: 'created' }),
     ])
   }
@@ -1160,6 +1403,40 @@ export async function createBlogTaxonomy(event: H3Event) {
       db.prepare('INSERT INTO blog_tags (id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(id, slug, name, now, now),
       auditInsert(db, actor, 'taxonomy.create', id, { status: 'created' }),
     ])
+  }
+  return getBlogTaxonomy(event)
+}
+
+export function categoryIdFromEvent(event: H3Event): string {
+  return idField(getRouterParam(event, 'id'), 'category id')
+}
+
+export async function updateBlogCategory(event: H3Event, categoryId: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  const current = first<{ name: string, description: string | null, sort_order: number, is_active: number, icon_key: string }>(await db.prepare('SELECT name, description, sort_order, is_active, icon_key FROM blog_categories WHERE id = ? LIMIT 1').bind(categoryId).all())
+  if (!current)
+    throw createError({ statusCode: 404, statusMessage: 'Category not found' })
+  const name = stringField(body.name ?? current.name, 'name', 160)
+  const description = body.description === undefined ? current.description : nullableString(body.description, 'description', 500)
+  const sortOrder = integerField(body.sort_order === undefined ? current.sort_order : body.sort_order, 'sort_order', -1_000_000, 1_000_000)
+  const isActive = body.is_active === undefined ? Number(current.is_active) === 1 : body.is_active
+  if (typeof isActive !== 'boolean')
+    throw createError({ statusCode: 400, statusMessage: 'is_active must be a boolean' })
+  const iconKey = categoryIconKey(body.icon_key === undefined ? current.icon_key : body.icon_key)
+  const nextVersion = version + 1
+  const now = new Date().toISOString()
+  const result = await db.batch([
+    db.prepare('UPDATE blog_categories SET name = ?, description = ?, sort_order = ?, is_active = ?, icon_key = ?, version = ?, updated_at = ? WHERE id = ? AND version = ?').bind(name, description, sortOrder, isActive ? 1 : 0, iconKey, nextVersion, now, categoryId, version),
+    auditInsert(db, actor, 'taxonomy.category.update', categoryId, { status: 'updated', version: nextVersion }, 'changes() = 1'),
+  ])
+  if (changes(result[0]) < 1) {
+    const latest = first<{ version: number }>(await db.prepare('SELECT version FROM blog_categories WHERE id = ?').bind(categoryId).all())
+    if (!latest)
+      throw createError({ statusCode: 404, statusMessage: 'Category not found' })
+    throw createError({ statusCode: 409, statusMessage: 'Category has changed', data: { current_version: Number(latest.version) } })
   }
   return getBlogTaxonomy(event)
 }
@@ -1211,7 +1488,20 @@ export async function listBlogMedia(event: H3Event) {
   const actor = blogActor(event)
   const db = requireDb(event)
   const [assets, projects] = await Promise.all([
-    db.prepare('SELECT id, name, mime_type, kind, size, width, height, duration_ms, derived_from, created_at FROM blog_assets WHERE created_by = ? AND status = \'ready\' ORDER BY created_at DESC').bind(actor).all(),
+    db.prepare(`
+      SELECT a.id, a.name, a.mime_type, a.kind, a.size, a.width, a.height, a.duration_ms, a.derived_from, a.created_at
+      FROM blog_assets AS a
+      WHERE a.created_by = ? AND a.status = 'ready'
+        AND NOT EXISTS (
+          SELECT 1 FROM blog_gallery_pages AS gp
+          WHERE gp.asset_id = a.id OR gp.thumbnail_asset_id = a.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM blog_gallery_manifest_pages AS mp
+          WHERE mp.asset_id = a.id OR mp.thumbnail_asset_id = a.id
+        )
+      ORDER BY a.created_at DESC
+    `).bind(actor).all(),
     db.prepare('SELECT id, version, title, document, updated_at FROM blog_media_projects WHERE created_by = ? ORDER BY updated_at DESC').bind(actor).all(),
   ])
   return {
@@ -1502,4 +1792,744 @@ export function uploadIdFromEvent(event: H3Event): string {
 
 export function projectIdFromEvent(event: H3Event): string {
   return idField(getRouterParam(event, 'id'), 'project id')
+}
+
+interface GalleryPageInput {
+  original_page: number
+  title: string | null
+  caption: string | null
+  sort_order: number
+  visible: boolean
+  asset_id: string
+  thumbnail_asset_id: string
+}
+
+function galleryId(value: unknown, key = 'gallery id'): string {
+  return idField(value, key)
+}
+
+export function galleryPageIdFromEvent(event: H3Event): string {
+  return idField(getRouterParam(event, 'pageId'), 'gallery page id')
+}
+
+export function gallerySourceUploadIdFromEvent(event: H3Event): string {
+  return idField(getRouterParam(event, 'uploadId'), 'gallery source upload id')
+}
+
+function galleryPageInput(value: unknown): GalleryPageInput {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw createError({ statusCode: 400, statusMessage: 'page must be an object' })
+  const body = value as Record<string, unknown>
+  const originalPage = integerField(body.original_page, 'original_page', 1, BLOG_GALLERY_MAX_PAGES)
+  const sortOrder = integerField(body.order ?? body.sort_order ?? originalPage - 1, 'order', 0, BLOG_GALLERY_MAX_PAGES - 1)
+  const visible = body.visible === undefined ? true : body.visible
+  if (typeof visible !== 'boolean')
+    throw createError({ statusCode: 400, statusMessage: 'visible must be a boolean' })
+  const assetId = idField(body.asset_id, 'asset_id')
+  const thumbnailAssetId = idField(body.thumbnail_asset_id, 'thumbnail_asset_id')
+  return {
+    original_page: originalPage,
+    title: body.title == null ? null : nullableString(body.title, 'title', 300),
+    caption: body.caption == null ? null : nullableString(body.caption, 'caption', 1_000),
+    sort_order: sortOrder,
+    visible,
+    asset_id: assetId,
+    thumbnail_asset_id: thumbnailAssetId,
+  }
+}
+
+async function galleryRow(db: D1Like, actor: string, id: string): Promise<Record<string, unknown>> {
+  const row = first<Record<string, unknown>>(await db.prepare(`
+    SELECT g.id, g.post_id, g.version, g.status, g.title, g.source_id, g.resume_page,
+      g.page_count, g.finalized_manifest_id, g.finalized_at, g.created_by,
+      g.updated_by, g.created_at, g.updated_at,
+      s.filename AS source_filename, s.mime_type AS source_mime_type,
+      s.size AS source_size, s.status AS source_status, s.created_at AS source_created_at,
+      s.completed_at AS source_completed_at
+    FROM blog_galleries AS g
+    LEFT JOIN blog_gallery_sources AS s ON s.id = g.source_id
+    WHERE g.id = ? AND g.created_by = ? LIMIT 1
+  `).bind(id, actor).all())
+  if (!row)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery not found' })
+  return row
+}
+
+function galleryPageResponse(row: Record<string, unknown>) {
+  return {
+    id: String(row.id),
+    original_page: Number(row.original_page),
+    title: row.title == null ? null : String(row.title),
+    caption: row.caption == null ? null : String(row.caption),
+    order: Number(row.sort_order),
+    visible: Number(row.visible) === 1,
+    asset_id: row.asset_id == null ? null : String(row.asset_id),
+    thumbnail_asset_id: row.thumbnail_asset_id == null ? null : String(row.thumbnail_asset_id),
+    status: String(row.status),
+  }
+}
+
+function galleryManifestResponse(row: Record<string, unknown>, pages: Record<string, unknown>[]) {
+  return {
+    id: String(row.id),
+    revision: Number(row.revision),
+    title: String(row.title),
+    created_at: String(row.created_at),
+    pages: pages.map(page => ({
+      id: String(page.page_id),
+      original_page: Number(page.original_page),
+      title: page.title == null ? null : String(page.title),
+      caption: page.caption == null ? null : String(page.caption),
+      order: Number(page.sort_order),
+      visible: Number(page.visible) === 1,
+      asset_id: String(page.asset_id),
+      thumbnail_asset_id: String(page.thumbnail_asset_id),
+    })),
+  }
+}
+
+async function galleryDetail(db: D1Like, actor: string, id: string) {
+  const row = await galleryRow(db, actor, id)
+  const pageRows = await db.prepare(`
+    SELECT id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id, status
+    FROM blog_gallery_pages WHERE gallery_id = ? ORDER BY sort_order ASC, original_page ASC
+  `).bind(id).all()
+  let manifest: Record<string, unknown> | null = null
+  const manifestRow = first<Record<string, unknown>>(await db.prepare('SELECT id, revision, title, created_at FROM blog_gallery_manifests WHERE id = ? AND gallery_id = ? LIMIT 1').bind(row.finalized_manifest_id, id).all())
+  if (manifestRow) {
+    const manifestPages = rows<Record<string, unknown>>(await db.prepare(`
+      SELECT page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id
+      FROM blog_gallery_manifest_pages WHERE manifest_id = ? ORDER BY sort_order ASC, original_page ASC
+    `).bind(manifestRow.id).all())
+    manifest = galleryManifestResponse(manifestRow, manifestPages)
+  }
+  const source = row.source_id == null
+    ? null
+    : {
+        id: String(row.source_id),
+        filename: row.source_filename == null ? null : String(row.source_filename),
+        mime_type: row.source_mime_type == null ? null : String(row.source_mime_type),
+        size: row.source_size == null ? null : Number(row.source_size),
+        status: row.source_status == null ? null : String(row.source_status),
+        created_at: row.source_created_at == null ? null : String(row.source_created_at),
+        completed_at: row.source_completed_at == null ? null : String(row.source_completed_at),
+      }
+  return {
+    gallery: {
+      id: String(row.id),
+      post_id: String(row.post_id),
+      version: Number(row.version),
+      status: String(row.status),
+      title: String(row.title),
+      resume: {
+        next_page: Number(row.resume_page),
+        uploaded_pages: rows<Record<string, unknown>>(pageRows).filter(page => page.status === 'ready').length,
+      },
+      page_count: row.page_count == null ? null : Number(row.page_count),
+      source,
+      manifest_id: row.finalized_manifest_id == null ? null : String(row.finalized_manifest_id),
+      finalized_at: row.finalized_at == null ? null : String(row.finalized_at),
+      created_at: String(row.created_at),
+      updated_at: String(row.updated_at),
+    },
+    pages: rows<Record<string, unknown>>(pageRows).map(galleryPageResponse),
+    manifest,
+  }
+}
+
+export function galleryIdFromEvent(event: H3Event): string {
+  return galleryId(getRouterParam(event, 'id'))
+}
+
+export function sourceGalleryIdFromEvent(event: H3Event): string {
+  return galleryId(getRouterParam(event, 'id'))
+}
+
+export async function listBlogGalleries(event: H3Event) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const result = await db.prepare('SELECT id FROM blog_galleries WHERE created_by = ? ORDER BY updated_at DESC, id ASC').bind(actor).all()
+  return { galleries: await Promise.all(rows<{ id: string }>(result).map(row => galleryDetail(db, actor, row.id))) }
+}
+
+export async function getBlogGallery(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  return galleryDetail(requireDb(event), actor, id)
+}
+
+export async function listBlogGalleryRevisions(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  await galleryRow(db, actor, id)
+  const result = await db.prepare(`
+    SELECT m.id, m.revision, m.title, m.created_at, COUNT(p.page_id) AS page_count
+    FROM blog_gallery_manifests AS m
+    LEFT JOIN blog_gallery_manifest_pages AS p ON p.manifest_id = m.id
+    WHERE m.gallery_id = ?
+    GROUP BY m.id ORDER BY m.revision DESC
+  `).bind(id).all()
+  return {
+    revisions: rows<Record<string, unknown>>(result).map(row => ({
+      id: String(row.id),
+      revision: Number(row.revision),
+      title: String(row.title),
+      status: 'finalized',
+      page_count: Number(row.page_count),
+      created_at: String(row.created_at),
+      finalized_at: String(row.created_at),
+    })),
+  }
+}
+
+export function galleryRevisionFromEvent(event: H3Event): string {
+  return idField(getRouterParam(event, 'revision'), 'gallery revision')
+}
+
+export async function getBlogGalleryRevision(event: H3Event, id: string, revision: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const detail = await galleryDetail(db, actor, id)
+  const byNumber = /^[1-9]\d{0,8}$/.test(revision)
+  const row = first<Record<string, unknown>>(await db.prepare(`
+    SELECT id, revision, title, created_at FROM blog_gallery_manifests
+    WHERE gallery_id = ? AND ${byNumber ? 'revision' : 'id'} = ? LIMIT 1
+  `).bind(id, byNumber ? Number(revision) : revision).all())
+  if (!row)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery revision not found' })
+  const pageRows = rows<Record<string, unknown>>(await db.prepare(`
+    SELECT page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id
+    FROM blog_gallery_manifest_pages WHERE manifest_id = ? ORDER BY sort_order, original_page
+  `).bind(row.id).all())
+  const manifest = galleryManifestResponse(row, pageRows)
+  return {
+    gallery: {
+      ...detail.gallery,
+      status: 'finalized',
+      title: manifest.title,
+      manifest_id: manifest.id,
+      finalized_at: manifest.created_at,
+      page_count: manifest.pages.length,
+    },
+    pages: manifest.pages.map(page => ({ ...page, status: 'ready' })),
+    manifest,
+  }
+}
+
+export async function createBlogGallery(event: H3Event) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const postId = idField(body.post_id, 'post_id')
+  const post = first<{ id: string }>(await db.prepare('SELECT id FROM blog_posts WHERE id = ? LIMIT 1').bind(postId).all())
+  if (!post)
+    throw createError({ statusCode: 404, statusMessage: 'Blog post not found' })
+  const existing = first<{ id: string }>(await db.prepare('SELECT id FROM blog_galleries WHERE post_id = ? LIMIT 1').bind(postId).all())
+  if (existing)
+    throw createError({ statusCode: 409, statusMessage: 'This post already has a gallery' })
+  const title = stringField(body.title ?? 'Gallery', 'title', 300)
+  const pageCount = body.page_count == null ? null : integerField(body.page_count, 'page_count', 1, BLOG_GALLERY_MAX_PAGES)
+  const id = crypto.randomUUID().replaceAll('-', '')
+  const now = new Date().toISOString()
+  await db.batch([
+    db.prepare('INSERT INTO blog_galleries (id, post_id, version, status, title, page_count, created_by, updated_by, created_at, updated_at) VALUES (?, ?, 1, \'draft\', ?, ?, ?, ?, ?, ?)').bind(id, postId, title, pageCount, actor, actor, now, now),
+    auditInsert(db, actor, 'gallery.create', id, { status: 'draft', version: 1 }),
+  ])
+  return galleryDetail(db, actor, id)
+}
+
+export async function updateBlogGallery(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status !== 'draft')
+    throw createError({ statusCode: 409, statusMessage: 'Finalized galleries are immutable' })
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  const title = stringField(body.title ?? current.title, 'title', 300)
+  const pageCount = body.page_count === undefined
+    ? current.page_count == null ? null : Number(current.page_count)
+    : body.page_count == null ? null : integerField(body.page_count, 'page_count', 1, BLOG_GALLERY_MAX_PAGES)
+  const resumePage = body.resume_page === undefined ? Number(current.resume_page) : integerField(body.resume_page, 'resume_page', 1, BLOG_GALLERY_MAX_PAGES)
+  const nextVersion = version + 1
+  const mutationToken = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const result = await db.batch([
+    db.prepare('UPDATE blog_galleries SET version = ?, mutation_token = ?, title = ?, page_count = ?, resume_page = ?, updated_by = ?, updated_at = ? WHERE id = ? AND created_by = ? AND status = \'draft\' AND version = ?').bind(nextVersion, mutationToken, title, pageCount, resumePage, actor, now, id, actor, version),
+    auditInsert(db, actor, 'gallery.update', id, { status: 'draft', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
+  ])
+  if (changes(result[0]) !== 1) {
+    const latest = await galleryRow(db, actor, id)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(latest.version) } })
+  }
+  return galleryDetail(db, actor, id)
+}
+
+async function validateGalleryAssets(db: D1Like, actor: string, page: GalleryPageInput): Promise<void> {
+  const result = await db.prepare(`
+    SELECT id, kind, created_by, status FROM blog_assets
+    WHERE id IN (?, ?) LIMIT 2
+  `).bind(page.asset_id, page.thumbnail_asset_id).all()
+  const assets = new Map(rows<{ id: string, kind: string, created_by: string, status: string }>(result).map(row => [row.id, row]))
+  const main = assets.get(page.asset_id)
+  const thumbnail = assets.get(page.thumbnail_asset_id)
+  if (!main || main.created_by !== actor || main.status !== 'ready' || !['image', 'gif'].includes(main.kind))
+    throw createError({ statusCode: 400, statusMessage: 'Gallery page asset is unavailable' })
+  if (!thumbnail || thumbnail.created_by !== actor || thumbnail.status !== 'ready' || !['image', 'gif'].includes(thumbnail.kind))
+    throw createError({ statusCode: 400, statusMessage: 'Gallery thumbnail asset is unavailable' })
+}
+
+async function saveGalleryPage(event: H3Event, id: string, pageId: string | null = null) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status !== 'draft')
+    throw createError({ statusCode: 409, statusMessage: 'Finalized galleries are immutable' })
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  const page = galleryPageInput(body.page ?? body)
+  await validateGalleryAssets(db, actor, page)
+  if (pageId) {
+    const existing = first<{ id: string }>(await db.prepare('SELECT id FROM blog_gallery_pages WHERE id = ? AND gallery_id = ? LIMIT 1').bind(pageId, id).all())
+    if (!existing)
+      throw createError({ statusCode: 404, statusMessage: 'Gallery page not found' })
+  }
+  const existingOriginal = first<{ id: string }>(await db.prepare('SELECT id FROM blog_gallery_pages WHERE gallery_id = ? AND original_page = ? LIMIT 1').bind(id, page.original_page).all())
+  if (pageId && existingOriginal && existingOriginal.id !== pageId)
+    throw createError({ statusCode: 409, statusMessage: 'That original page is already assigned' })
+  const targetId = pageId ?? existingOriginal?.id ?? crypto.randomUUID().replaceAll('-', '')
+  const orderConflict = first<{ id: string }>(await db.prepare('SELECT id FROM blog_gallery_pages WHERE gallery_id = ? AND sort_order = ? AND id <> ? LIMIT 1').bind(id, page.sort_order, targetId).all())
+  if (orderConflict)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery page order is already assigned' })
+  const nextVersion = version + 1
+  const mutationToken = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const statements = [
+    db.prepare('UPDATE blog_galleries SET version = ?, mutation_token = ?, resume_page = MIN(?, MAX(resume_page, ?)), updated_by = ?, updated_at = ? WHERE id = ? AND created_by = ? AND status = \'draft\' AND version = ?').bind(nextVersion, mutationToken, BLOG_GALLERY_MAX_PAGES, page.original_page + 1, actor, now, id, actor, version),
+    db.prepare(`
+      INSERT INTO blog_gallery_pages (id, gallery_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id, status, created_at, updated_at)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?
+      WHERE EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND version = ? AND mutation_token = ? AND status = 'draft')
+      ON CONFLICT(gallery_id, original_page) DO UPDATE SET
+        title = excluded.title, caption = excluded.caption, sort_order = excluded.sort_order,
+        visible = excluded.visible, asset_id = excluded.asset_id,
+        thumbnail_asset_id = excluded.thumbnail_asset_id, status = excluded.status,
+        updated_at = excluded.updated_at
+    `).bind(targetId, id, page.original_page, page.title, page.caption, page.sort_order, page.visible ? 1 : 0, page.asset_id, page.thumbnail_asset_id, now, now, id, nextVersion, mutationToken),
+    auditInsert(db, actor, 'gallery.page.save', id, { status: 'ready', version: nextVersion, original_page: page.original_page }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
+  ]
+  const result = await db.batch(statements)
+  if (changes(result[0]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
+  return galleryDetail(db, actor, id)
+}
+
+export async function addBlogGalleryPage(event: H3Event, id: string) {
+  return saveGalleryPage(event, id)
+}
+
+export async function updateBlogGalleryPage(event: H3Event, id: string, pageId: string) {
+  return saveGalleryPage(event, id, pageId)
+}
+
+export async function deleteBlogGalleryPage(event: H3Event, id: string, pageId: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status !== 'draft')
+    throw createError({ statusCode: 409, statusMessage: 'Finalized galleries are immutable' })
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  const existing = first<{ id: string }>(await db.prepare('SELECT id FROM blog_gallery_pages WHERE id = ? AND gallery_id = ? LIMIT 1').bind(pageId, id).all())
+  if (!existing)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery page not found' })
+  const nextVersion = version + 1
+  const mutationToken = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const result = await db.batch([
+    db.prepare('UPDATE blog_galleries SET version = ?, mutation_token = ?, updated_by = ?, updated_at = ? WHERE id = ? AND created_by = ? AND status = \'draft\' AND version = ?').bind(nextVersion, mutationToken, actor, now, id, actor, version),
+    db.prepare('DELETE FROM blog_gallery_pages WHERE id = ? AND gallery_id = ? AND EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND version = ? AND mutation_token = ? AND status = \'draft\')').bind(pageId, id, id, nextVersion, mutationToken),
+    auditInsert(db, actor, 'gallery.page.delete', id, { status: 'deleted', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
+  ])
+  if (changes(result[1]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
+  return galleryDetail(db, actor, id)
+}
+
+export async function finalizeBlogGallery(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status === 'finalized')
+    return galleryDetail(db, actor, id)
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  if (!current.source_id || current.source_status !== 'completed')
+    throw createError({ statusCode: 400, statusMessage: 'A completed PDF source is required before finalizing' })
+  const pages = rows<Record<string, unknown>>(await db.prepare(`
+    SELECT p.id, p.original_page, p.title, p.caption, p.sort_order, p.visible, p.asset_id, p.thumbnail_asset_id,
+      p.status, a.status AS asset_status, a.created_by AS asset_owner,
+      ta.status AS thumbnail_status, ta.created_by AS thumbnail_owner
+    FROM blog_gallery_pages AS p
+    LEFT JOIN blog_assets AS a ON a.id = p.asset_id
+    LEFT JOIN blog_assets AS ta ON ta.id = p.thumbnail_asset_id
+    WHERE p.gallery_id = ? ORDER BY p.original_page ASC
+  `).bind(id).all())
+  const expectedCount = current.page_count == null ? pages.length : Number(current.page_count)
+  if (!expectedCount || expectedCount > BLOG_GALLERY_MAX_PAGES || pages.length !== expectedCount)
+    throw createError({ statusCode: 400, statusMessage: 'Gallery pages are incomplete' })
+  for (const [index, page] of pages.entries()) {
+    if (Number(page.original_page) !== index + 1 || page.status !== 'ready' || page.asset_status !== 'ready' || page.thumbnail_status !== 'ready' || page.asset_owner !== actor || page.thumbnail_owner !== actor)
+      throw createError({ statusCode: 400, statusMessage: 'Gallery pages must be sequential and ready before finalizing' })
+  }
+  const manifestId = crypto.randomUUID().replaceAll('-', '')
+  const mutationToken = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const nextVersion = version + 1
+  const statements = [
+    db.prepare('UPDATE blog_galleries SET version = ?, mutation_token = ?, status = \'finalized\', page_count = ?, finalized_manifest_id = ?, finalized_at = ?, updated_by = ?, updated_at = ? WHERE id = ? AND created_by = ? AND status = \'draft\' AND version = ?').bind(nextVersion, mutationToken, expectedCount, manifestId, now, actor, now, id, actor, version),
+    db.prepare(`
+      INSERT INTO blog_gallery_manifests (id, gallery_id, revision, title, created_by, created_at)
+      SELECT ?, id, COALESCE((SELECT MAX(revision) FROM blog_gallery_manifests WHERE gallery_id = blog_galleries.id), 0) + 1, title, ?, ? FROM blog_galleries
+      WHERE id = ? AND status = 'finalized' AND finalized_manifest_id = ? AND version = ? AND mutation_token = ?
+    `).bind(manifestId, actor, now, id, manifestId, nextVersion, mutationToken),
+    db.prepare(`
+      INSERT INTO blog_gallery_manifest_pages (manifest_id, page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id)
+      SELECT ?, id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id
+      FROM blog_gallery_pages WHERE gallery_id = ?
+        AND EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND status = 'finalized' AND finalized_manifest_id = ? AND version = ? AND mutation_token = ?)
+      ORDER BY original_page ASC
+    `).bind(manifestId, id, id, manifestId, nextVersion, mutationToken),
+    db.prepare('INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope) SELECT post_id, ?, \'draft\' FROM blog_galleries WHERE id = ? AND status = \'finalized\' AND finalized_manifest_id = ? AND version = ? AND mutation_token = ?').bind(manifestId, id, manifestId, nextVersion, mutationToken),
+    auditInsert(db, actor, 'gallery.finalize', id, { status: 'finalized', version: nextVersion, manifest_id: manifestId }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
+  ]
+  const result = await db.batch(statements)
+  if (changes(result[0]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
+  return galleryDetail(db, actor, id)
+}
+
+export async function reopenBlogGalleryDraft(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status !== 'finalized')
+    throw createError({ statusCode: 409, statusMessage: 'Gallery is already a draft' })
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  const nextVersion = version + 1
+  const mutationToken = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const result = await db.batch([
+    db.prepare('UPDATE blog_galleries SET version = ?, mutation_token = ?, status = \'draft\', updated_by = ?, updated_at = ? WHERE id = ? AND created_by = ? AND status = \'finalized\' AND version = ?').bind(nextVersion, mutationToken, actor, now, id, actor, version),
+    auditInsert(db, actor, 'gallery.reopen', id, { status: 'draft', version: nextVersion, manifest_id: current.finalized_manifest_id }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
+  ])
+  if (changes(result[0]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
+  return galleryDetail(db, actor, id)
+}
+
+export async function reorderBlogGalleryPages(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status !== 'draft')
+    throw createError({ statusCode: 409, statusMessage: 'Finalized galleries are immutable' })
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  const pageRows = rows<{ id: string }>(await db.prepare('SELECT id FROM blog_gallery_pages WHERE gallery_id = ? ORDER BY sort_order ASC, original_page ASC').bind(id).all())
+  let orderedIds: string[]
+  if (Array.isArray(body.page_ids)) {
+    orderedIds = body.page_ids.map(value => idField(value, 'page id'))
+  }
+  else if (Array.isArray(body.pages)) {
+    const entries = body.pages.map((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw createError({ statusCode: 400, statusMessage: 'pages must contain objects' })
+      const item = value as Record<string, unknown>
+      return {
+        id: idField(item.page_id ?? item.id, 'page id'),
+        order: integerField(item.order ?? item.sort_order, 'order', 0, BLOG_GALLERY_MAX_PAGES - 1),
+      }
+    })
+    entries.sort((a, b) => a.order - b.order)
+    if (entries.some((entry, index) => entry.order !== index))
+      throw createError({ statusCode: 400, statusMessage: 'page orders must be contiguous from zero' })
+    orderedIds = entries.map(entry => entry.id)
+  }
+  else {
+    throw createError({ statusCode: 400, statusMessage: 'page_ids or pages is required' })
+  }
+  if (orderedIds.length !== pageRows.length || orderedIds.length > BLOG_GALLERY_MAX_PAGES)
+    throw createError({ statusCode: 400, statusMessage: 'Reorder must include every gallery page exactly once' })
+  const knownIds = new Set(pageRows.map(page => page.id))
+  if (new Set(orderedIds).size !== orderedIds.length || orderedIds.some(pageId => !knownIds.has(pageId)))
+    throw createError({ statusCode: 400, statusMessage: 'Reorder must include every gallery page exactly once' })
+  const desired = JSON.stringify(Object.fromEntries(orderedIds.map((pageId, order) => [pageId, order])))
+  const nextVersion = version + 1
+  const mutationToken = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const result = await db.batch([
+    db.prepare('UPDATE blog_galleries SET version = ?, mutation_token = ?, updated_by = ?, updated_at = ? WHERE id = ? AND created_by = ? AND status = \'draft\' AND version = ?').bind(nextVersion, mutationToken, actor, now, id, actor, version),
+    db.prepare(`
+      WITH desired(id, sort_order) AS (
+        SELECT key, CAST(value AS INTEGER) FROM json_each(?)
+      )
+      UPDATE blog_gallery_pages
+      SET sort_order = (SELECT sort_order FROM desired WHERE desired.id = blog_gallery_pages.id), updated_at = ?
+      WHERE gallery_id = ?
+        AND id IN (SELECT id FROM desired)
+        AND EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND status = 'draft' AND version = ? AND mutation_token = ?)
+    `).bind(desired, now, id, id, nextVersion, mutationToken),
+    auditInsert(db, actor, 'gallery.pages.reorder', id, { status: 'draft', version: nextVersion, page_ids: orderedIds }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
+  ])
+  if (changes(result[0]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
+  return galleryDetail(db, actor, id)
+}
+
+export async function deleteBlogGallery(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status !== 'draft')
+    throw createError({ statusCode: 409, statusMessage: 'Finalized galleries are immutable' })
+  if (current.finalized_manifest_id)
+    throw createError({ statusCode: 409, statusMessage: 'A gallery with an immutable manifest cannot be deleted' })
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  const result = await db.batch([
+    db.prepare('DELETE FROM blog_galleries WHERE id = ? AND created_by = ? AND status = \'draft\' AND version = ?').bind(id, actor, version),
+    auditInsert(db, actor, 'gallery.delete', id, { status: 'deleted', version }, 'changes() = 1'),
+  ])
+  if (changes(result[0]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
+  return { deleted: true }
+}
+
+function sourceResponse(row: Record<string, unknown>) {
+  return {
+    id: String(row.id),
+    filename: String(row.filename),
+    mime_type: String(row.mime_type),
+    size: Number(row.size),
+    part_size: Number(row.part_size),
+    status: String(row.status),
+    created_at: String(row.created_at),
+    completed_at: row.completed_at == null ? null : String(row.completed_at),
+  }
+}
+
+async function sourceUploadRow(event: H3Event, uploadId: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const row = first<Record<string, unknown>>(await db.prepare(`
+    SELECT s.*, g.id AS gallery_id, g.version AS gallery_version, g.status AS gallery_status
+    FROM blog_gallery_sources AS s INNER JOIN blog_galleries AS g ON g.id = s.gallery_id
+    WHERE s.id = ? AND s.created_by = ? LIMIT 1
+  `).bind(uploadId, actor).all())
+  if (!row)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery source upload not found' })
+  return { actor, db, row }
+}
+
+export async function initBlogGallerySource(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const bucket = requirePortfolioMedia(event)
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  const current = await galleryRow(db, actor, id)
+  if (current.status !== 'draft')
+    throw createError({ statusCode: 409, statusMessage: 'Finalized galleries are immutable' })
+  const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
+  if (Number(current.version) !== version)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: Number(current.version) } })
+  if (current.source_id && current.source_status === 'completed')
+    return { source: { id: String(current.source_id), filename: String(current.source_filename), mime_type: String(current.source_mime_type), size: Number(current.source_size), part_size: BLOG_UPLOAD_PART_SIZE, status: 'completed' } }
+  const filename = safeFilename(body.filename)
+  const mimeType = stringField(body.mime_type ?? BLOG_GALLERY_SOURCE_MIME, 'mime_type', 120).toLowerCase()
+  if (mimeType !== BLOG_GALLERY_SOURCE_MIME)
+    throw createError({ statusCode: 400, statusMessage: 'Gallery source must be a PDF' })
+  const size = integerField(body.size, 'size', 1, BLOG_MAX_SOURCE_SIZE)
+  const pageCount = body.page_count == null ? current.page_count == null ? null : Number(current.page_count) : integerField(body.page_count, 'page_count', 1, BLOG_GALLERY_MAX_PAGES)
+  const sourceId = crypto.randomUUID().replaceAll('-', '')
+  const objectKey = `blog/originals/gallery/${id}/${sourceId}/${filename}`
+  const multipart = await bucket.createMultipartUpload(objectKey, { httpMetadata: { contentType: BLOG_GALLERY_SOURCE_MIME } })
+  const now = new Date().toISOString()
+  const nextVersion = version + 1
+  const mutationToken = crypto.randomUUID()
+  try {
+    const result = await db.batch([
+      db.prepare(`
+        INSERT INTO blog_gallery_sources (id, gallery_id, filename, mime_type, size, object_key, r2_upload_id, part_size, status, created_by, created_at)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?
+        WHERE EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND created_by = ? AND status = 'draft' AND version = ?)
+      `).bind(sourceId, id, filename, BLOG_GALLERY_SOURCE_MIME, size, objectKey, multipart.uploadId, BLOG_UPLOAD_PART_SIZE, actor, now, id, actor, version),
+      db.prepare(`
+        UPDATE blog_galleries SET version = ?, mutation_token = ?, source_id = ?, page_count = ?, updated_by = ?, updated_at = ?
+        WHERE id = ? AND created_by = ? AND status = 'draft' AND version = ?
+          AND EXISTS (SELECT 1 FROM blog_gallery_sources WHERE id = ? AND gallery_id = ? AND created_by = ? AND status = 'active')
+      `).bind(nextVersion, mutationToken, sourceId, pageCount, actor, now, id, actor, version, sourceId, id, actor),
+      db.prepare(`
+        DELETE FROM blog_gallery_sources
+        WHERE id = ?
+          AND NOT EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND source_id = ? AND mutation_token = ? AND version = ?)
+      `).bind(sourceId, id, sourceId, mutationToken, nextVersion),
+      auditInsert(db, actor, 'gallery.source.init', id, { status: 'active', version: nextVersion, source_id: sourceId }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
+    ])
+    if (changes(result[0]) !== 1 || changes(result[1]) !== 1)
+      throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
+  }
+  catch (error) {
+    await multipart.abort().catch(() => undefined)
+    throw error
+  }
+  return { source: sourceResponse({ id: sourceId, filename, mime_type: BLOG_GALLERY_SOURCE_MIME, size, part_size: BLOG_UPLOAD_PART_SIZE, status: 'active', created_at: now }), upload: { id: sourceId, part_size: BLOG_UPLOAD_PART_SIZE, parts: [] }, version: nextVersion }
+}
+
+export async function getBlogGallerySourceUpload(event: H3Event, uploadId: string) {
+  const { db, row } = await sourceUploadRow(event, uploadId)
+  const parts = await db.prepare('SELECT part_number, etag, size FROM blog_gallery_source_parts WHERE source_id = ? ORDER BY part_number ASC').bind(uploadId).all()
+  return { source: sourceResponse(row), upload: { id: uploadId, part_size: Number(row.part_size), status: String(row.status), parts: rows(parts) } }
+}
+
+export async function putBlogGallerySourcePart(event: H3Event, uploadId: string, partNumber: number) {
+  if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > BLOG_MAX_UPLOAD_PARTS)
+    throw createError({ statusCode: 400, statusMessage: 'Gallery source upload part is invalid' })
+  const { actor, db, row } = await sourceUploadRow(event, uploadId)
+  if (row.status !== 'active')
+    throw createError({ statusCode: 409, statusMessage: 'Gallery source upload is no longer active' })
+  const requestLength = Number(getHeader(event, 'content-length') || 0)
+  if (!Number.isSafeInteger(requestLength) || requestLength > BLOG_UPLOAD_PART_SIZE || requestLength <= 0)
+    throw createError({ statusCode: 413, statusMessage: 'Upload parts must be between 1 and 10 MiB' })
+  const body = getRequestWebStream(event)
+  if (!body)
+    throw createError({ statusCode: 413, statusMessage: 'Upload part is too large' })
+  const bucket = requirePortfolioMedia(event)
+  const upload = bucket.resumeMultipartUpload(String(row.object_key), String(row.r2_upload_id))
+  let observedLength = 0
+  const fixedBody = knownLengthStream(requestLength)
+  const countedBody = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const value = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)
+      observedLength += value.byteLength
+      if (observedLength > requestLength || observedLength > BLOG_UPLOAD_PART_SIZE) {
+        controller.error(createError({ statusCode: 413, statusMessage: 'Upload part exceeds declared size' }))
+        return
+      }
+      controller.enqueue(value)
+    },
+    flush(controller) {
+      if (observedLength !== requestLength)
+        controller.error(createError({ statusCode: 400, statusMessage: 'Upload part size does not match Content-Length' }))
+    },
+  })
+  const pump = body.pipeThrough(countedBody).pipeTo(fixedBody.writable)
+  const uploadPromise = upload.uploadPart(partNumber, fixedBody.readable)
+  const [, uploaded] = await Promise.all([pump, uploadPromise])
+  const etag = String(uploaded.etag)
+  const result = await db.batch([
+    db.prepare(`
+      INSERT INTO blog_gallery_source_parts (source_id, part_number, etag, size)
+      SELECT ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM blog_gallery_sources WHERE id = ? AND created_by = ? AND status = 'active')
+      ON CONFLICT(source_id, part_number) DO UPDATE SET etag = excluded.etag, size = excluded.size
+    `).bind(uploadId, partNumber, etag, requestLength, uploadId, actor),
+    auditInsert(db, actor, 'gallery.source.part', String(row.gallery_id), { status: 'active', upload_id: uploadId, part_number: partNumber }, 'EXISTS (SELECT 1 FROM blog_gallery_sources WHERE id = ? AND status = \'active\') AND EXISTS (SELECT 1 FROM blog_gallery_source_parts WHERE source_id = ? AND part_number = ? AND etag = ?)', [uploadId, uploadId, partNumber, etag]),
+  ])
+  if (changes(result[0]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery source upload is no longer active' })
+  return { part_number: partNumber, etag }
+}
+
+export async function completeBlogGallerySourceUpload(event: H3Event, uploadId: string) {
+  const { actor, db, row } = await sourceUploadRow(event, uploadId)
+  if (row.status === 'completed')
+    return { source: sourceResponse(row) }
+  if (row.status !== 'active')
+    throw createError({ statusCode: 409, statusMessage: 'Gallery source upload is no longer active' })
+  const body = await parseJsonBody<Record<string, unknown>>(event)
+  if (!Array.isArray(body.parts) || body.parts.length < 1 || body.parts.length > BLOG_MAX_UPLOAD_PARTS)
+    throw createError({ statusCode: 400, statusMessage: 'parts must be a non-empty array' })
+  const recorded = rows<{ part_number: number, etag: string, size: number }>(await db.prepare('SELECT part_number, etag, size FROM blog_gallery_source_parts WHERE source_id = ? ORDER BY part_number ASC').bind(uploadId).all())
+  const requested = body.parts.map((part) => {
+    if (!part || typeof part !== 'object')
+      throw createError({ statusCode: 400, statusMessage: 'Invalid upload part' })
+    const value = part as Record<string, unknown>
+    return { part_number: integerField(value.part_number, 'part_number', 1, BLOG_MAX_UPLOAD_PARTS), etag: stringField(value.etag, 'etag', 512) }
+  }).sort((a, b) => a.part_number - b.part_number)
+  if (requested.some((part, index) => part.part_number !== index + 1))
+    throw createError({ statusCode: 400, statusMessage: 'Upload parts must be contiguous' })
+  if (recorded.length !== requested.length || recorded.some((part, index) => part.part_number !== requested[index]?.part_number || part.etag !== requested[index]?.etag))
+    throw createError({ statusCode: 409, statusMessage: 'Upload part etags do not match recorded parts' })
+  const totalSize = recorded.reduce((total, part) => total + Number(part.size), 0)
+  if (totalSize !== Number(row.size))
+    throw createError({ statusCode: 409, statusMessage: 'Uploaded size does not match metadata' })
+  const bucket = requirePortfolioMedia(event)
+  await bucket.resumeMultipartUpload(String(row.object_key), String(row.r2_upload_id)).complete(requested.map(part => ({ partNumber: part.part_number, etag: part.etag })))
+  const now = new Date().toISOString()
+  const result = await db.batch([
+    db.prepare('UPDATE blog_gallery_sources SET status = \'completed\', completed_at = ? WHERE id = ? AND created_by = ? AND status = \'active\'').bind(now, uploadId, actor),
+    auditInsert(db, actor, 'gallery.source.complete', String(row.gallery_id), { status: 'completed', upload_id: uploadId }, 'changes() = 1'),
+  ])
+  if (changes(result[0]) !== 1)
+    throw createError({ statusCode: 409, statusMessage: 'Gallery source completion raced another request' })
+  return { source: sourceResponse({ ...row, status: 'completed', completed_at: now }) }
+}
+
+export async function abortBlogGallerySourceUpload(event: H3Event, uploadId: string) {
+  const { actor, db, row } = await sourceUploadRow(event, uploadId)
+  if (row.status === 'completed')
+    throw createError({ statusCode: 409, statusMessage: 'Completed gallery sources are immutable' })
+  const bucket = requirePortfolioMedia(event)
+  await bucket.resumeMultipartUpload(String(row.object_key), String(row.r2_upload_id)).abort().catch(() => undefined)
+  await db.batch([
+    db.prepare('UPDATE blog_gallery_sources SET status = \'aborted\' WHERE id = ? AND created_by = ? AND status = \'active\'').bind(uploadId, actor),
+    auditInsert(db, actor, 'gallery.source.abort', String(row.gallery_id), { status: 'aborted', upload_id: uploadId }, 'changes() = 1'),
+  ])
+  return { aborted: true }
+}
+
+export async function serveBlogGallerySource(event: H3Event, id: string): Promise<ReadableStream | null> {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const row = first<Record<string, unknown>>(await db.prepare(`
+    SELECT s.id, s.filename, s.mime_type, s.object_key, s.size, s.status, s.created_by
+    FROM blog_gallery_sources AS s INNER JOIN blog_galleries AS g ON g.source_id = s.id
+    WHERE g.id = ? AND g.created_by = ? LIMIT 1
+  `).bind(id, actor).all())
+  if (!row || row.status !== 'completed')
+    throw createError({ statusCode: 404, statusMessage: 'Gallery source not found' })
+  const bucket = requirePortfolioMedia(event)
+  const range = requestRange(event, Number(row.size))
+  const object = await bucket.get(String(row.object_key), range ? { range } : undefined)
+  if (!object)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery source object not found' })
+  setHeader(event, 'Content-Type', String(row.mime_type))
+  setHeader(event, 'Cache-Control', 'no-store')
+  setHeader(event, 'Content-Disposition', `inline; filename="${String(row.filename).replaceAll('"', '')}"`)
+  setHeader(event, 'Accept-Ranges', 'bytes')
+  setHeader(event, 'ETag', object.etag)
+  if (range) {
+    setResponseStatus(event, 206)
+    setHeader(event, 'Content-Length', range.length)
+    setHeader(event, 'Content-Range', `bytes ${range.offset}-${range.offset + range.length - 1}/${Number(row.size)}`)
+  }
+  else {
+    setHeader(event, 'Content-Length', Number(object.size ?? row.size))
+  }
+  return event.method === 'HEAD' ? null : object.body
 }

@@ -1,42 +1,71 @@
-<aside id="clock-widget-panel" class="clock-widget-panel" aria-labelledby="profile-focus-title">
-  <div class="profile-card-container">
+<div id="calendar-rail" class="calendar-rail" tabindex="0" aria-label="Profile and public calendar">
+  <aside id="clock-widget-panel" class="clock-widget-panel" tabindex="0" aria-labelledby="profile-focus-title">
+    <div class="profile-card-container">
       <div class="bento-profile-header" data-skill-focus>
-          <h2 class="profile-focus-title" id="profile-focus-title">Current focus</h2>
-          <div class="skill-focus-radar">
-              <svg class="skill-focus-radar-svg" data-skill-focus-radar viewBox="0 0 240 240" role="img" aria-labelledby="skill-focus-radar-title" aria-describedby="skill-focus-radar-description skill-focus-radar-summary">
-                  <title id="skill-focus-radar-title">Current focus radar</title>
-                  <desc id="skill-focus-radar-description">The chart shows relative research and project focus across six areas. A text equivalent lists every area below.</desc>
-                  <g data-radar-axes aria-hidden="true"></g>
-                  <g data-radar-rings aria-hidden="true"></g>
-                  <polygon class="skill-focus-radar-area" data-radar-area aria-hidden="true"></polygon>
-                  <polygon class="skill-focus-radar-outline" data-radar-outline aria-hidden="true"></polygon>
-                  <g data-radar-nodes aria-hidden="true"></g>
-                  <g data-radar-labels aria-hidden="true"></g>
-              </svg>
-              <p class="sr-only" id="skill-focus-radar-summary" data-skill-focus-summary></p>
-          </div>
+        <h2 class="profile-focus-title" id="profile-focus-title">Current focus</h2>
+        <div class="skill-focus-radar">
+          <svg class="skill-focus-radar-svg" data-skill-focus-radar viewBox="0 0 240 240" role="img" aria-labelledby="skill-focus-radar-title" aria-describedby="skill-focus-radar-description skill-focus-radar-summary">
+            <title id="skill-focus-radar-title">Current focus radar</title>
+            <desc id="skill-focus-radar-description">The chart shows relative research and project focus across six areas. A text equivalent lists every area below.</desc>
+            <g data-radar-axes aria-hidden="true"></g>
+            <g data-radar-rings aria-hidden="true"></g>
+            <polygon class="skill-focus-radar-area" data-radar-area aria-hidden="true"></polygon>
+            <polygon class="skill-focus-radar-outline" data-radar-outline aria-hidden="true"></polygon>
+            <g data-radar-nodes aria-hidden="true"></g>
+            <g data-radar-labels aria-hidden="true"></g>
+          </svg>
+          <p class="sr-only" id="skill-focus-radar-summary" data-skill-focus-summary></p>
+        </div>
       </div>
-      
+
       <div class="profile-context">
-          <div class="profile-bio">
-              Student | UKM | IT | Software Engineering | Exploring LLMs
+        <div class="profile-bio">Student | UKM | IT | Software Engineering | Exploring LLMs</div>
+        <div class="profile-location">Bandar Baru Bangi, Selangor</div>
+        <div class="profile-stats">
+          <div class="stat-row">
+            <span class="stat-label">Profile views</span>
+            <span class="stat-value" id="profile-views-value" data-metric="profile_views">—</span>
           </div>
-
-          <div class="profile-location">
-              Bandar Baru Bangi, Selangor
+          <div class="stat-row">
+            <span class="stat-label">Post impressions</span>
+            <span class="stat-value" id="post-impressions-value" data-metric="post_impressions">—</span>
           </div>
-
-          <div class="profile-stats">
-              <div class="stat-row">
-                  <span class="stat-label">Profile views</span>
-                  <span class="stat-value" id="profile-views-value" data-metric="profile_views">—</span>
-              </div>
-              <div class="stat-row">
-                  <span class="stat-label">Post impressions</span>
-                  <span class="stat-value" id="post-impressions-value" data-metric="post_impressions">—</span>
-              </div>
-          </div>
-          <p class="profile-metrics-status" data-metrics-status role="status" aria-live="polite" hidden>Profile statistics are unavailable.</p>
+        </div>
+        <p class="profile-metrics-status" data-metrics-status role="status" aria-live="polite" hidden>Profile statistics are unavailable.</p>
       </div>
-  </div>
-</aside>
+    </div>
+  </aside>
+
+  <section id="my-calendar-card" class="my-calendar-card" tabindex="0" aria-labelledby="my-calendar-title">
+    <div class="calendar-card-header">
+      <div>
+        <p class="calendar-eyebrow">Public schedule</p>
+        <h2 id="my-calendar-title">My Calendar</h2>
+      </div>
+      <span class="calendar-timezone" data-calendar-timezone>Asia/Kuala_Lumpur</span>
+    </div>
+    <div class="calendar-upcoming-summary" data-calendar-upcoming-summary aria-live="polite">
+      <p class="calendar-summary-label">Next up</p>
+      <ol class="calendar-upcoming-list" data-calendar-upcoming></ol>
+    </div>
+    <button class="calendar-month-toggle" type="button" data-calendar-month-toggle aria-expanded="false" aria-controls="calendar-month-panel">
+      <span>Browse month</span>
+      <span aria-hidden="true">+</span>
+    </button>
+    <div id="calendar-month-panel" class="calendar-month-panel" data-calendar-month-panel hidden>
+      <div class="calendar-navigation" aria-label="Calendar month navigation">
+        <button type="button" class="calendar-nav-button" data-calendar-prev aria-label="Previous month">←</button>
+        <h3 class="calendar-month-title" data-calendar-month-title></h3>
+        <button type="button" class="calendar-nav-button" data-calendar-next aria-label="Next month">→</button>
+      </div>
+      <button type="button" class="calendar-today-button" data-calendar-today>Today</button>
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+      </div>
+      <div class="calendar-grid" data-calendar-grid role="grid" aria-label="Month"></div>
+      <div class="calendar-agenda" data-calendar-agenda aria-live="polite"></div>
+    </div>
+    <p class="calendar-status" data-calendar-status role="status" aria-live="polite"></p>
+    <p class="calendar-note">Times shown in Asia/Kuala_Lumpur.</p>
+  </section>
+</div>

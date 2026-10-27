@@ -10,7 +10,8 @@ import TextAlign from '@tiptap/extension-text-align'
 import { TextStyleKit } from '@tiptap/extension-text-style'
 import StarterKit from '@tiptap/starter-kit'
 import { Extension, useEditor } from '@tiptap/vue-3'
-import { BlogMedia } from '@/utils/blog-media-extension'
+import { BlogGallery, BlogMedia, BlogYouTube } from '@/utils/blog-media-extension'
+import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 
 export interface BlogTextMatch {
   from: number
@@ -110,6 +111,7 @@ const EditorStyle = Extension.create({
 export interface BlogEditorOptions {
   content: JSONContent | string
   onUpdate: (editor: Editor) => void
+  onSelectionUpdate?: (editor: Editor) => void
 }
 
 export const BLOG_EDITOR_COMMANDS = [
@@ -154,6 +156,8 @@ export function useBlogEditor(options: BlogEditorOptions) {
       TableHeader,
       TableCell,
       BlogMedia,
+      BlogGallery,
+      BlogYouTube,
     ],
     editorProps: {
       attributes: {
@@ -163,7 +167,12 @@ export function useBlogEditor(options: BlogEditorOptions) {
         'aria-multiline': 'true',
       },
     },
-    onUpdate: ({ editor: updatedEditor }) => options.onUpdate(updatedEditor as unknown as Editor),
+    onUpdate: ({ editor: updatedEditor, transaction }) => {
+      if (!transaction.docChanged)
+        return
+      options.onUpdate(updatedEditor as unknown as Editor)
+    },
+    onSelectionUpdate: ({ editor: selectedEditor }) => options.onSelectionUpdate?.(selectedEditor as unknown as Editor),
   })
 
   function insertMedia(attrs: Partial<import('@/utils/blog-studio').BlogMediaAttrs>) {
@@ -174,6 +183,21 @@ export function useBlogEditor(options: BlogEditorOptions) {
 
   function updateSelectedMedia(attrs: Partial<import('@/utils/blog-studio').BlogMediaAttrs>) {
     editor.value?.chain().focus().updateAttributes('blogMedia', attrs).run()
+  }
+
+  function insertGallery(manifestId: string) {
+    if (!editor.value || !manifestId.trim())
+      return false
+    return editor.value.chain().focus().insertContent({ type: 'blogGallery', attrs: { manifestId: manifestId.trim() } }).run()
+  }
+
+  function insertYouTube(videoId: string, title = '') {
+    if (!editor.value)
+      return false
+    const normalized = normalizeYouTubeVideoId(videoId)
+    if (!normalized)
+      return false
+    return editor.value.chain().focus().insertContent({ type: 'blogYouTube', attrs: { videoId: normalized, title: title.trim() } }).run()
   }
 
   function selectedMedia(): import('@/utils/blog-studio').BlogMediaAttrs | null {
@@ -218,5 +242,5 @@ export function useBlogEditor(options: BlogEditorOptions) {
     return true
   }
 
-  return { editor, insertMedia, updateSelectedMedia, selectedMedia, findText, replaceText }
+  return { editor, insertMedia, insertGallery, insertYouTube, updateSelectedMedia, selectedMedia, findText, replaceText }
 }

@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Activity, ChartArea, FolderSync, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
+import { Activity, CalendarDays, ChartArea, FolderSync, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
 import { computed } from 'vue'
 import { useRoute } from '#imports'
 
@@ -49,6 +49,16 @@ export const DASHBOARD_ROUTES = {
     paths: ['/admin/blog/media'],
     titleKey: 'Media library',
     icon: Image,
+  },
+  galleries: {
+    paths: ['/admin/blog/galleries'],
+    titleKey: 'Galleries',
+    icon: Image,
+  },
+  calendar: {
+    paths: ['/admin/calendar'],
+    titleKey: 'Calendar',
+    icon: CalendarDays,
   },
   blogSettings: {
     paths: ['/admin/blog/settings'],
@@ -105,7 +115,8 @@ export function useDashboardRoute() {
   const currentPage = computed<DashboardRouteName | ''>(() => {
     for (const [page, config] of Object.entries(DASHBOARD_ROUTES)) {
       if ((config.paths as readonly string[]).includes(route.path)
-        || (page === 'blogPosts' && route.path.startsWith('/admin/blog/posts/'))) {
+        || (page === 'blogPosts' && route.path.startsWith('/admin/blog/posts/'))
+        || (page === 'galleries' && route.path.startsWith('/admin/blog/galleries/'))) {
         return page as DashboardRouteName
       }
     }
