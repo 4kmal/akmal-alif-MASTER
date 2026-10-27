@@ -23,7 +23,7 @@ const routeConfig = readFileSync(resolve(adminRoot, 'app/composables/dashboard.t
 describe('SDC judging workspace UI contract', () => {
   it('keeps the shared workspace on the durable record and evidence APIs', () => {
     expect(workspace).toContain("apiBase: '/api/admin/judging/sdc-2026'")
-    expect(workspace).toContain("fetch(`${props.apiBase}/state`")
+    expect(workspace).toContain("const stateEndpoint = `${props.apiBase}/state${stateCursor.value === null ? '' : `?cursor=${stateCursor.value}`}`")
     expect(workspace).toContain("fetch(`${props.apiBase}/records`")
     expect(workspace).toContain("fetch(`${props.apiBase}/evidence/${encodeURIComponent(item.id)}`")
     expect(workspace).toContain("fetch(`${props.apiBase}/sync/status`")
@@ -103,7 +103,12 @@ describe('SDC judging workspace UI contract', () => {
     expect(workspace).toContain('sha256')
     expect(workspace).toContain('snapshotSha')
     expect(workspace).toContain('source lines')
-    expect(workspace).toContain('await Promise.all(pendingKeys.map(key => saveRecord(key)))')
+    expect(workspace).toContain('await Promise.all(keys.map(key => saveRecord(key)))')
     expect(workspace).toContain(':disabled="!readinessResult.ready"')
+    expect(workspace).toContain("const endpoint = `${props.apiBase}/jobs`")
+    expect(workspace).toContain('draft?.proposedScores')
+    expect(workspace).toContain('strengths')
+    expect(workspace).toContain('concerns')
+    expect(workspace).toContain('assessmentNestedCitations')
   })
 })
