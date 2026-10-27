@@ -162,6 +162,7 @@ export const CRITERIA_WEIGHTS: Readonly<Record<CriterionId, number>>
 export const REPO_CHECK_VALUES: readonly RepoCheck[]
 export const NEGATIVE_REPO_CHECK_VALUES: readonly Exclude<RepoCheck, 'Yes'>[]
 export const FEATURE_COUNT: 6
+export const FEATURES: readonly Readonly<{ id: string; label: string; description: string }>[]
 export const SCORE_COUNT: 4
 export const STATUS: Readonly<Record<'EMPTY' | 'NOT_STARTED' | 'INCOMPLETE' | 'MISSING_REPO_CHECK' | 'COMPLETE', ReviewStatus>>
 export const TEAM_IDS: readonly TeamId[]

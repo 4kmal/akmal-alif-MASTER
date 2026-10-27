@@ -21,6 +21,15 @@ export const CRITERIA = Object.freeze([
 
 export const CRITERIA_WEIGHTS = Object.freeze(Object.fromEntries(CRITERIA.map(criterion => [criterion.id, criterion.weight])))
 
+export const FEATURES = Object.freeze([
+  { id: 'profiles', label: 'Profiles', description: 'Profile intake for the learner or worker.' },
+  { id: 'trends', label: 'Trends', description: 'Updatable AI and job trend sources with source names and dates.' },
+  { id: 'matching', label: 'Matching', description: 'Explainable role matching and skill gaps.' },
+  { id: 'reskilling', label: 'Reskilling', description: 'Ordered, low-cost reskilling plans with time estimates.' },
+  { id: 'sdg', label: 'SDG alignment', description: 'Meaningful mapping to Sustainable Development Goals.' },
+  { id: 'scenarios', label: 'Scenarios', description: 'Multiple labelled future scenarios.' },
+].map(feature => Object.freeze(feature)))
+
 export const REPO_CHECK_VALUES = Object.freeze([
   'Yes',
   'No – private/broken',
@@ -380,11 +389,6 @@ export function readiness(judge, reviews, intakes) {
     }
   }
 
-  for (const row of reviewedRows) {
-    if (!row.warningsAcknowledged && !NEGATIVE_REPO_CHECK_SET.has(row.repoCheck))
-      pushWarning(warningDetails, 'review_warning_not_acknowledged', row.name + ' requires acknowledgement for the review warnings.', row.id)
-  }
-
   if (negativeRows.length > 0 && !normalizedJudge.warningsAcknowledged)
     pushWarning(warningDetails, 'judge_warning_not_acknowledged', 'Judge-level acknowledgement is required for negative repository selections.')
 
@@ -439,7 +443,7 @@ export function readiness(judge, reviews, intakes) {
 
   const negativeSelectionWarningsAcknowledged = negativeRows.every(row => row.warningsAcknowledged)
     && (negativeRows.length === 0 || normalizedJudge.warningsAcknowledged)
-  const reviewWarningsAcknowledged = reviewedRows.every(row => row.warningsAcknowledged)
+  const reviewWarningsAcknowledged = negativeRows.every(row => row.warningsAcknowledged)
   const intakeGatePassed = !intakesProvided
     || (intakeComplete && (intakeSnapshotsVerified || normalizedJudge.warningsAcknowledged) && intakeWarningsAcknowledged)
   const ready = nineReviewed

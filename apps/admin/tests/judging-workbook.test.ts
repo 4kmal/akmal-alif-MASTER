@@ -150,13 +150,13 @@ describe('canonical judging model', () => {
     expect(result.rows[0].total).toBe(80)
   })
 
-  it('requires every reviewed approval and review warning acknowledgement', () => {
-    let result = readiness(judge, allReviews())
+  it('requires acknowledgements for outstanding repository warnings', () => {
+    let result = readiness(judge, allReviews('No – private/broken'))
     expect(result.nineReviewed).toBe(true)
     expect(result.reviewWarningsAcknowledged).toBe(false)
     expect(result.ready).toBe(false)
 
-    result = readiness(judge, allReviews('Yes', { warningsAcknowledged: true }))
+    result = readiness({ ...judge, warningsAcknowledged: true }, allReviews('No – private/broken', { warningsAcknowledged: true }))
     expect(result.reviewWarningsAcknowledged).toBe(true)
     expect(result.ready).toBe(true)
   })
