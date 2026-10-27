@@ -174,7 +174,11 @@ interface AssessmentFeature {
 interface IntakeLink {
   url: string
   kind?: string
-  status?: string
+  status?: number | null
+  accessible?: boolean
+  parity?: 'unverified' | 'match' | 'mismatch'
+  error?: string
+  finalUrl?: string
   checkedAt?: string
 }
 
@@ -186,7 +190,7 @@ interface IntakeData {
   snapshotPath: string
   verified: boolean | null
   links: IntakeLink[]
-  demoParity: 'unverified' | 'present' | 'missing'
+  demoParity: 'unverified' | 'match' | 'mismatch'
 }
 
 interface BrowserDraft {
@@ -222,7 +226,17 @@ function readJsonRecord(value: unknown): JsonRecord {
 
 function payloadMessage(payload: unknown, fallback: string) {
   const record = readJsonRecord(payload)
-  return typeof record.message === 'string' ? record.message : fallback
+  const data = readJsonRecord(record.data)
+  const candidates = [
+    record.message,
+    record.error,
+    record.statusMessage,
+    data.message,
+    data.error,
+    data.statusMessage,
+  ]
+  const message = candidates.find(value => typeof value === 'string' && value.trim())
+  return typeof message === 'string' ? message : fallback
 }
 
 const DEADLINE_ISO = '2026-10-28T08:00:00+08:00'
@@ -264,10 +278,11 @@ const serverTime = ref('')
 const stateCursor = ref<number | null>(null)
 const isOnline = ref(typeof navigator === 'undefined' ? true : navigator.onLine)
 const isVisible = ref(true)
-type SyncStatus = 'unpaired' | 'pending' | 'syncing' | 'synced' | 'offline' | 'expired' | 'conflict'
+type SyncStatus = 'unpaired' | 'pending' | 'syncing' | 'synced' | 'offline' | 'expired' | 'conflict' | 'failed'
 const syncState = ref<SyncStatus>(props.local ? 'unpaired' : 'pending')
 const syncPendingCount = ref(0)
 const syncConflicts = ref<ConflictState[]>([])
+const syncError = ref('')
 const selectedTeamId = ref(canonicalTeams[0]?.id ?? '')
 const selectedEvidenceId = ref('')
 const activeTab = ref<WorkspaceTab>('queue')
@@ -366,6 +381,8 @@ const syncLabel = computed(() => {
     return 'Offline · edits stay local'
   if (syncState.value === 'expired')
     return 'Pairing expired · reconnect required'
+  if (syncState.value === 'failed')
+    return syncError.value ? `Sync error · ${syncError.value}` : 'Sync error · reconnect required'
   if (syncState.value === 'conflict')
     return `${syncConflicts.value.length || 1} conflict${syncConflicts.value.length === 1 ? '' : 's'} needs a choice`
   if (syncState.value === 'syncing' || syncState.value === 'pending' || dirtyKeys.size > 0 || syncPendingCount.value > 0)
@@ -375,7 +392,7 @@ const syncLabel = computed(() => {
 const syncTone = computed(() => {
   if (!isOnline.value || syncState.value === 'offline' || syncState.value === 'unpaired')
     return 'offline'
-  if (syncState.value === 'conflict' || syncState.value === 'expired')
+  if (syncState.value === 'conflict' || syncState.value === 'expired' || syncState.value === 'failed')
     return 'danger'
   if (syncState.value === 'pending' || syncState.value === 'syncing' || dirtyKeys.size > 0)
     return 'pending'
@@ -701,7 +718,7 @@ function normalizeIntake(source: any): IntakeData | null {
   const verified = typeof rawVerified === 'boolean'
     ? rawVerified
     : rawVerified === 'true' ? true : rawVerified === 'false' ? false : null
-  const demoParity = value.demoParity === 'present' || value.demoParity === 'missing' ? value.demoParity : 'unverified'
+  const demoParity = value.demoParity === 'match' || value.demoParity === 'mismatch' ? value.demoParity : 'unverified'
   const links = Array.isArray(value.links)
     ? value.links.flatMap((link: any) => {
         if (typeof link === 'string')
@@ -711,7 +728,11 @@ function normalizeIntake(source: any): IntakeData | null {
         return [{
           url: String(link.url),
           kind: link.kind ? String(link.kind) : undefined,
-          status: link.status ? String(link.status) : undefined,
+          status: typeof link.status === 'number' && Number.isFinite(link.status) ? link.status : null,
+          accessible: typeof link.accessible === 'boolean' ? link.accessible : undefined,
+          parity: link.parity === 'match' || link.parity === 'mismatch' ? link.parity : 'unverified',
+          error: link.error ? String(link.error) : undefined,
+          finalUrl: link.finalUrl ? String(link.finalUrl) : undefined,
           checkedAt: link.checkedAt ? String(link.checkedAt) : undefined,
         }]
       })
@@ -731,6 +752,14 @@ function normalizeIntake(source: any): IntakeData | null {
 function isPrimaryIntakeLink(link: IntakeLink) {
   const description = `${link.kind ?? ''} ${link.url}`.toLowerCase()
   return /deploy|demo|video|live|production|preview|website|app|youtube|youtu\.be|vimeo|\.mp4(?:$|[?#])|\.webm(?:$|[?#])/.test(description)
+}
+
+function intakeLinkState(link: IntakeLink) {
+  const access = link.accessible === true ? 'Accessible' : link.accessible === false ? 'Blocked' : 'Not checked'
+  const status = typeof link.status === 'number' ? `HTTP ${link.status}` : 'No HTTP status'
+  const parity = link.parity && link.parity !== 'unverified' ? ` · demo ${link.parity}` : ''
+  const error = link.error ? ` · ${link.error}` : ''
+  return `${access} · ${status}${parity}${error}`
 }
 
 function hasAssessmentContent(job: AssessmentJob) {
@@ -754,7 +783,7 @@ function normalizeRecord(record: any): RecordEnvelope | null {
 
 function normalizeSyncStatus(value: any): SyncStatus | null {
   return value === 'unpaired' || value === 'pending' || value === 'syncing' || value === 'synced'
-    || value === 'offline' || value === 'expired' || value === 'conflict'
+    || value === 'offline' || value === 'expired' || value === 'conflict' || value === 'failed'
     ? value
     : null
 }
@@ -839,7 +868,7 @@ function applyState(payload: any) {
   syncState.value = syncConflicts.value.length ? 'conflict' : (dirtyKeys.size ? 'pending' : 'synced')
 }
 
-async function fetchState(options: { silent?: boolean } = {}) {
+async function fetchState(options: { silent?: boolean, fullRetry?: boolean } = {}) {
   if (!isOnline.value && options.silent && !props.local) {
     syncState.value = 'offline'
     return
@@ -848,11 +877,19 @@ async function fetchState(options: { silent?: boolean } = {}) {
     loading.value = true
   errorMessage.value = ''
   try {
-    const stateEndpoint = `${props.apiBase}/state${stateCursor.value === null ? '' : `?cursor=${stateCursor.value}`}`
+    const requestedCursor = stateCursor.value
+    const stateEndpoint = `${props.apiBase}/state${requestedCursor === null ? '' : `?cursor=${requestedCursor}`}`
     const response = await fetch(stateEndpoint, { credentials: 'include', headers: { Accept: 'application/json' } })
-    if (!response.ok)
-      throw new Error(`State request failed (${response.status})`)
-    applyState(await response.json())
+    const payload = await readJson(response)
+    if (!response.ok) {
+      if (response.status === 400 && requestedCursor !== null && !options.fullRetry) {
+        stateCursor.value = null
+        await fetchState({ ...options, fullRetry: true })
+        return
+      }
+      throw new Error(payloadMessage(payload, `State request failed (${response.status})`))
+    }
+    applyState(payload)
     recoverBrowserDrafts()
     await fetchSyncStatus()
   }
@@ -867,11 +904,22 @@ async function fetchState(options: { silent?: boolean } = {}) {
 }
 
 async function fetchSyncStatus() {
+  if (!props.local) {
+    syncError.value = ''
+    return
+  }
   try {
     const response = await fetch(`${props.apiBase}/sync/status`, { credentials: 'include', headers: { Accept: 'application/json' } })
-    if (!response.ok)
-      return
     const payload = readJsonRecord(await readJson(response))
+    if (!response.ok) {
+      syncError.value = payloadMessage(payload, `Sync status failed (${response.status})`)
+      syncState.value = 'failed'
+      return
+    }
+    const remoteStatus = normalizeSyncStatus(payload.status)
+    syncError.value = remoteStatus === 'failed' || payload.error
+      ? payloadMessage(payload, 'The local sync service reported an error.')
+      : ''
     syncPendingCount.value = Number(payload.pending ?? 0)
     const incomingConflicts = normalizeConflicts(payload?.conflicts)
     if (incomingConflicts.length) {
@@ -890,7 +938,6 @@ async function fetchSyncStatus() {
     }
     if (payload.lastSuccessfulAt)
       lastSyncAt.value = String(payload.lastSuccessfulAt)
-    const remoteStatus = normalizeSyncStatus(payload.status)
     const conflictCount = Array.isArray(payload.conflicts) ? payload.conflicts.length : Number(payload.conflicts ?? 0)
     if (incomingConflicts.length || remoteStatus === 'conflict' || conflictCount > 0 || conflict.value)
       syncState.value = 'conflict'
@@ -1134,7 +1181,7 @@ async function saveRecordOnce(key: string) {
     })
     const payload = readJsonRecord(await readJson(response))
     if (response.status === 409) {
-      const current = normalizeRecord(payload.current)
+      const current = normalizeRecord(payload.current ?? readJsonRecord(payload.data).current)
       if (current) {
         conflict.value = {
           key,
@@ -1164,6 +1211,9 @@ async function saveRecordOnce(key: string) {
       applyRecord(saved)
     if (newerEdits) {
       dirtyKeys.add(key)
+      // The acknowledged snapshot consumed this mutation id. A later payload
+      // must get a new id; only unknown outcomes keep the id for retry.
+      mutationIds.delete(key)
       persistBrowserDraft(key)
       if (!saveTimers.has(key))
         scheduleSave(key)
@@ -1187,7 +1237,6 @@ async function resolveConflict(choice: 'local' | 'remote') {
   if (!currentConflict)
     return
   const { key, local, current } = currentConflict
-  conflict.value = null
   if (currentConflict.source === 'sync' && props.local) {
     try {
       const response = await fetch('/api/local/sync/resolve', {
@@ -1195,15 +1244,18 @@ async function resolveConflict(choice: 'local' | 'remote') {
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ key, choice: choice === 'local' ? 'local' : 'remote' }),
       })
+      const payload = await readJson(response)
       if (!response.ok)
-        throw new Error(`Conflict resolution failed (${response.status})`)
+        throw new Error(payloadMessage(payload, `Conflict resolution failed (${response.status})`))
       syncConflicts.value = syncConflicts.value.filter(item => item.key !== key)
       if (choice === 'remote')
         clearBrowserDraft(key)
       syncState.value = syncConflicts.value.length ? 'conflict' : (dirtyKeys.size ? 'pending' : 'synced')
+      conflict.value = null
       await fetchState({ silent: true })
     }
     catch (error) {
+      conflict.value = currentConflict
       errorMessage.value = error instanceof Error ? error.message : 'Conflict could not be resolved.'
       syncState.value = 'conflict'
     }
@@ -1211,6 +1263,7 @@ async function resolveConflict(choice: 'local' | 'remote') {
   }
   if (choice === 'remote') {
     applyRecord(current)
+    conflict.value = null
     dirtyKeys.delete(key)
     mutationIds.delete(key)
     clearBrowserDraft(key)
@@ -1223,6 +1276,7 @@ async function resolveConflict(choice: 'local' | 'remote') {
     persistBrowserDraft(key)
   }
   versions[key] = current.version
+  conflict.value = null
   dirtyKeys.add(key)
   syncState.value = 'pending'
   await saveRecord(key)
@@ -1514,9 +1568,9 @@ async function loadEvidence(item: EvidenceItem) {
   evidenceLoading.value = !item.text && !item.pages?.length
   try {
     const response = await fetch(`${props.apiBase}/evidence/${encodeURIComponent(item.id)}`, { credentials: 'include', headers: { Accept: 'application/json' } })
+    const payload = await readJson(response)
     if (!response.ok)
-      throw new Error(`Evidence request failed (${response.status})`)
-    const payload = await response.json()
+      throw new Error(payloadMessage(payload, `Evidence request failed (${response.status})`))
     if (selectedEvidenceId.value !== requestEvidenceId)
       return
     evidencePayload.value = normalizeEvidence(payload)
@@ -1572,9 +1626,9 @@ async function refreshDevices() {
     return
   try {
     const response = await fetch(`${props.apiBase}/devices`, { credentials: 'include', headers: { Accept: 'application/json' } })
-    if (!response.ok)
-      throw new Error(`Device request failed (${response.status})`)
     const payload = await readJson(response)
+    if (!response.ok)
+      throw new Error(payloadMessage(payload, `Device request failed (${response.status})`))
     const devices = Array.isArray(payload) ? payload : readJsonRecord(payload).devices
     pairedDevices.value = Array.isArray(devices) ? devices.filter(isJsonRecord) : []
   }
@@ -1641,13 +1695,14 @@ async function revokeDevice(device: Record<string, any>) {
   if (!id)
     return
   try {
-    const response = await fetch(`${props.apiBase}/devices/${encodeURIComponent(id)}/revoke`, {
-      method: 'POST',
+    const response = await fetch(`${props.apiBase}/devices/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
       credentials: 'include',
       headers: { Accept: 'application/json' },
     })
+    const payload = await readJson(response)
     if (!response.ok)
-      throw new Error(`Revoke failed (${response.status})`)
+      throw new Error(payloadMessage(payload, `Revoke failed (${response.status})`))
     await refreshDevices()
   }
   catch (error) {
@@ -1747,12 +1802,13 @@ async function queueAllAssessments() {
 async function cancelAssessment(job: AssessmentJob) {
   try {
     const response = await fetch(`${props.apiBase}/assessments/${encodeURIComponent(job.id)}/cancel`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json' } })
+    const payload = await readJson(response)
     if (!response.ok)
-      throw new Error(`Cancellation failed (${response.status})`)
+      throw new Error(payloadMessage(payload, `Cancellation failed (${response.status})`))
     await loadAssessmentJobs()
   }
-  catch {
-    assessmentMessage.value = 'Assessment could not be cancelled.'
+  catch (error) {
+    assessmentMessage.value = error instanceof Error ? error.message : 'Assessment could not be cancelled.'
   }
 }
 
@@ -1903,7 +1959,6 @@ onBeforeUnmount(() => {
     class="judging-workspace"
     :data-theme="theme"
     :data-local="local ? 'true' : 'false'"
-    @keydown.esc="conflict && (conflict = null)"
   >
     <header class="workspace-header">
       <div class="header-title">
@@ -2279,7 +2334,7 @@ onBeforeUnmount(() => {
                 <div class="deployment-links">
                   <h4>Deployment and demo links</h4><ul v-if="selectedIntakePrimaryLinks.length">
                     <li v-for="link in selectedIntakePrimaryLinks" :key="`${link.url}-${link.checkedAt ?? ''}`">
-                      <a :href="link.url" target="_blank" rel="noreferrer" :aria-label="`${link.kind ?? 'Deployment or demo link'}: ${link.url}`">{{ link.url }}</a><span>{{ link.status ?? 'unchecked' }}<span v-if="link.checkedAt"> · {{ formatDateTime(link.checkedAt) }}</span></span>
+                      <a :href="link.url" target="_blank" rel="noreferrer" :aria-label="`${link.kind ?? 'Deployment or demo link'}: ${link.url}`">{{ link.url }}</a><span>{{ intakeLinkState(link) }}<span v-if="link.finalUrl && link.finalUrl !== link.url"> · resolved {{ link.finalUrl }}</span><span v-if="link.checkedAt"> · {{ formatDateTime(link.checkedAt) }}</span></span>
                     </li>
                   </ul><p
                     v-else class="empty-copy"
@@ -2292,7 +2347,7 @@ onBeforeUnmount(() => {
                   >
                     <summary>Ancillary references ({{ selectedIntakeAncillaryLinks.length }})</summary><ul>
                       <li v-for="link in selectedIntakeAncillaryLinks" :key="`${link.url}-${link.checkedAt ?? ''}`">
-                        <a :href="link.url" target="_blank" rel="noreferrer" :aria-label="`${link.kind ?? 'Reference link'}: ${link.url}`">{{ link.url }}</a><span>{{ link.status ?? 'unchecked' }}<span v-if="link.checkedAt"> · {{ formatDateTime(link.checkedAt) }}</span></span>
+                        <a :href="link.url" target="_blank" rel="noreferrer" :aria-label="`${link.kind ?? 'Reference link'}: ${link.url}`">{{ link.url }}</a><span>{{ intakeLinkState(link) }}<span v-if="link.finalUrl && link.finalUrl !== link.url"> · resolved {{ link.finalUrl }}</span><span v-if="link.checkedAt"> · {{ formatDateTime(link.checkedAt) }}</span></span>
                       </li>
                     </ul>
                   </details>
@@ -2609,11 +2664,7 @@ onBeforeUnmount(() => {
 
     <div v-if="conflict" ref="conflictDialog" class="modal-scrim" role="dialog" aria-modal="true" aria-labelledby="conflict-title" tabindex="-1">
       <div class="conflict-dialog">
-        <button class="icon-button close-modal" type="button" aria-label="Close conflict dialog" @click="conflict = null">
-          <X :size="17" aria-hidden="true" />
-        </button><div
-          class="eyebrow"
-        >
+        <div class="eyebrow">
           Version conflict
         </div><h2 id="conflict-title">
           Choose which review to keep
@@ -3688,6 +3739,14 @@ button:disabled {
   color: var(--judge-green);
 }
 .parity-missing {
+  border-color: var(--judge-red);
+  color: var(--judge-red);
+}
+.parity-match {
+  border-color: var(--judge-green);
+  color: var(--judge-green);
+}
+.parity-mismatch {
   border-color: var(--judge-red);
   color: var(--judge-red);
 }

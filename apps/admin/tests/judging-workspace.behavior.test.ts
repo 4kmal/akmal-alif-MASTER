@@ -14,8 +14,8 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-function emptyState(records: any[] = []) {
-  return { assignment: ASSIGNMENT, records, serverTime: '2026-10-28T00:00:00.000Z' }
+function emptyState(records: any[] = [], cursor?: number) {
+  return { assignment: ASSIGNMENT, records, serverTime: '2026-10-28T00:00:00.000Z', ...(cursor === undefined ? {} : { cursor }) }
 }
 
 async function settle() {
@@ -48,6 +48,11 @@ describe('judgingWorkspace save behavior', () => {
   let cloudEvidenceEnvelope: boolean
   let deferredEvidence: boolean
   let evidenceResolvers: DeferredEvidence[]
+  let syncStatusPayload: Record<string, any>
+  let pairErrorEnvelope: boolean
+  let conflictEnvelope: boolean
+  let cursorAheadRecovery: boolean
+  let stateCursorIssued: boolean
   let originalFetch: typeof fetch
   let originalOnline: boolean
 
@@ -64,6 +69,11 @@ describe('judgingWorkspace save behavior', () => {
     cloudEvidenceEnvelope = false
     deferredEvidence = false
     evidenceResolvers = []
+    syncStatusPayload = { status: 'unpaired', pending: 0, conflicts: [] }
+    pairErrorEnvelope = false
+    conflictEnvelope = false
+    cursorAheadRecovery = false
+    stateCursorIssued = false
     originalFetch = globalThis.fetch
     originalOnline = navigator.onLine
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
@@ -71,12 +81,24 @@ describe('judgingWorkspace save behavior', () => {
       const url = String(input)
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
       fetchCalls.push({ url, body })
-      if (url.endsWith('/state'))
-        return jsonResponse(emptyState(stateRecords))
+      const parsedUrl = new URL(url, 'http://localhost')
+      if (parsedUrl.pathname.endsWith('/state')) {
+        if (cursorAheadRecovery && parsedUrl.searchParams.has('cursor'))
+          return jsonResponse({ error: 'Judging state cursor is ahead of the server' }, 400)
+        if (cursorAheadRecovery && !stateCursorIssued) {
+          stateCursorIssued = true
+          return jsonResponse(emptyState(stateRecords, 7))
+        }
+        return jsonResponse(emptyState(stateRecords, cursorAheadRecovery ? 8 : undefined))
+      }
       if (url.endsWith('/sync/status'))
-        return jsonResponse({ status: 'unpaired', pending: 0, conflicts: [] })
+        return jsonResponse(syncStatusPayload)
       if (url.endsWith('/jobs'))
         return jsonResponse({ jobs: jobsPayload })
+      if (url.endsWith('/devices'))
+        return jsonResponse({ devices: [{ id: 'device-1', name: 'Review station', expiresAt: '2026-10-29T00:00:00.000Z' }] })
+      if (url.includes('/devices/'))
+        return jsonResponse({ id: 'device-1', revokedAt: '2026-10-28T00:00:00.000Z' })
       if (url.includes('/evidence/')) {
         const evidenceId = decodeURIComponent(url.slice(url.lastIndexOf('/evidence/') + '/evidence/'.length))
         const record = stateRecords.find(item => item.data?.id === evidenceId)
@@ -93,8 +115,25 @@ describe('judgingWorkspace save behavior', () => {
           delayedFirstSave = false
           return new Promise<Response>(resolve => saveResolvers.push(resolve))
         }
+        if (conflictEnvelope) {
+          conflictEnvelope = false
+          return jsonResponse({
+            statusCode: 409,
+            statusMessage: 'Record version conflict',
+            data: {
+              current: {
+                key: body.key,
+                version: Number(body.baseVersion ?? 0) + 1,
+                data: body.data,
+                updatedAt: '2026-10-28T00:00:02.000Z',
+              },
+            },
+          }, 409)
+        }
         return jsonResponse({ key: body.key, version: 1, data: body.data, updatedAt: '2026-10-28T00:00:01.000Z' })
       }
+      if (url.endsWith('/pair'))
+        return pairErrorEnvelope ? jsonResponse({ error: 'Pair code rejected' }, 400) : jsonResponse({})
       if (url.endsWith('/intake'))
         return jsonResponse({})
       return jsonResponse({})
@@ -147,6 +186,45 @@ describe('judgingWorkspace save behavior', () => {
     const recordCalls = fetchCalls.filter(call => call.url.endsWith('/records'))
     expect(recordCalls).toHaveLength(2)
     expect(recordCalls[1].body?.data?.name).toBe('Second edit')
+    expect(recordCalls[1].body?.mutationId).not.toBe(recordCalls[0].body?.mutationId)
+  })
+
+  it('reuses a mutation id after an unknown save outcome so retry remains idempotent', async () => {
+    delayedFirstSave = false
+    let unknownOutcome = true
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+      fetchCalls.push({ url, body })
+      if (url.includes('/state'))
+        return jsonResponse(emptyState(stateRecords))
+      if (url.endsWith('/sync/status'))
+        return jsonResponse(syncStatusPayload)
+      if (url.endsWith('/records')) {
+        if (unknownOutcome) {
+          unknownOutcome = false
+          throw new TypeError('network disconnected after request')
+        }
+        return jsonResponse({ key: body.key, version: 1, data: body.data, updatedAt: '2026-10-28T00:00:01.000Z' })
+      }
+      return jsonResponse({})
+    }) as typeof fetch
+
+    mountLocal()
+    await settle()
+    const input = nameInput(host)
+    setInput(input, 'Retry me')
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+
+    setInput(input, 'Retry me with another edit')
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+
+    const recordCalls = fetchCalls.filter(call => call.url.endsWith('/records'))
+    expect(recordCalls).toHaveLength(2)
     expect(recordCalls[1].body?.mutationId).toBe(recordCalls[0].body?.mutationId)
   })
 
@@ -320,6 +398,70 @@ describe('judgingWorkspace save behavior', () => {
     expect(host.querySelector('.source-reader')?.textContent).not.toContain('first remote text')
   })
 
+  it('keeps intake accessibility, HTTP, and demo parity metadata visible', async () => {
+    stateRecords = [{
+      key: 'intake:01-console',
+      version: 1,
+      data: {
+        teamId: '01-console',
+        repoSHA: 'abc123',
+        branch: 'main',
+        retrievedAt: '2026-10-28T00:00:00.000Z',
+        snapshotPath: 'snapshots/01-console',
+        verified: true,
+        demoParity: 'mismatch',
+        links: [{
+          url: 'https://demo.example.test',
+          kind: 'deployment',
+          status: 403,
+          accessible: false,
+          parity: 'mismatch',
+          error: 'Access denied',
+          finalUrl: 'https://demo.example.test/login',
+          checkedAt: '2026-10-28T00:00:01.000Z',
+        }],
+      },
+    }]
+    mountLocal()
+    await settle()
+
+    expect(host.textContent).toContain('Demo parity · mismatch')
+    expect(host.textContent).toContain('Blocked · HTTP 403 · demo mismatch · Access denied')
+    expect(host.textContent).toContain('resolved https://demo.example.test/login')
+  })
+
+  it('requires an explicit choice for nested server conflicts', async () => {
+    delayedFirstSave = false
+    conflictEnvelope = true
+    stateRecords = [{
+      key: 'review:01-console',
+      version: 1,
+      data: {
+        teamId: '01-console',
+        scores: [null, null, null, null],
+        repoCheck: '',
+        notes: '',
+        reviewedAt: null,
+        features: FEATURES.map(() => ({ proposal: 'unverified', demo: 'unverified', note: '' })),
+        warningsAcknowledged: false,
+      },
+    }]
+    mountLocal()
+    await settle()
+    const score = host.querySelector<HTMLInputElement>('input[aria-label="Innovation & Creativity score out of 100"]')
+    expect(score).toBeTruthy()
+    setInput(score!, '80')
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy()
+    expect(host.querySelector('button[aria-label="Close conflict dialog"]')).toBeNull()
+    host.querySelector('[role="dialog"]')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy()
+  })
+
   it('persists a captured evidence link in timestamped notes without approving marks', async () => {
     delayedFirstSave = false
     mountLocal()
@@ -355,6 +497,55 @@ describe('judgingWorkspace save behavior', () => {
     document.dispatchEvent(new Event('visibilitychange'))
     await settle()
     expect(jobReads()).toBe(4)
+  })
+
+  it('resets an ahead cursor and performs one full state fetch', async () => {
+    cursorAheadRecovery = true
+    mountAdmin()
+    await settle()
+    const stateReads = () => fetchCalls.filter(call => new URL(call.url, 'http://localhost').pathname.endsWith('/state'))
+    expect(stateReads()).toHaveLength(1)
+
+    host.querySelector<HTMLButtonElement>('button[aria-label="Refresh judging state"]')?.click()
+    await settle()
+
+    const stateUrls = stateReads().map(call => call.url)
+    expect(stateUrls).toHaveLength(3)
+    expect(stateUrls[1]).toContain('?cursor=7')
+    expect(stateUrls[2]).not.toContain('?cursor=')
+  })
+
+  it('shows local credential failures and uses the error envelope for pairing', async () => {
+    syncStatusPayload = { status: 'failed', pending: 1, error: 'Device credential could not be read', conflicts: [] }
+    pairErrorEnvelope = true
+    mountLocal()
+    await settle()
+
+    expect(host.textContent).toContain('Sync error · Device credential could not be read')
+    const pairInput = host.querySelector<HTMLInputElement>('input[autocomplete="one-time-code"]')
+    expect(pairInput).toBeTruthy()
+    setInput(pairInput!, '123456')
+    await nextTick()
+    host.querySelector<HTMLFormElement>('form.pair-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await settle()
+    expect(host.textContent).toContain('Pair code rejected')
+  })
+
+  it('does not request the owner-only sync status route', async () => {
+    mountAdmin()
+    await settle()
+    expect(fetchCalls.some(call => call.url.endsWith('/sync/status'))).toBe(false)
+  })
+
+  it('uses the owner DELETE device route when revoking a station', async () => {
+    mountAdmin()
+    await settle()
+    const device = [...host.querySelectorAll<HTMLButtonElement>('.device-list button')].find(button => button.textContent?.includes('Revoke'))
+    expect(device).toBeTruthy()
+    device?.click()
+    await settle()
+    const revoke = fetchCalls.find(call => call.url.includes('/devices/') && !call.url.endsWith('/devices'))
+    expect(revoke?.url).toMatch(/\/devices\/[^/]+$/)
   })
 
   it('shows provider failures and retries through the supported local assessment route', async () => {
