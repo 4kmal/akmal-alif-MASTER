@@ -2,7 +2,7 @@ export type CriterionId = 'innovation' | 'problemSolutionFit' | 'feasibility' | 
 export type TeamId = '01-console' | '02-ctrl-ai' | '03-ctrl-cv' | '04-ctrl-alt-three' | '05-ctrl-s' | '06-decisive' | '07-dovun' | '08-dsaise' | '09-duologic'
 export type RepoCheck = 'Yes' | 'No – private/broken' | 'No – doesn\'t match demo'
 export type FeatureState = 'unverified' | 'present' | 'missing'
-export type FeatureFinding = { proposal: FeatureState; demo: FeatureState; note: string }
+export interface FeatureFinding { proposal: FeatureState, demo: FeatureState, note: string }
 export type Score = number | null
 
 export interface Criterion {
@@ -162,7 +162,7 @@ export const CRITERIA_WEIGHTS: Readonly<Record<CriterionId, number>>
 export const REPO_CHECK_VALUES: readonly RepoCheck[]
 export const NEGATIVE_REPO_CHECK_VALUES: readonly Exclude<RepoCheck, 'Yes'>[]
 export const FEATURE_COUNT: 6
-export const FEATURES: readonly Readonly<{ id: string; label: string; description: string }>[]
+export const FEATURES: readonly Readonly<{ id: string, label: string, description: string }>[]
 export const SCORE_COUNT: 4
 export const STATUS: Readonly<Record<'EMPTY' | 'NOT_STARTED' | 'INCOMPLETE' | 'MISSING_REPO_CHECK' | 'COMPLETE', ReviewStatus>>
 export const TEAM_IDS: readonly TeamId[]
@@ -175,10 +175,10 @@ export function normalizeReview(review: ReviewInput, teamId?: TeamId, options?: 
 export function validateJudge(judge: Partial<Judge>, options?: { allowDefaults?: boolean }): Judge
 export function calculateReviews(reviews?: readonly ReviewInput[] | Partial<Record<TeamId, ReviewInput | null>> | null): CalculatedReview[]
 export function readiness(judge: Partial<Judge>, reviews?: readonly ReviewInput[] | Partial<Record<TeamId, ReviewInput | null>> | null, intakes?: unknown): ReadinessResult
-export function validateRecordDetailed(key: string, data: unknown): { success: true; valid: true; data: RecordData; issues: never[] } | { success: false; valid: false; data: undefined; issues: string[] }
+export function validateRecordDetailed(key: string, data: unknown): { success: true, valid: true, data: RecordData, issues: never[] } | { success: false, valid: false, data: undefined, issues: string[] }
 export function validateRecord(key: string, data: unknown): boolean
 export function assertRecord(key: string, data: unknown): RecordData
-export function createRecord(key: string, data: unknown, options?: { version?: number; updatedAt?: string }): RecordEnvelope
+export function createRecord(key: string, data: unknown, options?: { version?: number, updatedAt?: string }): RecordEnvelope
 export function isNegativeRepoCheck(value: unknown): value is Exclude<RepoCheck, 'Yes'>
 export function isTeamId(value: unknown): value is TeamId
 export function cloneAssignment(): Assignment

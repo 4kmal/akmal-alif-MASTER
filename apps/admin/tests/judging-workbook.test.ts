@@ -1,24 +1,24 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
+import { describe, expect, it } from 'vitest'
 
 import {
   ASSIGNMENT,
+  calculateReviews,
   DEADLINE,
   DOMAIN,
   JUDGE_NAME,
+  readiness,
   TEAM_IDS,
   TEAMS,
-  calculateReviews,
-  readiness,
   validateRecord,
 } from '../shared/judging/model.mjs'
 import {
-  SHEET_PATH,
-  WORKBOOK_FORMULA_ORACLE,
   exportWorkbook,
   importAssignment,
+  SHEET_PATH,
+  WORKBOOK_FORMULA_ORACLE,
 } from '../shared/judging/workbook.mjs'
 
 const SOURCE_PATH = 'C:/Users/Admin/Desktop/KRACKEDDEV/Hackathon/sdcHackathon/Scoresheet D1-J04 - Muhammad Akmal Alif bin Azam.xlsx'
@@ -71,11 +71,11 @@ function intakeFixture(artifactCount = 1, teamIndex = 0, overrides = {}) {
     branch: 'main',
     sha: 'a'.repeat(40),
     retrievedAt: '2026-10-27T19:24:12.507Z',
-    snapshotPath: 'repos/' + team.id + '/' + 'a'.repeat(40),
+    snapshotPath: `repos/${team.id}/${'a'.repeat(40)}`,
     verified: true,
     evidenceIds: [evidenceFixture.id],
     artifacts: Array.from({ length: artifactCount }, (_, index) => ({
-      path: 'file-' + index + '.txt',
+      path: `file-${index}.txt`,
       size: index,
       sha256: 'b'.repeat(64),
     })),
@@ -100,7 +100,7 @@ async function sheetXml(bytes) {
 function cellXml(xml, reference) {
   const starts = [...xml.matchAll(/<c\b[^>]*>/g)]
   for (const start of starts) {
-    if (!new RegExp('(?:^|\\s)r="' + reference + '"').test(start[0]))
+    if (!new RegExp(`(?:^|\\s)r="${reference}"`).test(start[0]))
       continue
     if (/\/\s*>$/.test(start[0]))
       return start[0]
@@ -224,13 +224,13 @@ describe('canonical judging model', () => {
   it('validates constrained server record keys and bounded evidence/intake payloads', () => {
     expect(DEADLINE).toBe('2026-10-28T00:00:00.000Z')
     expect(validateRecord('judge', judge)).toBe(true)
-    expect(validateRecord('review:' + TEAM_IDS[0], review(TEAM_IDS[0]))).toBe(true)
+    expect(validateRecord(`review:${TEAM_IDS[0]}`, review(TEAM_IDS[0]))).toBe(true)
     expect(validateRecord('review:not-a-team', review(TEAM_IDS[0]))).toBe(false)
-    expect(validateRecord('evidence:' + evidenceFixture.id, evidenceFixture)).toBe(true)
-    expect(validateRecord('evidence:' + evidenceFixture.id, { ...evidenceFixture, text: 'x'.repeat(250001) })).toBe(false)
+    expect(validateRecord(`evidence:${evidenceFixture.id}`, evidenceFixture)).toBe(true)
+    expect(validateRecord(`evidence:${evidenceFixture.id}`, { ...evidenceFixture, text: 'x'.repeat(250001) })).toBe(false)
     expect(validateRecord('evidence:00000000-0000-4000-8000-000000000000', { ...evidenceFixture, id: '00000000-0000-4000-8000-000000000000' })).toBe(true)
-    expect(validateRecord('intake:' + TEAM_IDS[0], intakeFixture(1000))).toBe(true)
-    expect(validateRecord('intake:' + TEAM_IDS[0], intakeFixture(1001))).toBe(false)
+    expect(validateRecord(`intake:${TEAM_IDS[0]}`, intakeFixture(1000))).toBe(true)
+    expect(validateRecord(`intake:${TEAM_IDS[0]}`, intakeFixture(1001))).toBe(false)
     expect(validateRecord('assessment:00000000-0000-4000-8000-000000000000', { score: Number.NaN })).toBe(false)
   })
 })
@@ -337,8 +337,8 @@ describe('organizer workbook adapter', () => {
   }, 15000)
 
   parity('accepts actual intake/evidence fields and exports a local fixture workbook', async () => {
-    expect(validateRecord('evidence:' + evidenceFixture.id, evidenceFixture)).toBe(true)
-    expect(validateRecord('intake:' + TEAM_IDS[0], intakeFixture(330))).toBe(true)
+    expect(validateRecord(`evidence:${evidenceFixture.id}`, evidenceFixture)).toBe(true)
+    expect(validateRecord(`intake:${TEAM_IDS[0]}`, intakeFixture(330))).toBe(true)
     const sourceBytes = new Uint8Array(await readFile(SOURCE_PATH))
     const outputBytes = await exportWorkbook(sourceBytes, {
       judge: { ...judge, date: '2026-10-28', generalNotes: 'Local fixture export' },

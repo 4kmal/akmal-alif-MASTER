@@ -99,8 +99,8 @@ function assertCondition(condition, message) {
 }
 
 function assertString(value, field, maxLength) {
-  assertCondition(typeof value === 'string', field + ' must be a string')
-  assertCondition(value.length <= maxLength, field + ' exceeds ' + maxLength + ' characters')
+  assertCondition(typeof value === 'string', `${field} must be a string`)
+  assertCondition(value.length <= maxLength, `${field} exceeds ${maxLength} characters`)
 }
 
 function cloneJson(value) {
@@ -110,7 +110,7 @@ function cloneJson(value) {
 function isValidDateOnly(value) {
   if (!DATE_ONLY_PATTERN.test(value))
     return false
-  const date = new Date(value + 'T00:00:00.000Z')
+  const date = new Date(`${value}T00:00:00.000Z`)
   return date.getUTCFullYear() === Number(value.slice(0, 4))
     && date.getUTCMonth() + 1 === Number(value.slice(5, 7))
     && date.getUTCDate() === Number(value.slice(8, 10))
@@ -123,8 +123,8 @@ export function isDateOnly(value) {
 function validateScore(value, field) {
   if (value === null)
     return null
-  assertCondition(typeof value === 'number' && Number.isFinite(value), field + ' must be a finite number or null')
-  assertCondition(value >= 0 && value <= 100, field + ' must be between 0 and 100')
+  assertCondition(typeof value === 'number' && Number.isFinite(value), `${field} must be a finite number or null`)
+  assertCondition(value >= 0 && value <= 100, `${field} must be between 0 and 100`)
   return value
 }
 
@@ -137,10 +137,10 @@ function defaultFeatures() {
 }
 
 function validateFeature(feature, index) {
-  assertCondition(isPlainObject(feature), 'features[' + index + '] must be an object')
-  assertCondition(feature.proposal === 'unverified' || feature.proposal === 'present' || feature.proposal === 'missing', 'features[' + index + '].proposal is invalid')
-  assertCondition(feature.demo === 'unverified' || feature.demo === 'present' || feature.demo === 'missing', 'features[' + index + '].demo is invalid')
-  assertString(feature.note, 'features[' + index + '].note', 2000)
+  assertCondition(isPlainObject(feature), `features[${index}] must be an object`)
+  assertCondition(feature.proposal === 'unverified' || feature.proposal === 'present' || feature.proposal === 'missing', `features[${index}].proposal is invalid`)
+  assertCondition(feature.demo === 'unverified' || feature.demo === 'present' || feature.demo === 'missing', `features[${index}].demo is invalid`)
+  assertString(feature.note, `features[${index}].note`, 2000)
   return {
     proposal: feature.proposal,
     demo: feature.demo,
@@ -150,10 +150,10 @@ function validateFeature(feature, index) {
 
 export function emptyReview(teamId) {
   const team = TEAM_BY_ID.get(teamId)
-  assertCondition(team, 'Unknown team ID: ' + teamId)
+  assertCondition(team, `Unknown team ID: ${teamId}`)
   return {
     teamId,
-    scores: Array(SCORE_COUNT).fill(null),
+    scores: Array.from({ length: SCORE_COUNT }).fill(null),
     repoCheck: '',
     notes: '',
     reviewedAt: null,
@@ -170,36 +170,36 @@ export function normalizeReview(review, teamId, options = {}) {
   if (review.teamId !== undefined)
     assertCondition(review.teamId === resolvedTeamId, 'Review teamId does not match its key')
 
-  const hasScores = Object.prototype.hasOwnProperty.call(review, 'scores')
+  const hasScores = Object.hasOwn(review, 'scores')
   assertCondition(allowDefaults || hasScores, 'Review scores are required')
   const scores = review.scores === undefined && allowDefaults
-    ? Array(SCORE_COUNT).fill(null)
+    ? Array.from({ length: SCORE_COUNT }).fill(null)
     : review.scores
-  assertCondition(Array.isArray(scores) && scores.length === SCORE_COUNT, 'Review scores must contain exactly ' + SCORE_COUNT + ' entries')
-  const normalizedScores = scores.map((value, index) => validateScore(value === undefined ? null : value, 'scores[' + index + ']'))
+  assertCondition(Array.isArray(scores) && scores.length === SCORE_COUNT, `Review scores must contain exactly ${SCORE_COUNT} entries`)
+  const normalizedScores = scores.map((value, index) => validateScore(value === undefined ? null : value, `scores[${index}]`))
 
-  const hasRepoCheck = Object.prototype.hasOwnProperty.call(review, 'repoCheck')
+  const hasRepoCheck = Object.hasOwn(review, 'repoCheck')
   assertCondition(allowDefaults || hasRepoCheck, 'Review repoCheck is required')
   const repoCheck = review.repoCheck === undefined && allowDefaults ? '' : review.repoCheck
   assertCondition(typeof repoCheck === 'string' && (repoCheck === '' || REPO_CHECK_SET.has(repoCheck)), 'Review repoCheck is invalid')
 
-  const hasNotes = Object.prototype.hasOwnProperty.call(review, 'notes')
+  const hasNotes = Object.hasOwn(review, 'notes')
   assertCondition(allowDefaults || hasNotes, 'Review notes are required')
   const notes = review.notes === undefined && allowDefaults ? '' : review.notes
   assertString(notes, 'Review notes', 10000)
 
-  const hasReviewedAt = Object.prototype.hasOwnProperty.call(review, 'reviewedAt')
+  const hasReviewedAt = Object.hasOwn(review, 'reviewedAt')
   assertCondition(allowDefaults || hasReviewedAt, 'Review reviewedAt is required')
   const reviewedAt = review.reviewedAt === undefined && allowDefaults ? null : review.reviewedAt
   assertCondition(reviewedAt === null || (typeof reviewedAt === 'string' && reviewedAt.length <= 128 && Number.isFinite(Date.parse(reviewedAt))), 'Review reviewedAt must be an ISO date string or null')
 
-  const hasFeatures = Object.prototype.hasOwnProperty.call(review, 'features')
+  const hasFeatures = Object.hasOwn(review, 'features')
   assertCondition(allowDefaults || hasFeatures, 'Review features are required')
   const features = review.features === undefined && allowDefaults ? defaultFeatures() : review.features
-  assertCondition(Array.isArray(features) && features.length === FEATURE_COUNT, 'Review features must contain exactly ' + FEATURE_COUNT + ' entries')
+  assertCondition(Array.isArray(features) && features.length === FEATURE_COUNT, `Review features must contain exactly ${FEATURE_COUNT} entries`)
   const normalizedFeatures = features.map(validateFeature)
 
-  const hasWarningsAcknowledged = Object.prototype.hasOwnProperty.call(review, 'warningsAcknowledged')
+  const hasWarningsAcknowledged = Object.hasOwn(review, 'warningsAcknowledged')
   assertCondition(allowDefaults || hasWarningsAcknowledged, 'Review warningsAcknowledged is required')
   const warningsAcknowledged = review.warningsAcknowledged === undefined && allowDefaults ? false : review.warningsAcknowledged
   assertCondition(typeof warningsAcknowledged === 'boolean', 'Review warningsAcknowledged must be boolean')
@@ -218,27 +218,27 @@ export function normalizeReview(review, teamId, options = {}) {
 export function validateJudge(judge, options = {}) {
   const allowDefaults = options.allowDefaults !== false
   assertCondition(isPlainObject(judge), 'Judge must be an object')
-  const hasName = Object.prototype.hasOwnProperty.call(judge, 'name')
+  const hasName = Object.hasOwn(judge, 'name')
   assertCondition(allowDefaults || hasName, 'Judge name is required')
   const name = judge.name === undefined && allowDefaults ? '' : judge.name
   assertString(name, 'Judge name', 256)
 
-  const hasDate = Object.prototype.hasOwnProperty.call(judge, 'date')
+  const hasDate = Object.hasOwn(judge, 'date')
   assertCondition(allowDefaults || hasDate, 'Judge date is required')
   const date = judge.date === undefined && allowDefaults ? '' : judge.date
   assertCondition(typeof date === 'string' && date.length <= 10 && (date === '' || isValidDateOnly(date)), 'Judge date must be YYYY-MM-DD or blank')
 
-  const hasDomain = Object.prototype.hasOwnProperty.call(judge, 'domain')
+  const hasDomain = Object.hasOwn(judge, 'domain')
   assertCondition(allowDefaults || hasDomain, 'Judge domain is required')
   const domain = judge.domain === undefined && allowDefaults ? '' : judge.domain
   assertCondition(domain === '' || domain === DOMAIN, 'Judge domain does not match the assignment')
 
-  const hasGeneralNotes = Object.prototype.hasOwnProperty.call(judge, 'generalNotes')
+  const hasGeneralNotes = Object.hasOwn(judge, 'generalNotes')
   assertCondition(allowDefaults || hasGeneralNotes, 'Judge generalNotes is required')
   const generalNotes = judge.generalNotes === undefined && allowDefaults ? '' : judge.generalNotes
   assertString(generalNotes, 'Judge generalNotes', 20000)
 
-  const hasWarningsAcknowledged = Object.prototype.hasOwnProperty.call(judge, 'warningsAcknowledged')
+  const hasWarningsAcknowledged = Object.hasOwn(judge, 'warningsAcknowledged')
   assertCondition(allowDefaults || hasWarningsAcknowledged, 'Judge warningsAcknowledged is required')
   const warningsAcknowledged = judge.warningsAcknowledged === undefined && allowDefaults ? false : judge.warningsAcknowledged
   assertCondition(typeof warningsAcknowledged === 'boolean', 'Judge warningsAcknowledged must be boolean')
@@ -264,8 +264,8 @@ function reviewInputMap(reviews) {
 
   const map = new Map()
   for (const [teamId, review] of entries) {
-    assertCondition(typeof teamId === 'string' && TEAM_BY_ID.has(teamId), 'Unknown review teamId: ' + teamId)
-    assertCondition(!map.has(teamId), 'Duplicate review teamId: ' + teamId)
+    assertCondition(typeof teamId === 'string' && TEAM_BY_ID.has(teamId), `Unknown review teamId: ${teamId}`)
+    assertCondition(!map.has(teamId), `Duplicate review teamId: ${teamId}`)
     map.set(teamId, normalizeReview(review, teamId, { allowDefaults: true }))
   }
   return map
@@ -282,7 +282,7 @@ function calculateStatus(scores, repoCheck) {
 
 export function calculateReviews(reviews) {
   const input = reviewInputMap(reviews)
-  const rows = TEAMS.map(team => {
+  const rows = TEAMS.map((team) => {
     const review = input.get(team.id) || emptyReview(team.id)
     const contribution = review.scores.map((score, index) => score === null ? null : score * CRITERIA[index].weight)
     const scoreComplete = review.scores.every(score => score !== null)
@@ -320,8 +320,8 @@ function intakeMap(intakes) {
     : isPlainObject(intakes) ? Object.entries(intakes).map(([teamId, intake]) => [teamId, { ...(intake || {}), teamId }]) : null
   assertCondition(entries, 'Intakes must be an array or object keyed by teamId')
   for (const [teamId, intake] of entries) {
-    assertCondition(typeof teamId === 'string' && TEAM_BY_ID.has(teamId), 'Unknown intake teamId: ' + teamId)
-    assertCondition(!map.has(teamId), 'Duplicate intake teamId: ' + teamId)
+    assertCondition(typeof teamId === 'string' && TEAM_BY_ID.has(teamId), `Unknown intake teamId: ${teamId}`)
+    assertCondition(!map.has(teamId), `Duplicate intake teamId: ${teamId}`)
     map.set(teamId, intake)
   }
   return map
@@ -373,19 +373,19 @@ export function readiness(judge, reviews, intakes) {
   const reviewedRows = []
   for (const row of rows) {
     if (row.status !== STATUS.COMPLETE) {
-      pushWarning(warningDetails, 'review_incomplete', row.name + ' is ' + row.status.toLowerCase() + '.', row.id)
+      pushWarning(warningDetails, 'review_incomplete', `${row.name} is ${row.status.toLowerCase()}.`, row.id)
     }
     else if (!row.reviewedAt) {
-      pushWarning(warningDetails, 'reviewed_at_missing', row.name + ' has scores but no reviewedAt timestamp.', row.id)
+      pushWarning(warningDetails, 'reviewed_at_missing', `${row.name} has scores but no reviewedAt timestamp.`, row.id)
     }
     else {
       reviewedRows.push(row)
     }
     if (NEGATIVE_REPO_CHECK_SET.has(row.repoCheck)) {
       negativeRows.push(row)
-      pushWarning(warningDetails, 'negative_repo_check', row.name + ' is marked "' + row.repoCheck + '".', row.id)
+      pushWarning(warningDetails, 'negative_repo_check', `${row.name} is marked "${row.repoCheck}".`, row.id)
       if (!row.warningsAcknowledged)
-        pushWarning(warningDetails, 'review_warning_not_acknowledged', row.name + ' requires acknowledgement for the review warnings.', row.id)
+        pushWarning(warningDetails, 'review_warning_not_acknowledged', `${row.name} requires acknowledgement for the review warnings.`, row.id)
     }
   }
 
@@ -402,31 +402,31 @@ export function readiness(judge, reviews, intakes) {
       const intake = providedIntakes.get(team.id)
       if (!intake) {
         missingIntakeIds.push(team.id)
-        pushWarning(warningDetails, 'intake_missing', team.name + ' has no intake record.', team.id)
+        pushWarning(warningDetails, 'intake_missing', `${team.name} has no intake record.`, team.id)
         continue
       }
 
       if (intake.verified !== true) {
         unverifiedSnapshotIds.push(team.id)
-        pushWarning(warningDetails, 'intake_snapshot_unverified', team.name + ' has no verified frozen snapshot.', team.id)
+        pushWarning(warningDetails, 'intake_snapshot_unverified', `${team.name} has no verified frozen snapshot.`, team.id)
       }
 
       const issues = intakeIssueStrings(intake)
       if (issues.length > 0) {
-        pushWarning(warningDetails, 'intake_issue', team.name + ' has ' + issues.length + ' intake issue' + (issues.length === 1 ? '' : 's') + '.', team.id)
+        pushWarning(warningDetails, 'intake_issue', `${team.name} has ${issues.length} intake issue${issues.length === 1 ? '' : 's'}.`, team.id)
         if (issues.some(issueMentionsSource))
-          pushWarning(warningDetails, 'intake_source_availability_mismatch', team.name + ' has an intake source or link availability issue.', team.id)
+          pushWarning(warningDetails, 'intake_source_availability_mismatch', `${team.name} has an intake source or link availability issue.`, team.id)
         if (issues.some(issueMentionsDemo))
-          pushWarning(warningDetails, 'intake_demo_availability_mismatch', team.name + ' has a declared demo or published commit parity issue.', team.id)
+          pushWarning(warningDetails, 'intake_demo_availability_mismatch', `${team.name} has a declared demo or published commit parity issue.`, team.id)
       }
 
       if (intake.demoParity === 'unverified')
-        pushWarning(warningDetails, 'intake_demo_unverified', team.name + ' demo parity remains unverified and requires judge acknowledgement.', team.id)
+        pushWarning(warningDetails, 'intake_demo_unverified', `${team.name} demo parity remains unverified and requires judge acknowledgement.`, team.id)
       else if (intake.demoParity === 'mismatch')
-        pushWarning(warningDetails, 'intake_demo_availability_mismatch', team.name + ' demo parity does not match the frozen snapshot.', team.id)
+        pushWarning(warningDetails, 'intake_demo_availability_mismatch', `${team.name} demo parity does not match the frozen snapshot.`, team.id)
 
       if (intakeLinks(intake).some(linkHasAvailabilityMismatch))
-        pushWarning(warningDetails, 'intake_source_availability_mismatch', team.name + ' has an unavailable or mismatched source link.', team.id)
+        pushWarning(warningDetails, 'intake_source_availability_mismatch', `${team.name} has an unavailable or mismatched source link.`, team.id)
     }
   }
 
@@ -476,30 +476,30 @@ export function readiness(judge, reviews, intakes) {
 }
 
 function boundedJsonValue(value, path, state, limits, depth = 0) {
-  assertCondition(depth <= 8, path + ' is too deeply nested')
+  assertCondition(depth <= 8, `${path} is too deeply nested`)
   state.nodes += 1
   assertCondition(state.nodes <= limits.maxNodes, 'Record contains too many values')
   if (value === null || typeof value === 'boolean')
     return
   if (typeof value === 'number') {
-    assertCondition(Number.isFinite(value) && Math.abs(value) <= 1e12, path + ' must be finite and bounded')
+    assertCondition(Number.isFinite(value) && Math.abs(value) <= 1e12, `${path} must be finite and bounded`)
     return
   }
   if (typeof value === 'string') {
-    assertCondition(value.length <= limits.maxStringLength, path + ' exceeds ' + limits.maxStringLength + ' characters')
+    assertCondition(value.length <= limits.maxStringLength, `${path} exceeds ${limits.maxStringLength} characters`)
     return
   }
   if (Array.isArray(value)) {
-    assertCondition(value.length <= limits.maxArrayLength, path + ' contains too many entries')
-    value.forEach((entry, index) => boundedJsonValue(entry, path + '[' + index + ']', state, limits, depth + 1))
+    assertCondition(value.length <= limits.maxArrayLength, `${path} contains too many entries`)
+    value.forEach((entry, index) => boundedJsonValue(entry, `${path}[${index}]`, state, limits, depth + 1))
     return
   }
-  assertCondition(isPlainObject(value), path + ' must contain JSON-compatible values')
+  assertCondition(isPlainObject(value), `${path} must contain JSON-compatible values`)
   const keys = Object.keys(value)
-  assertCondition(keys.length <= 200, path + ' contains too many keys')
+  assertCondition(keys.length <= 200, `${path} contains too many keys`)
   for (const key of keys) {
-    assertCondition(key.length <= 128, path + ' contains an oversized key')
-    boundedJsonValue(value[key], path + '.' + key, state, limits, depth + 1)
+    assertCondition(key.length <= 128, `${path} contains an oversized key`)
+    boundedJsonValue(value[key], `${path}.${key}`, state, limits, depth + 1)
   }
 }
 
@@ -516,24 +516,24 @@ function validateFreeformRecord(data, keyTeamId, kind) {
 }
 
 function requireOwnField(data, field, message) {
-  assertCondition(Object.prototype.hasOwnProperty.call(data, field), message || ('Record field is required: ' + field))
+  assertCondition(Object.hasOwn(data, field), message || (`Record field is required: ${field}`))
   return data[field]
 }
 
 function validateIsoTimestamp(value, field) {
-  assertCondition(typeof value === 'string' && value.length <= 128 && Number.isFinite(Date.parse(value)), field + ' must be an ISO timestamp')
+  assertCondition(typeof value === 'string' && value.length <= 128 && Number.isFinite(Date.parse(value)), `${field} must be an ISO timestamp`)
   return value
 }
 
 function validateStringField(value, field, maxLength, allowEmpty = true) {
   assertString(value, field, maxLength)
   if (!allowEmpty)
-    assertCondition(value.length > 0, field + ' must not be blank')
+    assertCondition(value.length > 0, `${field} must not be blank`)
   return value
 }
 
 function validateRecordId(value, field) {
-  assertCondition(typeof value === 'string' && RECORD_ID_PATTERN.test(value), field + ' must be a UUID or 32-character hexadecimal ID')
+  assertCondition(typeof value === 'string' && RECORD_ID_PATTERN.test(value), `${field} must be a UUID or 32-character hexadecimal ID`)
   return value
 }
 
@@ -557,10 +557,10 @@ function validateEvidenceRecord(keyId, data) {
   if (data.pages !== undefined) {
     assertCondition(Array.isArray(data.pages) && data.pages.length <= 1000, 'Evidence pages must contain at most 1000 entries')
     for (const [index, page] of data.pages.entries()) {
-      assertCondition(isPlainObject(page), 'Evidence pages[' + index + '] must be an object')
+      assertCondition(isPlainObject(page), `Evidence pages[${index}] must be an object`)
       const pageNumber = requireOwnField(page, 'page')
-      assertCondition(Number.isSafeInteger(pageNumber) && pageNumber >= 1 && pageNumber <= 100000000, 'Evidence pages[' + index + '].page is invalid')
-      validateStringField(requireOwnField(page, 'text'), 'Evidence pages[' + index + '].text', 250000)
+      assertCondition(Number.isSafeInteger(pageNumber) && pageNumber >= 1 && pageNumber <= 100000000, `Evidence pages[${index}].page is invalid`)
+      validateStringField(requireOwnField(page, 'text'), `Evidence pages[${index}].text`, 250000)
     }
   }
   validateStringField(requireOwnField(data, 'coverage'), 'Evidence coverage', 10000)
@@ -569,30 +569,30 @@ function validateEvidenceRecord(keyId, data) {
 }
 
 function validateArtifact(artifact, index) {
-  assertCondition(isPlainObject(artifact), 'Intake artifacts[' + index + '] must be an object')
-  validateStringField(requireOwnField(artifact, 'path'), 'Intake artifacts[' + index + '].path', 4096, false)
+  assertCondition(isPlainObject(artifact), `Intake artifacts[${index}] must be an object`)
+  validateStringField(requireOwnField(artifact, 'path'), `Intake artifacts[${index}].path`, 4096, false)
   const size = requireOwnField(artifact, 'size')
-  assertCondition(Number.isSafeInteger(size) && size >= 0 && size <= 1e12, 'Intake artifacts[' + index + '].size is invalid')
+  assertCondition(Number.isSafeInteger(size) && size >= 0 && size <= 1e12, `Intake artifacts[${index}].size is invalid`)
   const sha256 = requireOwnField(artifact, 'sha256')
-  assertCondition(typeof sha256 === 'string' && SHA256_PATTERN.test(sha256), 'Intake artifacts[' + index + '].sha256 is invalid')
+  assertCondition(typeof sha256 === 'string' && SHA256_PATTERN.test(sha256), `Intake artifacts[${index}].sha256 is invalid`)
 }
 
 function validateIntakeLink(link, index) {
-  assertCondition(isPlainObject(link), 'Intake links[' + index + '] must be an object')
-  validateStringField(requireOwnField(link, 'url'), 'Intake links[' + index + '].url', 4096, false)
-  validateStringField(requireOwnField(link, 'kind'), 'Intake links[' + index + '].kind', 128, false)
+  assertCondition(isPlainObject(link), `Intake links[${index}] must be an object`)
+  validateStringField(requireOwnField(link, 'url'), `Intake links[${index}].url`, 4096, false)
+  validateStringField(requireOwnField(link, 'kind'), `Intake links[${index}].kind`, 128, false)
   const status = requireOwnField(link, 'status')
-  assertCondition(status === null || (typeof status === 'number' && Number.isFinite(status) && status >= 0 && status <= 1000), 'Intake links[' + index + '].status must be null or a bounded number')
+  assertCondition(status === null || (typeof status === 'number' && Number.isFinite(status) && status >= 0 && status <= 1000), `Intake links[${index}].status must be null or a bounded number`)
   const parity = requireOwnField(link, 'parity')
-  assertCondition(typeof parity === 'string' && DEMO_PARITY_VALUES.has(parity), 'Intake links[' + index + '].parity is invalid')
+  assertCondition(typeof parity === 'string' && DEMO_PARITY_VALUES.has(parity), `Intake links[${index}].parity is invalid`)
   if (link.error !== undefined)
-    validateStringField(link.error, 'Intake links[' + index + '].error', 10000)
+    validateStringField(link.error, `Intake links[${index}].error`, 10000)
   if (link.accessible !== undefined)
-    assertCondition(typeof link.accessible === 'boolean', 'Intake links[' + index + '].accessible must be boolean')
+    assertCondition(typeof link.accessible === 'boolean', `Intake links[${index}].accessible must be boolean`)
   if (link.finalUrl !== undefined)
-    validateStringField(link.finalUrl, 'Intake links[' + index + '].finalUrl', 4096)
+    validateStringField(link.finalUrl, `Intake links[${index}].finalUrl`, 4096)
   if (link.checkedAt !== undefined)
-    validateIsoTimestamp(link.checkedAt, 'Intake links[' + index + '].checkedAt')
+    validateIsoTimestamp(link.checkedAt, `Intake links[${index}].checkedAt`)
 }
 
 function validateIntakeRecord(keyTeamId, data) {
@@ -609,7 +609,7 @@ function validateIntakeRecord(keyTeamId, data) {
   const evidenceIds = requireOwnField(data, 'evidenceIds')
   assertCondition(Array.isArray(evidenceIds) && evidenceIds.length <= 1000, 'Intake evidenceIds must contain at most 1000 entries')
   for (const [index, evidenceId] of evidenceIds.entries())
-    validateRecordId(evidenceId, 'Intake evidenceIds[' + index + ']')
+    validateRecordId(evidenceId, `Intake evidenceIds[${index}]`)
 
   const artifacts = requireOwnField(data, 'artifacts')
   assertCondition(Array.isArray(artifacts) && artifacts.length <= 1000, 'Intake artifacts must contain at most 1000 entries')
@@ -623,10 +623,10 @@ function validateIntakeRecord(keyTeamId, data) {
   assertCondition(typeof demoParity === 'string' && DEMO_PARITY_VALUES.has(demoParity), 'Intake demoParity is invalid')
   const issues = requireOwnField(data, 'issues')
   assertCondition(Array.isArray(issues) && issues.length <= 1000, 'Intake issues must contain at most 1000 entries')
-  issues.forEach((issue, index) => validateStringField(issue, 'Intake issues[' + index + ']', 10000))
+  issues.forEach((issue, index) => validateStringField(issue, `Intake issues[${index}]`, 10000))
   const declaredDemoCommits = requireOwnField(data, 'declaredDemoCommits')
   assertCondition(Array.isArray(declaredDemoCommits) && declaredDemoCommits.length <= 1000, 'Intake declaredDemoCommits must contain at most 1000 entries')
-  declaredDemoCommits.forEach((commit, index) => validateStringField(commit, 'Intake declaredDemoCommits[' + index + ']', 256))
+  declaredDemoCommits.forEach((commit, index) => validateStringField(commit, `Intake declaredDemoCommits[${index}]`, 256))
   const previousSnapshots = requireOwnField(data, 'previousSnapshots')
   assertCondition(Array.isArray(previousSnapshots) && previousSnapshots.length <= 1000, 'Intake previousSnapshots must contain at most 1000 entries')
   return data

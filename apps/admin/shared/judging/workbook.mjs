@@ -1,14 +1,14 @@
 import JSZip from 'jszip'
 
 import {
+  calculateReviews,
+  cloneAssignment,
   CRITERIA,
   DOMAIN,
   JUDGE_NAME,
+  readiness,
   STATUS,
   TEAMS,
-  calculateReviews,
-  cloneAssignment,
-  readiness,
   validateJudge,
 } from './model.mjs'
 
@@ -66,7 +66,7 @@ function toUint8Array(bytes) {
 
 function xmlAttribute(xml, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = new RegExp('(?:^|\\s)' + escaped + '\\s*=\\s*(["\\\'])([\\s\\S]*?)\\1').exec(xml)
+  const match = new RegExp(`(?:^|\\s)${escaped}\\s*=\\s*(["\\'])([\\s\\S]*?)\\1`).exec(xml)
   return match ? decodeXmlEntities(match[2]) : undefined
 }
 
@@ -77,11 +77,16 @@ function cellReference(cellXml) {
 function decodeXmlEntities(value) {
   return value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, entity) => {
     const lower = entity.toLowerCase()
-    if (lower === 'amp') return '&'
-    if (lower === 'lt') return '<'
-    if (lower === 'gt') return '>'
-    if (lower === 'quot') return '"'
-    if (lower === 'apos') return '\''
+    if (lower === 'amp')
+      return '&'
+    if (lower === 'lt')
+      return '<'
+    if (lower === 'gt')
+      return '>'
+    if (lower === 'quot')
+      return '"'
+    if (lower === 'apos')
+      return '\''
     const codePoint = lower.startsWith('#x')
       ? Number.parseInt(lower.slice(2), 16)
       : Number.parseInt(lower.slice(1), 10)
@@ -119,7 +124,7 @@ function cellXmlFromSheet(sheetXml, reference) {
 
 function replaceCellXml(sheetXml, reference, replacer) {
   const entry = cellEntries(sheetXml).find(candidate => cellReference(candidate.xml) === reference)
-  assertCondition(entry, 'Workbook cell ' + reference + ' was not found')
+  assertCondition(entry, `Workbook cell ${reference} was not found`)
   return sheetXml.slice(0, entry.start) + replacer(entry.xml) + sheetXml.slice(entry.end)
 }
 
@@ -135,23 +140,23 @@ function removeTypeAttribute(attributes) {
 
 function withTypeAttribute(attributes, type) {
   const withoutType = removeTypeAttribute(attributes)
-  return type ? withoutType + ' t="' + type + '"' : withoutType
+  return type ? `${withoutType} t="${type}"` : withoutType
 }
 
 function literalCell(cellXml, value) {
   const open = cellOpenTag(cellXml)
   const attributes = removeTypeAttribute(open.attributes)
   if (value === '' || value === null || value === undefined)
-    return '<c' + attributes + '/>'
-  return '<c' + attributes + ' t="inlineStr"><is><t xml:space="preserve">' + escapeXml(value) + '</t></is></c>'
+    return `<c${attributes}/>`
+  return `<c${attributes} t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`
 }
 
 function numericCell(cellXml, value) {
   const open = cellOpenTag(cellXml)
   const attributes = removeTypeAttribute(open.attributes)
   if (value === '' || value === null || value === undefined)
-    return '<c' + attributes + '/>'
-  return '<c' + attributes + '><v>' + escapeXml(serializeNumber(value)) + '</v></c>'
+    return `<c${attributes}/>`
+  return `<c${attributes}><v>${escapeXml(serializeNumber(value))}</v></c>`
 }
 
 function serializeNumber(value) {
@@ -168,12 +173,12 @@ function formulaCellCache(cellXml, value) {
   const attributes = withTypeAttribute(open.attributes, isNumber ? null : 'str')
   const bodyStart = open.length
   const body = cellXml.slice(bodyStart).replace(/<\/c>\s*$/, '')
-  const escapedValue = isNumber ? serializeNumber(value) : escapeXml(value === null || value === undefined ? '' : value)
-  const cache = '<v>' + escapedValue + '</v>'
+  const escapedValue = isNumber ? serializeNumber(value) : escapeXml(value ?? '')
+  const cache = `<v>${escapedValue}</v>`
   const replacedBody = /<v(?:\s[^>]*)?>[\s\S]*?<\/v>/.test(body)
     ? body.replace(/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/, cache)
     : body + cache
-  return '<c' + attributes + '>' + replacedBody + '</c>'
+  return `<c${attributes}>${replacedBody}</c>`
 }
 
 function textFromCell(cellXml, sharedStrings) {
@@ -217,7 +222,7 @@ function formulaFromCell(cellXml) {
 
 function relationTargets(xml) {
   const result = new Map()
-  for (const match of xml.matchAll(/<Relationship\b[^>]*\/?>(?:<\/Relationship>)?/g)) {
+  for (const match of xml.matchAll(/<Relationship\b[^>]*>(?:<\/Relationship>)?/g)) {
     const tag = match[0]
     const id = xmlAttribute(tag, 'Id')
     const target = xmlAttribute(tag, 'Target')
@@ -231,7 +236,7 @@ function sheetHyperlinks(sheetXml, relsXml) {
   const rels = relationTargets(relsXml)
   const links = new Map()
   const hyperlinks = sheetXml.match(/<hyperlinks\b[\s\S]*?<\/hyperlinks>/)?.[0] || ''
-  for (const match of hyperlinks.matchAll(/<hyperlink\b[^>]*\/?>(?:<\/hyperlink>)?/g)) {
+  for (const match of hyperlinks.matchAll(/<hyperlink\b[^>]*>(?:<\/hyperlink>)?/g)) {
     const ref = xmlAttribute(match[0], 'ref')
     const relationId = xmlAttribute(match[0], 'r:id')
     const target = relationId ? rels.get(relationId) : undefined
@@ -251,22 +256,22 @@ function cellValueMap(sheetXml, sharedStrings) {
 function validateFormulaOracle(sheetXml) {
   for (const [reference, expected] of Object.entries(WORKBOOK_FORMULA_ORACLE)) {
     const cellXml = cellXmlFromSheet(sheetXml, reference)
-    assertCondition(cellXml, 'Workbook formula cell ' + reference + ' was not found')
+    assertCondition(cellXml, `Workbook formula cell ${reference} was not found`)
     const formula = formulaFromCell(cellXml)
-    assertCondition('=' + formula === expected.formula, 'Workbook formula drift at ' + reference)
+    assertCondition(`=${formula}` === expected.formula, `Workbook formula drift at ${reference}`)
     if (expected.type)
-      assertCondition(xmlAttribute(cellXml.match(/<f\b[^>]*>/)?.[0] || '', 't') === expected.type, 'Workbook formula type drift at ' + reference)
+      assertCondition(xmlAttribute(cellXml.match(/<f\b[^>]*>/)?.[0] || '', 't') === expected.type, `Workbook formula type drift at ${reference}`)
     if (expected.ref)
-      assertCondition(xmlAttribute(cellXml.match(/<f\b[^>]*>/)?.[0] || '', 'ref') === expected.ref, 'Workbook formula ref drift at ' + reference)
+      assertCondition(xmlAttribute(cellXml.match(/<f\b[^>]*>/)?.[0] || '', 'ref') === expected.ref, `Workbook formula ref drift at ${reference}`)
     if (expected.si)
-      assertCondition(xmlAttribute(cellXml.match(/<f\b[^>]*>/)?.[0] || '', 'si') === expected.si, 'Workbook shared formula index drift at ' + reference)
+      assertCondition(xmlAttribute(cellXml.match(/<f\b[^>]*>/)?.[0] || '', 'si') === expected.si, `Workbook shared formula index drift at ${reference}`)
   }
 }
 
 async function loadTemplate(bytes) {
   const zip = await JSZip.loadAsync(toUint8Array(bytes))
   const sheetFile = zip.file(SHEET_PATH)
-  assertCondition(sheetFile, 'Workbook is missing ' + SHEET_PATH)
+  assertCondition(sheetFile, `Workbook is missing ${SHEET_PATH}`)
   const sheetXml = await sheetFile.async('string')
   const sharedStringsXml = zip.file(SHARED_STRINGS_PATH)
     ? await zip.file(SHARED_STRINGS_PATH).async('string')
@@ -289,12 +294,12 @@ function validateCanonicalTemplate(sheetXml, sharedStrings, relsXml) {
   assertCondition(values.get('B4') === JUDGE_NAME, 'Workbook judge name does not match D1-J04')
   assertCondition(values.get('B6') === DOMAIN, 'Workbook domain does not match Domain 1')
   for (const team of TEAMS) {
-    assertCondition(values.get('B' + team.row) === team.name, 'Workbook team name drift at row ' + team.row)
+    assertCondition(values.get(`B${team.row}`) === team.name, `Workbook team name drift at row ${team.row}`)
     const links = sheetHyperlinks(sheetXml, relsXml)
-    assertCondition(links.get('C' + team.row) === team.repoUrl, 'Workbook repository hyperlink drift at row ' + team.row)
+    assertCondition(links.get(`C${team.row}`) === team.repoUrl, `Workbook repository hyperlink drift at row ${team.row}`)
   }
   for (let row = 22; row <= 25; row++)
-    assertCondition((values.get('B' + row) || '') === '', 'Workbook has an unexpected extra team at row ' + row)
+    assertCondition((values.get(`B${row}`) || '') === '', `Workbook has an unexpected extra team at row ${row}`)
   return values
 }
 
@@ -307,13 +312,20 @@ function formulaCacheValue(row, column, rowsById) {
   if (row >= 13 && row <= 21) {
     const team = TEAMS[row - 13]
     const review = rowsById.get(team.id)
-    if (column === 'I') return review.contribution[0]
-    if (column === 'J') return review.contribution[1]
-    if (column === 'K') return review.contribution[2]
-    if (column === 'L') return review.contribution[3]
-    if (column === 'M') return review.total
-    if (column === 'N') return review.rank
-    if (column === 'O') return review.status === STATUS.EMPTY ? '—' : review.status
+    if (column === 'I')
+      return review.contribution[0]
+    if (column === 'J')
+      return review.contribution[1]
+    if (column === 'K')
+      return review.contribution[2]
+    if (column === 'L')
+      return review.contribution[3]
+    if (column === 'M')
+      return review.total
+    if (column === 'N')
+      return review.rank
+    if (column === 'O')
+      return review.status === STATUS.EMPTY ? '—' : review.status
   }
   return column === 'O' ? '—' : null
 }
@@ -338,7 +350,7 @@ function summaryCacheValues(rowsById, judge) {
     ? 'YES — upload via the Google Form'
     : 'NOT YET — check Status column and judge details'
   return {
-    C28: complete.length + ' / ' + TEAMS.length,
+    C28: `${complete.length} / ${TEAMS.length}`,
     C29: average,
     C30: maximum,
     C31: minimum,
@@ -350,7 +362,7 @@ function summaryCacheValues(rowsById, judge) {
 function ensureFinalReadiness(judge, reviews, intakes) {
   const result = readiness(judge, reviews, intakes)
   if (!result.ready)
-    throw new Error('Workbook is not ready to submit: ' + result.warnings.join(' '))
+    throw new Error(`Workbook is not ready to submit: ${result.warnings.join(' ')}`)
   return result
 }
 
@@ -385,10 +397,10 @@ export async function exportWorkbook(templateBytes, payload, options = {}) {
   sheetXml = patchLiteral(sheetXml, 'B6', judge.domain)
   for (const team of TEAMS) {
     const row = rowsById.get(team.id)
-    sheetXml = patchLiteral(sheetXml, 'D' + team.row, row.repoCheck)
+    sheetXml = patchLiteral(sheetXml, `D${team.row}`, row.repoCheck)
     for (let index = 0; index < CRITERIA.length; index++)
       sheetXml = patchLiteral(sheetXml, String.fromCharCode('E'.charCodeAt(0) + index) + team.row, row.scores[index], true)
-    sheetXml = patchLiteral(sheetXml, 'P' + team.row, row.notes)
+    sheetXml = patchLiteral(sheetXml, `P${team.row}`, row.notes)
   }
   sheetXml = patchLiteral(sheetXml, 'A37', judge.generalNotes)
 
