@@ -193,13 +193,41 @@ interface BrowserDraft {
   updatedAt: string
 }
 
+interface CanonicalFeature {
+  id: string
+  label: string
+}
+
+type JsonRecord = Record<string, unknown>
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json()
+  } catch {
+    return {}
+  }
+}
+
+function readJsonRecord(value: unknown): JsonRecord {
+  return isJsonRecord(value) ? value : {}
+}
+
+function payloadMessage(payload: unknown, fallback: string) {
+  const record = readJsonRecord(payload)
+  return typeof record.message === 'string' ? record.message : fallback
+}
+
 const DEADLINE_ISO = '2026-10-28T08:00:00+08:00'
 const canonicalFeatureDefinitions = Object.freeze(FEATURES
   .slice(0, FEATURE_COUNT)
   .map((feature: any, index: number) => typeof feature === 'string'
     ? { id: feature, label: feature }
-    : { id: String(feature.id ?? feature.name ?? `feature-${index + 1}`), label: String(feature.label ?? feature.name ?? feature.id ?? `Feature ${index + 1}`) }))
-const canonicalFeatureLabels = Object.freeze(canonicalFeatureDefinitions.map(feature => feature.label))
+    : { id: String(feature.id ?? feature.name ?? `feature-${index + 1}`), label: String(feature.label ?? feature.name ?? feature.id ?? `Feature ${index + 1}`) })) as readonly CanonicalFeature[]
+const canonicalFeatureLabels = Object.freeze(canonicalFeatureDefinitions.map((feature: CanonicalFeature) => feature.label))
 
 const canonicalTeams = TEAMS as unknown as Team[]
 const canonicalCriteria = CRITERIA.map(criterion => ({ ...criterion }))
@@ -235,7 +263,7 @@ type SyncStatus = 'unpaired' | 'pending' | 'syncing' | 'synced' | 'offline' | 'e
 const syncState = ref<SyncStatus>(props.local ? 'unpaired' : 'pending')
 const syncPendingCount = ref(0)
 const syncConflicts = ref<ConflictState[]>([])
-const selectedTeamId = ref(canonicalTeams[0].id)
+const selectedTeamId = ref(canonicalTeams[0]?.id ?? '')
 const selectedEvidenceId = ref('')
 const activeTab = ref<WorkspaceTab>('queue')
 const filter = ref<ReviewFilter>('all')
@@ -305,6 +333,8 @@ const selectedEvidence = computed(() => evidencePayload.value
   ?? selectedTeamEvidence.value[0]
   ?? null)
 const selectedIntake = computed(() => normalizeIntake(records[`intake:${selectedTeamId.value}`]?.data))
+const selectedIntakePrimaryLinks = computed(() => selectedIntake.value?.links.filter(isPrimaryIntakeLink) ?? [])
+const selectedIntakeAncillaryLinks = computed(() => selectedIntake.value?.links.filter(link => !isPrimaryIntakeLink(link)) ?? [])
 
 const reviewInputMap = computed(() => Object.fromEntries(teams.value.map(team => [team.id, { ...reviewDrafts[team.id], teamId: team.id }])))
 const intakeInputMap = computed(() => {
@@ -381,8 +411,8 @@ function normalizeAssignment(source: any): AssignmentData {
     deadline: DEADLINE_ISO,
     timezone: 'MYT',
     criteria: canonicalCriteria.map((criterion, index) => ({
-      id: String(criterion.id ?? canonicalCriteria[index].id),
-      label: String(criterion.label ?? canonicalCriteria[index].label),
+      id: String(criterion.id ?? canonicalCriteria[index]?.id ?? `criterion-${index + 1}`),
+      label: String(criterion.label ?? canonicalCriteria[index]?.label ?? `Criterion ${index + 1}`),
       weight: criterion.weight,
     })),
     features: [...canonicalFeatureLabels],
@@ -462,11 +492,11 @@ function normalizeStringList(value: any): string[] {
 
 function normalizeAssessmentCitations(value: any): AssessmentCitation[] {
   if (!Array.isArray(value)) return []
-  const flattened = value.flatMap((item: any) => {
+  const flattened: any[] = value.flatMap((item: any): any[] => {
     if (item && typeof item === 'object' && Array.isArray(item.citations)) return [item, ...item.citations]
     return [item]
   })
-  return flattened.flatMap((item: any) => {
+  return flattened.flatMap((item: any): AssessmentCitation[] => {
     if (typeof item === 'string') return [{ title: item, url: item }]
     if (!item || typeof item !== 'object') return []
     const url = item.url ? String(item.url) : undefined
@@ -646,6 +676,11 @@ function normalizeIntake(source: any): IntakeData | null {
   }
 }
 
+function isPrimaryIntakeLink(link: IntakeLink) {
+  const description = `${link.kind ?? ''} ${link.url}`.toLowerCase()
+  return /(deploy|demo|video|live|production|preview|website|app|youtube|youtu\.be|vimeo|\.mp4(?:$|[?#])|\.webm(?:$|[?#]))/.test(description)
+}
+
 function hasAssessmentContent(job: AssessmentJob) {
   return Boolean(job.suggestedScores?.some(score => score !== null)
     || job.strengths.length
@@ -717,7 +752,8 @@ function applyState(payload: any) {
   const incomingConflicts = normalizeConflicts(payload?.conflicts)
   if (incomingConflicts.length) {
     syncConflicts.value = incomingConflicts
-    conflict.value = conflict.value ?? incomingConflicts[0]
+    const firstConflict = incomingConflicts[0]
+    if (firstConflict) conflict.value = conflict.value ?? firstConflict
     syncState.value = 'conflict'
   }
   else if (Array.isArray(payload?.conflicts)) {
@@ -766,12 +802,13 @@ async function fetchSyncStatus() {
   try {
     const response = await fetch(`${props.apiBase}/sync/status`, { credentials: 'include', headers: { Accept: 'application/json' } })
     if (!response.ok) return
-    const payload = await response.json()
-    syncPendingCount.value = Number(payload?.pending ?? 0)
+    const payload = readJsonRecord(await readJson(response))
+    syncPendingCount.value = Number(payload.pending ?? 0)
     const incomingConflicts = normalizeConflicts(payload?.conflicts)
     if (incomingConflicts.length) {
       syncConflicts.value = incomingConflicts
-      conflict.value = conflict.value ?? incomingConflicts[0]
+      const firstConflict = incomingConflicts[0]
+      if (firstConflict) conflict.value = conflict.value ?? firstConflict
       syncState.value = 'conflict'
     }
     else if (!conflict.value) {
@@ -781,9 +818,10 @@ async function fetchSyncStatus() {
       syncConflicts.value = []
       conflict.value = null
     }
-    if (payload?.lastSuccessfulAt) lastSyncAt.value = String(payload.lastSuccessfulAt)
-    const remoteStatus = normalizeSyncStatus(payload?.status)
-    if (incomingConflicts.length || remoteStatus === 'conflict' || Number(payload?.conflicts ?? 0) > 0 || conflict.value) syncState.value = 'conflict'
+    if (payload.lastSuccessfulAt) lastSyncAt.value = String(payload.lastSuccessfulAt)
+    const remoteStatus = normalizeSyncStatus(payload.status)
+    const conflictCount = Array.isArray(payload.conflicts) ? payload.conflicts.length : Number(payload.conflicts ?? 0)
+    if (incomingConflicts.length || remoteStatus === 'conflict' || conflictCount > 0 || conflict.value) syncState.value = 'conflict'
     else if (dirtyKeys.size) syncState.value = 'pending'
     else if (remoteStatus) syncState.value = remoteStatus
   } catch {
@@ -809,11 +847,13 @@ function readBrowserDraftStore() {
     const drafts: Record<string, BrowserDraft> = {}
     for (const [key, value] of Object.entries(parsed)) {
       const item = value as Partial<BrowserDraft>
-      if (!isBrowserDraftKey(key) || !Number.isSafeInteger(item.baseVersion) || item.baseVersion < 0 || !item.data || typeof item.data !== 'object') continue
+      const baseVersion = typeof item.baseVersion === 'number' && Number.isSafeInteger(item.baseVersion) && item.baseVersion >= 0 ? item.baseVersion : null
+      const data = item.data && typeof item.data === 'object' && !Array.isArray(item.data) ? item.data as Record<string, any> : null
+      if (!isBrowserDraftKey(key) || baseVersion === null || !data) continue
       drafts[key] = {
         key,
-        baseVersion: item.baseVersion,
-        data: item.data as Record<string, any>,
+        baseVersion,
+        data,
         updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
       }
     }
@@ -992,7 +1032,7 @@ async function saveRecordOnce(key: string) {
         mutationId,
       }),
     })
-    const payload = await response.json().catch(() => ({}))
+    const payload = readJsonRecord(await readJson(response))
     if (response.status === 409) {
       const current = normalizeRecord(payload.current)
       if (current) {
@@ -1012,7 +1052,7 @@ async function saveRecordOnce(key: string) {
         return
       }
     }
-    if (!response.ok) throw new Error(payload?.message ?? `Save failed (${response.status})`)
+    if (!response.ok) throw new Error(payloadMessage(payload, `Save failed (${response.status})`))
     const saved = normalizeRecord(payload)
     if (!saved) throw new Error('Save response did not contain a record.')
     const newerEdits = (draftGenerations[key] ?? 0) !== generation
@@ -1101,14 +1141,18 @@ function clampScore(value: number) {
 
 function setFeatureStatus(index: number, field: 'proposal' | 'demo', event: Event) {
   const input = event.target as HTMLSelectElement
+  const feature = selectedReview.value.features[index]
+  if (!feature) return
   invalidateReviewApproval()
-  selectedReview.value.features[index][field] = normalizeFeatureStatus(input.value)
+  feature[field] = normalizeFeatureStatus(input.value)
   markReviewDirty(selectedTeamId.value)
 }
 
 function updateFeatureNote(index: number, event: Event) {
+  const feature = selectedReview.value.features[index]
+  if (!feature) return
   invalidateReviewApproval()
-  selectedReview.value.features[index].note = (event.target as HTMLInputElement).value
+  feature.note = (event.target as HTMLInputElement).value
   markReviewDirty(selectedTeamId.value)
 }
 
@@ -1328,8 +1372,9 @@ async function refreshDevices() {
   try {
     const response = await fetch(`${props.apiBase}/devices`, { credentials: 'include', headers: { Accept: 'application/json' } })
     if (!response.ok) throw new Error(`Device request failed (${response.status})`)
-    const payload = await response.json()
-    pairedDevices.value = Array.isArray(payload) ? payload : (payload.devices ?? [])
+    const payload = await readJson(response)
+    const devices = Array.isArray(payload) ? payload : readJsonRecord(payload).devices
+    pairedDevices.value = Array.isArray(devices) ? devices.filter(isJsonRecord) : []
   } catch (error) {
     pairMessage.value = error instanceof Error ? error.message : 'Devices could not be loaded.'
   }
@@ -1349,8 +1394,8 @@ async function pairLocalDevice() {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ code }),
     })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(payload?.message ?? `Pairing failed (${response.status})`)
+    const payload = readJsonRecord(await readJson(response))
+    if (!response.ok) throw new Error(payloadMessage(payload, `Pairing failed (${response.status})`))
     pairMessage.value = 'This judging station is paired and ready.'
     pairCode.value = ''
     await fetchState()
@@ -1370,10 +1415,10 @@ async function createAdminPairCode() {
       credentials: 'include',
       headers: { Accept: 'application/json' },
     })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(payload?.message ?? `Pair code request failed (${response.status})`)
+    const payload = readJsonRecord(await readJson(response))
+    if (!response.ok) throw new Error(payloadMessage(payload, `Pair code request failed (${response.status})`))
     pairCode.value = String(payload.code ?? payload.pairCode ?? '')
-    pairMessage.value = payload.expiresAt ? `Code expires ${formatDateTime(payload.expiresAt)}.` : 'Code expires in 10 minutes.'
+    pairMessage.value = payload.expiresAt ? `Code expires ${formatDateTime(String(payload.expiresAt))}.` : 'Code expires in 10 minutes.'
     await refreshDevices()
   } catch (error) {
     pairMessage.value = error instanceof Error ? error.message : 'Pair code could not be created.'
@@ -1408,8 +1453,8 @@ async function startIntake() {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ refresh: true, teamId: selectedTeamId.value }),
     })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(payload?.message ?? `Intake failed (${response.status})`)
+    const payload = readJsonRecord(await readJson(response))
+    if (!response.ok) throw new Error(payloadMessage(payload, `Intake failed (${response.status})`))
     intakeMessage.value = payload.jobId ? `Intake job ${payload.jobId} queued.` : 'Intake queued.'
     await loadIntakeProgress()
     await fetchState()
@@ -1425,8 +1470,8 @@ async function loadIntakeProgress() {
   try {
     const response = await fetch(`${props.apiBase}/intake`, { credentials: 'include', headers: { Accept: 'application/json' } })
     if (!response.ok) return
-    const payload = await response.json()
-    intakeProgress.value = payload && typeof payload === 'object' ? payload : null
+    const payload = await readJson(response)
+    intakeProgress.value = isJsonRecord(payload) ? payload : null
   } catch {
     // Progress is advisory and should not block scoring.
   }
@@ -1437,9 +1482,9 @@ async function loadAssessmentJobs() {
     const endpoint = `${props.apiBase}/jobs`
     const response = await fetch(endpoint, { credentials: 'include', headers: { Accept: 'application/json' } })
     if (!response.ok) return
-    const payload = await response.json()
-    const jobs = Array.isArray(payload) ? payload : (payload.jobs ?? [])
-    assessmentJobs.value = jobs.map(normalizeAssessmentJob)
+    const payload = await readJson(response)
+    const jobs = Array.isArray(payload) ? payload : readJsonRecord(payload).jobs
+    assessmentJobs.value = (Array.isArray(jobs) ? jobs : []).map(normalizeAssessmentJob)
   } catch {
     // Assessment jobs are supplementary to the judging state; keep the workspace usable.
   }
@@ -1455,8 +1500,8 @@ async function queueAssessment(teamId: string) {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ teamId }),
     })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(payload?.message ?? `Assessment request failed (${response.status})`)
+    const payload = readJsonRecord(await readJson(response))
+    if (!response.ok) throw new Error(payloadMessage(payload, `Assessment request failed (${response.status})`))
     assessmentMessage.value = `Assessment queued for ${teamName(teamId)}.`
     await loadAssessmentJobs()
   } catch (error) {
@@ -1754,7 +1799,7 @@ onBeforeUnmount(() => {
           <section v-if="selectedIntake" class="intake-summary" aria-labelledby="intake-summary-heading">
             <div class="panel-heading"><div><h3 id="intake-summary-heading">Intake snapshot</h3><p>Repository metadata is shown separately from observed demo parity.</p></div><span class="parity-badge" :class="`parity-${selectedIntake.demoParity}`">Demo parity · {{ selectedIntake.demoParity }}</span></div>
             <dl class="intake-meta"><div><dt>Repository SHA</dt><dd>{{ selectedIntake.repoSha || 'Not recorded' }}</dd></div><div><dt>Retrieved</dt><dd>{{ selectedIntake.retrievedAt ? formatDateTime(selectedIntake.retrievedAt) : 'Not recorded' }}</dd></div><div><dt>Verified</dt><dd>{{ selectedIntake.verified === true ? 'Verified' : selectedIntake.verified === false ? 'Not verified' : 'Unknown' }}</dd></div><div v-if="selectedIntake.branch"><dt>Branch</dt><dd>{{ selectedIntake.branch }}</dd></div></dl>
-            <div class="deployment-links"><h4>Deployment and demo links</h4><ul v-if="selectedIntake.links.length"><li v-for="link in selectedIntake.links" :key="`${link.url}-${link.checkedAt ?? ''}`"><a :href="link.url" target="_blank" rel="noreferrer" :aria-label="`${link.kind ?? 'Deployment link'}: ${link.url}`">{{ link.url }}</a><span>{{ link.status ?? 'unchecked' }}<span v-if="link.checkedAt"> · {{ formatDateTime(link.checkedAt) }}</span></span></li></ul><p v-else class="empty-copy">No deployment links recorded.</p></div>
+            <div class="deployment-links"><h4>Deployment and demo links</h4><ul v-if="selectedIntakePrimaryLinks.length"><li v-for="link in selectedIntakePrimaryLinks" :key="`${link.url}-${link.checkedAt ?? ''}`"><a :href="link.url" target="_blank" rel="noreferrer" :aria-label="`${link.kind ?? 'Deployment or demo link'}: ${link.url}`">{{ link.url }}</a><span>{{ link.status ?? 'unchecked' }}<span v-if="link.checkedAt"> · {{ formatDateTime(link.checkedAt) }}</span></span></li></ul><p v-else class="empty-copy">No deployment or video links recorded.</p><details v-if="selectedIntakeAncillaryLinks.length" class="ancillary-links"><summary>Ancillary references ({{ selectedIntakeAncillaryLinks.length }})</summary><ul><li v-for="link in selectedIntakeAncillaryLinks" :key="`${link.url}-${link.checkedAt ?? ''}`"><a :href="link.url" target="_blank" rel="noreferrer" :aria-label="`${link.kind ?? 'Reference link'}: ${link.url}`">{{ link.url }}</a><span>{{ link.status ?? 'unchecked' }}<span v-if="link.checkedAt"> · {{ formatDateTime(link.checkedAt) }}</span></span></li></ul></details></div>
           </section>
           <div v-if="evidenceLoading" class="reader-state"><RefreshCw :size="18" class="spin" aria-hidden="true" /> Loading safe evidence…</div>
           <div v-else-if="evidenceError" class="reader-state reader-error"><AlertTriangle :size="18" aria-hidden="true" /> {{ evidenceError }}</div>
@@ -1776,7 +1821,7 @@ onBeforeUnmount(() => {
           <div class="criteria-grid"><label v-for="(criterion, index) in criteria" :key="criterion.id" class="score-field"><span>{{ criterion.label }} <small>{{ Math.round(criterion.weight * 100) }}%</small></span><input :value="selectedReview.scores[index] === null ? '' : selectedReview.scores[index]" type="number" min="0" max="100" step="0.1" inputmode="decimal" :aria-label="`${criterion.label} score out of 100`" placeholder="—" @input="setScore(index, $event)" /><em>/100</em></label></div>
           <section v-if="selectedAssessment" class="ai-suggestion" aria-labelledby="ai-suggestion-heading">
             <div class="panel-heading"><div><h4 id="ai-suggestion-heading">AI assessment suggestion</h4><p>Suggestions stay separate from the judge’s scores until explicitly copied as a draft.</p><p v-if="selectedAssessment.stale" class="stale-copy">This result is stale. Regenerate the assessment before using it as a draft.</p></div><button class="secondary-button" type="button" :disabled="selectedAssessment.stale" :title="selectedAssessment.stale ? 'Regenerate this stale assessment before using its scores' : undefined" @click="acceptAssessmentScores">{{ selectedAssessment.stale ? 'Stale · regenerate' : 'Use as draft' }}</button></div>
-            <div v-if="selectedAssessment.suggestedScores?.length" class="ai-score-list"><span v-for="(score, index) in selectedAssessment.suggestedScores" :key="criteria[index].id"><strong>{{ criteria[index].label }}</strong><em>{{ formatScore(score) }}/100</em></span></div>
+            <div v-if="selectedAssessment.suggestedScores?.length" class="ai-score-list"><span v-for="(score, index) in selectedAssessment.suggestedScores" :key="criteria[index]?.id ?? `criterion-${index}`"><strong>{{ criteria[index]?.label ?? `Criterion ${index + 1}` }}</strong><em>{{ formatScore(score ?? null) }}/100</em></span></div>
             <div class="ai-detail-grid">
               <div><h4>Strengths</h4><ul v-if="selectedAssessment.strengths.length"><li v-for="strength in selectedAssessment.strengths" :key="strength">{{ strength }}</li></ul><p v-else class="empty-copy">No strengths recorded.</p></div>
               <div><h4>Concerns</h4><ul v-if="selectedAssessment.concerns.length"><li v-for="concern in selectedAssessment.concerns" :key="concern">{{ concern }}</li></ul><p v-else class="empty-copy">No concerns recorded.</p></div>
@@ -1788,7 +1833,7 @@ onBeforeUnmount(() => {
           <div class="feature-review"><div class="panel-heading"><div><h3>Six feature checks</h3><p>Proposal covers all six; demo check records the main feature observed.</p></div><a class="text-button" href="#evidence-citations" @click.prevent="openEvidenceForTeam">Jump to evidence</a></div><div class="feature-table"><div class="feature-row feature-header"><span>Feature</span><span>Proposal</span><span>Demo</span><span>Note</span></div><div v-for="(feature, index) in selectedReview.features" :key="index" class="feature-row"><strong>{{ features[index] ?? `Feature ${index + 1}` }}</strong><select :value="feature.proposal" :class="featureClass(feature.proposal)" :aria-label="`${features[index]} proposal status`" @change="setFeatureStatus(index, 'proposal', $event)"><option value="unverified">Unverified</option><option value="present">Present</option><option value="missing">Missing</option></select><select :value="feature.demo" :class="featureClass(feature.demo)" :aria-label="`${features[index]} demo status`" @change="setFeatureStatus(index, 'demo', $event)"><option value="unverified">Unverified</option><option value="present">Present</option><option value="missing">Missing</option></select><input :value="feature.note" :aria-label="`${features[index]} note`" placeholder="Evidence note" @input="updateFeatureNote(index, $event)" /></div></div></div>
           <div class="review-approval"><label class="check-label"><input :checked="selectedReview.warningsAcknowledged" type="checkbox" @change="handleWarningsChange" /> I acknowledge the warnings on this review</label><button class="primary-button" type="button" :disabled="!selectedReviewReady" @click="approveReview"><Check :size="15" aria-hidden="true" /> Mark reviewed</button></div>
         </div>
-        <aside class="notes-panel"><div class="panel-heading"><div><h3>Notes</h3><p>Every note is timestamped at entry.</p></div><LinkIcon :size="16" aria-hidden="true" /></div><textarea :value="selectedReview.notes" rows="9" placeholder="Write an observation or decision note…" @input="handleReviewNotesChange" /><div class="note-entry"><input v-model="newNote" placeholder="Add timestamped note" @keydown.enter.prevent="appendTimestampedNote" /><button class="icon-button" type="button" aria-label="Add timestamped note" @click="appendTimestampedNote"><Send :size="15" aria-hidden="true" /></button></div><form class="submission-form" @submit.prevent="openSubmissionLink"><label>Submission link<input v-model="submissionUrl" type="url" placeholder="https://…" /></label><button class="secondary-button" type="submit"><LinkIcon :size="14" aria-hidden="true" /> Capture link</button><p v-if="submissionMessage" class="feedback" role="status">{{ submissionMessage }}</p></form><div id="evidence-citations" class="citation-list"><h4>Evidence citations</h4><button v-for="item in selectedTeamEvidence" :key="item.id" type="button" @click="activeTab = 'evidence'; loadEvidence(item)"><FileText :size="14" aria-hidden="true" /> {{ item.title }}</button><p v-if="!selectedTeamEvidence.length" class="empty-copy">Citations appear after intake.</p></div></aside>
+        <aside class="notes-panel"><div class="panel-heading"><div><h3>Notes</h3><p>Freeform notes; use the button below to append a timestamped entry.</p></div><LinkIcon :size="16" aria-hidden="true" /></div><textarea :value="selectedReview.notes" rows="9" placeholder="Write an observation or decision note…" @input="handleReviewNotesChange" /><div class="note-entry"><input v-model="newNote" placeholder="Add timestamped note" @keydown.enter.prevent="appendTimestampedNote" /><button class="icon-button" type="button" aria-label="Add timestamped note" @click="appendTimestampedNote"><Send :size="15" aria-hidden="true" /></button></div><form class="submission-form" @submit.prevent="openSubmissionLink"><label>Submission link<input v-model="submissionUrl" type="url" placeholder="https://…" /></label><button class="secondary-button" type="submit"><LinkIcon :size="14" aria-hidden="true" /> Capture link</button><p v-if="submissionMessage" class="feedback" role="status">{{ submissionMessage }}</p></form><div id="evidence-citations" class="citation-list"><h4>Evidence citations</h4><button v-for="item in selectedTeamEvidence" :key="item.id" type="button" @click="activeTab = 'evidence'; loadEvidence(item)"><FileText :size="14" aria-hidden="true" /> {{ item.title }}</button><p v-if="!selectedTeamEvidence.length" class="empty-copy">Citations appear after intake.</p></div></aside>
       </div>
       </div>
       </div>
@@ -1955,7 +2000,8 @@ h4 { font-size: 0.78rem; }
 .review-table { width: 100%; min-width: 48rem; border-collapse: collapse; }
 .review-table th, .review-table td { padding: 0.65rem 0.7rem; border-bottom: 1px solid var(--judge-border); text-align: left; vertical-align: middle; }
 .review-table tbody tr { cursor: pointer; }
-.review-table tbody tr:hover, .review-table tbody tr.selected { background: color-mix(in srgb, var(--judge-yellow) 8%, var(--judge-surface)); }
+.review-table tbody tr:hover { background: var(--judge-surface-raised); }
+.review-table tbody tr.selected { background: color-mix(in srgb, var(--judge-yellow) 8%, var(--judge-surface)); }
 .review-table tbody tr:last-child th, .review-table tbody tr:last-child td { border-bottom: 0; }
 .review-table thead th { color: var(--judge-muted); font-size: 0.64rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .sort-button { display: inline-flex; align-items: center; gap: 0.28rem; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-transform: inherit; }
@@ -1999,7 +2045,8 @@ h4 { font-size: 0.78rem; }
 .team-queue-mini { display: grid; align-content: start; gap: 0.55rem; min-width: 0; }
 .team-queue-list { display: grid; gap: 0.25rem; max-height: 16rem; overflow: auto; padding-right: 0.2rem; }
 .team-queue-list button { display: flex; align-items: center; justify-content: space-between; gap: 0.55rem; width: 100%; min-width: 0; border: 1px solid transparent; background: transparent; color: var(--judge-text); padding: 0.45rem 0.5rem; cursor: pointer; text-align: left; }
-.team-queue-list button:hover, .team-queue-list button.selected { border-color: var(--judge-border); background: color-mix(in srgb, var(--judge-yellow) 10%, var(--judge-surface)); }
+.team-queue-list button:hover { border-color: var(--judge-border); background: var(--judge-surface-raised); }
+.team-queue-list button.selected { border-color: var(--judge-border); background: color-mix(in srgb, var(--judge-yellow) 10%, var(--judge-surface)); }
 .team-queue-list button > span:first-child { display: grid; min-width: 0; gap: 0.1rem; }
 .team-queue-list strong, .team-queue-list small, .mini-score b, .mini-score small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-queue-list strong { font-size: 0.72rem; }
@@ -2024,12 +2071,13 @@ h4 { font-size: 0.78rem; }
 .evidence-list .panel-heading { align-items: flex-start; margin-bottom: 0.55rem; }
 .evidence-list .panel-heading p { margin-top: 0.2rem; color: var(--judge-muted); font-size: 0.68rem; }
 .evidence-toolbar { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.25rem; }
-.evidence-search { display: flex; align-items: center; gap: 0.35rem; min-width: 0; flex: 1 1 auto; border: 1px solid var(--judge-border); background: var(--judge-surface-raised); padding: 0 0.45rem; color: var(--judge-muted); }
-.evidence-search input { min-width: 0; border: 0; background: transparent; padding: 0.45rem 0.1rem; }
+.evidence-search { display: flex; align-items: center; gap: 0.35rem; width: 100%; min-width: 0; flex: 1 1 auto; border: 1px solid var(--judge-border); background: var(--judge-surface-raised); padding: 0 0.45rem; color: var(--judge-muted); }
+.evidence-search input { width: 100%; min-width: 0; border: 0; background: transparent; padding: 0.45rem 0.1rem; }
 .evidence-search input:focus { outline: 0; }
 .evidence-count { margin: 0 0 0.35rem; color: var(--judge-muted); font-size: 0.64rem; }
 .evidence-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.45rem; width: 100%; border: 1px solid transparent; background: transparent; color: var(--judge-text); padding: 0.55rem; text-align: left; cursor: pointer; }
-.evidence-item:hover, .evidence-item.active { border-color: var(--judge-border); background: color-mix(in srgb, var(--judge-yellow) 10%, var(--judge-surface)); }
+.evidence-item:hover { border-color: var(--judge-border); background: var(--judge-surface-raised); }
+.evidence-item.active { border-color: var(--judge-border); background: color-mix(in srgb, var(--judge-yellow) 10%, var(--judge-surface)); }
 .evidence-item strong, .evidence-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .evidence-item strong { font-size: 0.74rem; }
 .evidence-item small { color: var(--judge-muted); font-size: 0.65rem; }
@@ -2063,6 +2111,10 @@ h4 { font-size: 0.78rem; }
 .deployment-links li { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; min-width: 0; }
 .deployment-links a { overflow-wrap: anywhere; color: var(--judge-text); font-size: 0.7rem; text-decoration: underline; text-underline-offset: 0.12em; }
 .deployment-links li span { flex: 0 0 auto; color: var(--judge-muted); font-size: 0.63rem; }
+.ancillary-links { border-top: 1px solid var(--judge-border); padding-top: 0.4rem; }
+.ancillary-links summary { cursor: pointer; color: var(--judge-text); font-size: 0.68rem; font-weight: 750; }
+.ancillary-links summary:focus-visible { outline: 2px solid var(--judge-yellow); outline-offset: 2px; }
+.ancillary-links ul { margin-top: 0.4rem; }
 
 .scoring-panel { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(16rem, 0.75fr); gap: 1rem; }
 .score-form, .notes-panel { min-width: 0; }
@@ -2090,7 +2142,7 @@ h4 { font-size: 0.78rem; }
 .ai-feature-grid small, .ai-feature-grid em { color: var(--judge-muted); font-size: 0.63rem; font-style: normal; overflow-wrap: anywhere; }
 .citation-buttons { display: grid; gap: 0.25rem; }
 .citation-buttons button { display: flex; align-items: flex-start; gap: 0.35rem; border: 1px solid var(--judge-border); background: var(--judge-surface-raised); color: var(--judge-text); padding: 0.4rem 0.45rem; cursor: pointer; text-align: left; }
-.citation-buttons button:hover { border-color: var(--judge-yellow); background: color-mix(in srgb, var(--judge-yellow) 8%, var(--judge-surface-raised)); }
+.citation-buttons button:hover { border-color: var(--judge-border-strong); background: var(--judge-bg); }
 .citation-buttons button > span { display: grid; gap: 0.12rem; min-width: 0; font-size: 0.68rem; }
 .citation-buttons small { color: var(--judge-muted); font-size: 0.62rem; }
 .repo-check { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-top: 0.75rem; }
@@ -2116,7 +2168,7 @@ h4 { font-size: 0.78rem; }
 .submission-form { display: grid; gap: 0.45rem; border-top: 1px solid var(--judge-border); padding-top: 0.7rem; }
 .citation-list { display: grid; gap: 0.3rem; border-top: 1px solid var(--judge-border); padding-top: 0.7rem; }
 .citation-list button { display: flex; align-items: center; gap: 0.35rem; border: 0; background: transparent; color: var(--judge-text); cursor: pointer; padding: 0.2rem 0; text-align: left; font-size: 0.7rem; }
-.citation-list button:hover { color: var(--judge-yellow-ink); text-decoration: underline; }
+.citation-list button:hover { color: var(--judge-text); text-decoration: underline; }
 
 .operations-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; max-width: 1440px; margin: 0 auto; }
 .operations-card { min-width: 0; padding: 0.9rem; }
@@ -2143,10 +2195,11 @@ h4 { font-size: 0.78rem; }
 
 @media (min-width: 1280px) {
   .workbench-tabs { display: none; }
-  .workbench-layout { grid-template-columns: minmax(14rem, 0.82fr) minmax(20rem, 1.08fr) minmax(20rem, 1.2fr); align-items: start; gap: 0.75rem; }
+  .workbench-layout { grid-template-columns: minmax(12rem, 0.72fr) minmax(27rem, 1.65fr) minmax(21rem, 1.15fr); align-items: start; gap: 0.75rem; }
   .workbench-pane, .workbench-pane.pane-active { display: block; }
   .queue-panel { grid-template-columns: 1fr; gap: 0.75rem; }
-  .evidence-panel { grid-template-columns: minmax(8rem, 0.42fr) minmax(0, 1.58fr); gap: 0.65rem; }
+  .evidence-panel { grid-template-columns: 1fr; gap: 0.75rem; }
+  .evidence-list { max-height: 18rem; overflow: auto; border-right: 0; border-bottom: 1px solid var(--judge-border); padding: 0 0 0.75rem; }
   .scoring-panel { grid-template-columns: 1fr; gap: 0.75rem; }
   .criteria-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .notes-panel { border-top: 1px solid var(--judge-border); border-left: 0; padding-top: 0.75rem; padding-left: 0; }
