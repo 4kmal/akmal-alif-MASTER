@@ -1,6 +1,5 @@
 import type { H3Event } from 'h3'
-import type { ASSIGNMENT } from '../../shared/judging/model.mjs'
-import { readiness } from '../../shared/judging/model.mjs'
+import { ASSIGNMENT, readiness } from '../../shared/judging/model.mjs'
 import { exportWorkbook, importAssignment } from '../../shared/judging/workbook.mjs'
 import { getJudgingTemplate, listJudgingRecords, requireJudgingDb } from './judging'
 
@@ -19,7 +18,7 @@ export async function exportJudgingWorkbook(event: H3Event, final: boolean): Pro
   const reviews = Object.fromEntries(records
     .filter(record => record.key.startsWith('review:'))
     .map(record => [record.key.slice('review:'.length), record.data]))
-  const judge = judgeRecord?.data ?? {}
+  const judge = judgeRecord?.data ?? { name: ASSIGNMENT.judgeName, domain: ASSIGNMENT.domain, date: '', generalNotes: '', warningsAcknowledged: false }
   const intakes = Object.fromEntries(records
     .filter(record => record.key.startsWith('intake:'))
     .map(record => [record.key.slice('intake:'.length), record.data]))
