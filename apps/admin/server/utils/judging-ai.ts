@@ -20,6 +20,7 @@ const AI_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8'
 const MAX_PROMPT_CHARS = 65_000
 const MAX_METADATA_CHARS = 8_000
 const MAX_DRAFT_TEXT = 8_000
+const MAX_AI_RESPONSE_CHARS = 64_000
 const MAX_JOB_ERROR = 1_000
 const MAX_ACTIVE_JUDGING_JOBS = 9
 const MAX_ACTIVE_PROVIDER_REQUESTS = 2
@@ -162,6 +163,62 @@ function arrayShape(value: unknown): string {
   return `array:${value.length}${first ? ` firstKeys=${objectKeysShape(first)}` : ''}`
 }
 
+function responseTextPart(value: unknown): string | null {
+  if (typeof value === 'string')
+    return value.length <= MAX_AI_RESPONSE_CHARS ? value : null
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32)
+    return null
+  const parts: string[] = []
+  for (const item of value) {
+    const text = objectValue(item)?.text
+    if (typeof text !== 'string')
+      return null
+    parts.push(text)
+  }
+  const joined = parts.join('')
+  return joined.length <= MAX_AI_RESPONSE_CHARS ? joined : null
+}
+
+function aiResponseText(value: unknown): string | null {
+  const response = objectValue(value)
+  if (!response)
+    return null
+  const choices = Array.isArray(response.choices) ? response.choices : []
+  const firstChoice = objectValue(choices[0])
+  const message = objectValue(firstChoice?.message)
+  const candidates = [
+    response.response,
+    response.text,
+    message?.content,
+    message?.text,
+    firstChoice?.content,
+    firstChoice?.text,
+  ]
+  for (const candidate of candidates) {
+    const text = responseTextPart(candidate)
+    if (text !== null)
+      return text
+  }
+  return null
+}
+
+function aiResponseFinishReason(value: unknown): string | null {
+  const response = objectValue(value)
+  if (!response)
+    return null
+  const choices = Array.isArray(response.choices) ? response.choices : []
+  const firstChoice = objectValue(choices[0])
+  const reason = firstChoice?.finish_reason
+    ?? firstChoice?.stop_reason
+    ?? response.finish_reason
+    ?? response.stop_reason
+  return typeof reason === 'string' ? reason.slice(0, 32) : null
+}
+
+function aiResponseTruncated(value: unknown): boolean {
+  return ['length', 'max_tokens', 'max_new_tokens'].includes(aiResponseFinishReason(value) ?? '')
+}
+
 function batchResponseShape(value: Record<string, unknown>): string {
   const status = typeof value.status === 'string' ? value.status.slice(0, 32) : valueShape(value.status)
   return `keys=${objectKeysShape(value)} status=${status} responses=${arrayShape(value.responses)} results=${arrayShape(value.results)}`
@@ -171,16 +228,16 @@ function aiResponseShape(value: unknown): string {
   const response = objectValue(value)
   if (!response)
     return `response=${valueShape(value)}`
-  const content = response.response
   const choices = response.choices
   const firstChoice = Array.isArray(choices) ? objectValue(choices[0]) : null
   const message = objectValue(firstChoice?.message)
-  const choiceContent = message?.content
-  const selectedContent = content ?? choiceContent
+  const selectedContent = aiResponseText(response)
+  const reasoning = message?.reasoning_content ?? firstChoice?.reasoning_content ?? response.reasoning_content
   const contentSummary = typeof selectedContent === 'string'
     ? `string:${selectedContent.length}${selectedContent.includes('<think>') ? ':think' : ''}${selectedContent.trimStart().startsWith('```') ? ':fence' : ''}`
-    : valueShape(selectedContent)
-  return `responseKeys=${objectKeysShape(response)} content=${contentSummary} choices=${valueShape(choices)}`
+    : 'none'
+  const reasoningSummary = typeof reasoning === 'string' ? `string:${reasoning.length}` : valueShape(reasoning)
+  return `responseKeys=${objectKeysShape(response)} content=${contentSummary} choices=${valueShape(choices)} choiceKeys=${objectKeysShape(firstChoice)} messageKeys=${objectKeysShape(message)} reasoning=${reasoningSummary} finishReason=${aiResponseFinishReason(response) ?? 'none'}`
 }
 
 function parseDraft(value: string | null): Record<string, unknown> | null {
@@ -699,19 +756,16 @@ function strictJsonObject(content: string): Record<string, unknown> {
 
 function parseJudgingAiResponse(response: AiChatResponse): Record<string, unknown> {
   const responseObject = objectValue(response)
-  const choices = Array.isArray(responseObject?.choices) ? responseObject.choices : []
-  const content = responseObject?.response ?? objectValue(choices[0])?.message
-  const message = objectValue(content)
-  const text = typeof content === 'string' ? content : message?.content
+  const text = aiResponseText(responseObject)
   if (typeof text !== 'string')
-    throw new Error(`AI draft response content was not a string (${aiResponseShape(response)})`)
+    throw new Error(`${aiResponseTruncated(response) ? 'AI draft response appears truncated at provider token limit' : 'AI draft response content was not a string'} (${aiResponseShape(response)})`)
   let draft: Record<string, unknown>
   try {
     draft = strictJsonObject(text)
   }
   catch (error) {
     const reason = error instanceof Error ? error.message : 'AI draft response could not be parsed'
-    throw new Error(`${reason} (${aiResponseShape(response)})`)
+    throw new Error(`${aiResponseTruncated(response) ? `AI draft response appears truncated at provider token limit: ${reason}` : reason} (${aiResponseShape(response)})`)
   }
   if (!Object.keys(draft).length)
     throw new Error(`AI draft response yielded an empty JSON object (${aiResponseShape(response)})`)
@@ -895,7 +949,7 @@ export async function runJudgingJob(event: H3Event, jobId: string): Promise<void
             messages: prepared.messages,
             max_tokens: 4_096,
             temperature: 0.2,
-            chat_template_kwargs: { enable_thinking: false, thinking: false },
+            chat_template_kwargs: { enable_thinking: false },
           }],
         }, { queueRequest: true })
       }
@@ -928,7 +982,16 @@ export async function runJudgingJob(event: H3Event, jobId: string): Promise<void
       WHERE event_id = ? AND id = ? AND status = 'running' AND cancel_requested = 0 AND updated_at = ?`).bind(progressAt, 'sdc-2026', job.id, job.updated_at).run()
     if (changes(progress) !== 1)
       return
-    const draft = validateAiDraft(parseJudgingAiResponse(response), prepared.evidence, new Map(prepared.evidence.map(evidence => [String(evidence.id), evidence])))
+    let draft: Record<string, unknown>
+    try {
+      draft = validateAiDraft(parseJudgingAiResponse(response), prepared.evidence, new Map(prepared.evidence.map(evidence => [String(evidence.id), evidence])))
+    }
+    catch (error) {
+      const reason = error instanceof Error ? error.message : 'AI draft response was invalid'
+      if (aiResponseTruncated(response))
+        throw new Error(`AI draft response appears truncated at provider token limit: ${reason}`)
+      throw error
+    }
     const finishedAt = new Date().toISOString()
     const completed = await db.prepare(`UPDATE judging_jobs
       SET status = 'completed', progress = 100, draft_json = ?, error = NULL, updated_at = ?, finished_at = ?

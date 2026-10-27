@@ -505,7 +505,7 @@ describe('judging AI runtime contract', () => {
     expect(row.error).toContain('responses=undefined')
   })
 
-  it.each(['wrapped', 'direct'])('accepts %s results entries and a closed think block with a JSON code fence', async (shape) => {
+  it.each(['wrapped', 'direct', 'message-content', 'message-text', 'choice-text'])('accepts %s results entries and a closed think block with a JSON code fence', async (shape) => {
     const evidenceId = 'a'.repeat(32)
     insertAssessmentFixture(database, evidenceId)
     const input = await buildAssessmentInput(database as never, '01-console')
@@ -525,7 +525,13 @@ describe('judging AI runtime contract', () => {
                       success: true,
                       result: { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` },
                     }
-                  : { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }],
+                  : shape === 'direct'
+                    ? { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }
+                    : shape === 'message-content'
+                      ? { response: null, choices: [{ message: { content: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` } }] }
+                      : shape === 'message-text'
+                        ? { response: null, choices: [{ message: { content: null, text: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` } }] }
+                        : { response: null, choices: [{ text: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }] }],
                 usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
               }),
             },
@@ -541,6 +547,45 @@ describe('judging AI runtime contract', () => {
     expect(row.error).toBeNull()
     const draft = database.db.prepare('SELECT draft_json FROM judging_jobs WHERE id = ?').get(jobId) as { draft_json: string }
     expect(JSON.parse(draft.draft_json).features).toHaveLength(6)
+  })
+
+  it('identifies provider token-limit truncation without exposing model text', async () => {
+    const evidenceId = 'a'.repeat(32)
+    insertAssessmentFixture(database, evidenceId)
+    const input = await buildAssessmentInput(database as never, '01-console')
+    const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    insertJob(database, jobId, '01-console', input.inputHash)
+    setPendingJob(database, jobId, input.inputHash)
+    const event = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: {
+              run: async () => ({
+                results: [{
+                  success: true,
+                  result: {
+                    response: null,
+                    choices: [{ message: { content: '{"features": [', reasoning_content: 'private reasoning' }, finish_reason: 'length' }],
+                  },
+                }],
+              }),
+            },
+          },
+        },
+      },
+    } as unknown as H3Event
+
+    await runJudgingJob(event, jobId)
+
+    const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string }
+    expect(row.status).toBe('failed')
+    expect(row.error).toContain('provider token limit')
+    expect(row.error).toContain('finishReason=length')
+    expect(row.error).toContain('reasoning=string:17')
+    expect(row.error).not.toContain('{"features": [')
+    expect(row.error).not.toContain('private reasoning')
   })
 
   it('rejects an unclosed think block without exposing its content', async () => {
