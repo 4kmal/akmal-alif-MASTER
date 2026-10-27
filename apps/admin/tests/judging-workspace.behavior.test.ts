@@ -1,15 +1,17 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // @vitest-environment jsdom
 import { createApp, nextTick } from 'vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import JudgingWorkspace from '../app/components/judging/JudgingWorkspace.vue'
 import { ASSIGNMENT, FEATURES } from '../shared/judging/model.mjs'
 
-type FetchCall = { url: string, body?: Record<string, any> }
+interface FetchCall { url: string, body?: Record<string, any> }
 
-const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
-  status,
-  headers: { 'content-type': 'application/json' },
-})
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}
 
 function emptyState(records: any[] = []) {
   return { assignment: ASSIGNMENT, records, serverTime: '2026-10-28T00:00:00.000Z' }
@@ -29,11 +31,12 @@ function setInput(input: HTMLInputElement, value: string) {
 
 function nameInput(host: HTMLElement) {
   const input = host.querySelector('input[autocomplete="name"]')
-  if (!(input instanceof HTMLInputElement)) throw new Error('Judge name input is missing')
+  if (!(input instanceof HTMLInputElement))
+    throw new Error('Judge name input is missing')
   return input
 }
 
-describe('JudgingWorkspace save behavior', () => {
+describe('judgingWorkspace save behavior', () => {
   let host: HTMLDivElement
   let app: ReturnType<typeof createApp> | null = null
   let fetchCalls: FetchCall[]
@@ -61,9 +64,12 @@ describe('JudgingWorkspace save behavior', () => {
       const url = String(input)
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
       fetchCalls.push({ url, body })
-      if (url.endsWith('/state')) return jsonResponse(emptyState(stateRecords))
-      if (url.endsWith('/sync/status')) return jsonResponse({ status: 'unpaired', pending: 0, conflicts: [] })
-      if (url.endsWith('/jobs')) return jsonResponse({ jobs: jobsPayload })
+      if (url.endsWith('/state'))
+        return jsonResponse(emptyState(stateRecords))
+      if (url.endsWith('/sync/status'))
+        return jsonResponse({ status: 'unpaired', pending: 0, conflicts: [] })
+      if (url.endsWith('/jobs'))
+        return jsonResponse({ jobs: jobsPayload })
       if (url.includes('/evidence/')) {
         const evidenceId = decodeURIComponent(url.slice(url.lastIndexOf('/evidence/') + '/evidence/'.length))
         const record = stateRecords.find(item => item.data?.id === evidenceId)
@@ -76,7 +82,8 @@ describe('JudgingWorkspace save behavior', () => {
         }
         return jsonResponse({ key: body.key, version: 1, data: body.data, updatedAt: '2026-10-28T00:00:01.000Z' })
       }
-      if (url.endsWith('/intake')) return jsonResponse({})
+      if (url.endsWith('/intake'))
+        return jsonResponse({})
       return jsonResponse({})
     }) as typeof fetch
   })
@@ -137,6 +144,30 @@ describe('JudgingWorkspace save behavior', () => {
     await settle()
     expect(fetchCalls.filter(call => call.url.endsWith('/records'))).toHaveLength(1)
     expect(fetchCalls.find(call => call.url.endsWith('/records'))?.body?.data?.name).toBe('Offline edit')
+  })
+
+  it('keeps raw decimal scores for persistence while displaying the weighted total to one decimal', async () => {
+    delayedFirstSave = false
+    mountLocal()
+    await settle()
+
+    const scores = [80.25, 70, 60, 50]
+    const labels = ['Innovation & Creativity', 'Problem-Solution Fit', 'Feasibility of Build', 'Clarity of Proposal']
+    labels.forEach((label, index) => {
+      const input = host.querySelector<HTMLInputElement>(`input[aria-label="${label} score out of 100"]`)
+      expect(input).toBeTruthy()
+      setInput(input!, String(scores[index]))
+    })
+    await nextTick()
+
+    const firstInput = host.querySelector<HTMLInputElement>('input[aria-label="Innovation & Creativity score out of 100"]')
+    expect(firstInput?.value).toBe('80.25')
+    expect(host.textContent).toContain('66.6/100')
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+    const reviewCall = fetchCalls.find(call => call.url.endsWith('/records') && call.body?.key === 'review:01-console')
+    expect(reviewCall?.body?.data?.scores).toEqual(scores)
   })
 
   it('renders the canonical four-criterion rubric and separate six-feature checks', async () => {

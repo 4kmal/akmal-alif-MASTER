@@ -4,14 +4,14 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   ASSIGNMENT,
+  calculateReviews,
   CRITERIA,
   DOMAIN,
+  emptyReview,
   FEATURES,
   JUDGE_NAME,
-  TEAM_IDS,
-  calculateReviews,
-  emptyReview,
   readiness,
+  TEAM_IDS,
 } from '../shared/judging/model.mjs'
 
 const adminRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -21,14 +21,14 @@ const adminPage = readFileSync(resolve(adminRoot, 'app/pages/admin/judging/sdc-2
 const navigation = readFileSync(resolve(adminRoot, 'app/components/dashboard/sidebar/AppSidebar.vue'), 'utf8')
 const routeConfig = readFileSync(resolve(adminRoot, 'app/composables/dashboard.ts'), 'utf8')
 
-describe('SDC judging workspace UI contract', () => {
+describe('sDC judging workspace UI contract', () => {
   it('keeps the shared workspace on the durable record and evidence APIs', () => {
-    expect(workspace).toContain("apiBase: '/api/admin/judging/sdc-2026'")
-    expect(workspace).toContain("const stateEndpoint = `${props.apiBase}/state${stateCursor.value === null ? '' : `?cursor=${stateCursor.value}`}`")
-    expect(workspace).toContain("fetch(`${props.apiBase}/records`")
-    expect(workspace).toContain("fetch(`${props.apiBase}/evidence/${encodeURIComponent(item.id)}`")
-    expect(workspace).toContain("fetch(`${props.apiBase}/sync/status`")
-    expect(workspace).toContain("fetch('/api/local/sync/resolve'")
+    expect(workspace).toContain('apiBase: \'/api/admin/judging/sdc-2026\'')
+    expect(workspace).toMatch(/const stateEndpoint = `\$\{props\.apiBase\}\/state\$\{stateCursor\.value === null/)
+    expect(workspace).toMatch(/fetch\(`\$\{props\.apiBase\}\/records`/)
+    expect(workspace).toMatch(/fetch\(`\$\{props\.apiBase\}\/evidence\/\$\{encodeURIComponent\(item\.id\)\}`/)
+    expect(workspace).toMatch(/fetch\(`\$\{props\.apiBase\}\/sync\/status`/)
+    expect(workspace).toContain('fetch(\'/api/local/sync/resolve\'')
   })
 
   it('keeps participant material in a safe text viewer', () => {
@@ -39,12 +39,12 @@ describe('SDC judging workspace UI contract', () => {
   })
 
   it('mounts the same workspace for the local station and admin route', () => {
-    expect(localEntry).toContain("apiBase: '/api/local'")
+    expect(localEntry).toContain('apiBase: \'/api/local\'')
     expect(localEntry).toContain('local: true')
-    expect(adminPage).toContain("import JudgingWorkspace from '@/components/judging/JudgingWorkspace.vue'")
-    expect(adminPage).toContain("layout: 'dashboard'")
-    expect(navigation).toContain("url: '/admin/judging/sdc-2026'")
-    expect(routeConfig).toContain("paths: ['/admin/judging/sdc-2026']")
+    expect(adminPage).toContain('import JudgingWorkspace from \'@/components/judging/JudgingWorkspace.vue\'')
+    expect(adminPage).toContain('layout: \'dashboard\'')
+    expect(navigation).toContain('url: \'/admin/judging/sdc-2026\'')
+    expect(routeConfig).toContain('paths: [\'/admin/judging/sdc-2026\']')
   })
 
   it('requires explicit reviewed approval before the final review state', () => {
@@ -67,7 +67,7 @@ describe('SDC judging workspace UI contract', () => {
     expect(ASSIGNMENT.domain).toBe(DOMAIN)
     expect(JUDGE_NAME).toBe('Muhammad Akmal Alif bin Azam')
     expect(workspace).toContain('name: JUDGE_NAME')
-    expect(workspace).toContain("todayInTimezone('Asia/Kuala_Lumpur')")
+    expect(workspace).toContain('todayInTimezone(\'Asia/Kuala_Lumpur\')')
     for (const inventedDomain of ['Domain 1 · Digital fluency', 'Domain 2 · Future skills', 'Domain 3 · Community impact']) expect(workspace).not.toContain(inventedDomain)
     expect(TEAM_IDS).toHaveLength(9)
     expect(FEATURES).toHaveLength(6)
@@ -108,10 +108,13 @@ describe('SDC judging workspace UI contract', () => {
     expect(workspace).toContain('source lines')
     expect(workspace).toContain('await Promise.all(keys.map(key => saveRecord(key)))')
     expect(workspace).toContain(':disabled="!readinessResult.ready"')
-    expect(workspace).toContain("const endpoint = `${props.apiBase}/jobs`")
+    expect(workspace).toMatch(/const endpoint = `\$\{props\.apiBase\}\/jobs`/)
     expect(workspace).toContain('draft?.proposedScores')
     expect(workspace).toContain('strengths')
     expect(workspace).toContain('concerns')
     expect(workspace).toContain('assessmentNestedCitations')
+    expect(workspace).toContain('https://docs.google.com/forms/d/e/1FAIpQLSchtEzMiMPAM0wtodg1GL5UeJI0ufEkwQzHssprSlAUqXYcBg/viewform')
+    expect(workspace).toContain('Open organizer submission form')
+    expect(workspace).toContain('Upload the XLSX yourself after final review.')
   })
 })
