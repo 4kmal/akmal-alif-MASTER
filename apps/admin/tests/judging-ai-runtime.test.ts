@@ -274,12 +274,16 @@ describe('judging AI runtime contract', () => {
 
     const messages = request?.messages as { role: string, content: string }[]
     const system = messages[0]?.content ?? ''
+    const user = messages[1]?.content ?? ''
     for (const criterion of ['innovation', 'problemSolutionFit', 'feasibility', 'clarity'])
       expect(system).toContain(`"criterion": "${criterion}"`)
     for (const feature of ['profiles', 'trends', 'matching', 'reskilling', 'sdg', 'scenarios'])
       expect(system).toContain(`"feature": "${feature}"`)
     for (const field of ['evidenceId', 'lineStart', 'lineEnd', 'page', 'evidenceKind'])
       expect(system).toContain(`"${field}"`)
+    expect(user.endsWith('/no_think\nReturn only the valid JSON object matching the response shape above. Do not emit reasoning, analysis, markdown, or a <think> block.')).toBe(true)
+    expect(user.lastIndexOf('<<END_UNTRUSTED_EVIDENCE>>')).toBeLessThan(user.lastIndexOf('/no_think'))
+    expect(user.length).toBeLessThan(65_500)
 
     await Promise.all([runJudgingJob(event, firstJobId), runJudgingJob(event, firstJobId)])
     expect(calls).toHaveLength(2)
