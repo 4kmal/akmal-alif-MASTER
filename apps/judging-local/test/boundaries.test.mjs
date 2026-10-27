@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { browserRequestAllowed, confinedFile } from '../server/workspace.mjs';
+import { browserRequestAllowed, confinedFile, initializeWorkspace } from '../server/workspace.mjs';
 import { checkPublicUrl, discoverLinks } from '../server/intake.mjs';
-import { mkdtemp, writeFile, mkdir, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
@@ -12,6 +12,17 @@ test('local service rejects DNS rebinding and cross-origin writes', () => {
   assert.equal(browserRequestAllowed({ ...req, headers: { ...req.headers, origin: 'https://evil.test' } }, 8791), false);
   assert.equal(browserRequestAllowed({ ...req, headers: { ...req.headers, host: 'evil.test:8791' } }, 8791), false);
   assert.equal(browserRequestAllowed({ ...req, headers: { ...req.headers, origin: undefined } }, 8791), false);
+});
+
+test('new private workspaces deny Apache access before evidence intake', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'judging-private-root-'));
+  try {
+    await initializeWorkspace(root);
+    assert.match(await readFile(join(root, '.htaccess'), 'utf8'), /^Options -Indexes\nRequire all denied\n$/);
+  } finally {
+    assert.ok(relative(tmpdir(), root).startsWith('judging-private-root-'));
+    await rm(root, { recursive: true });
+  }
 });
 
 test('workspace reads cannot traverse outside the private root', async () => {

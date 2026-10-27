@@ -1,4 +1,4 @@
-import { realpath, mkdir, readFile, chmod } from 'node:fs/promises';
+import { realpath, mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -11,6 +11,7 @@ export const DEFAULT_WORKSPACE = 'C:/xampp/htdocs/akmal-alif-MASTER/events/judgi
 export async function initializeWorkspace(root = process.env.JUDGING_WORKSPACE || DEFAULT_WORKSPACE) {
   await mkdir(root, { recursive: true });
   const absolute = await realpath(root);
+  await writeFile(resolve(absolute, '.htaccess'), 'Options -Indexes\nRequire all denied\n', { mode: 0o600 });
   if (process.platform === 'win32') {
     const { stdout } = await exec('whoami', [], { windowsHide: true });
     await exec('icacls', [absolute, '/inheritance:r', '/grant:r', `${stdout.trim()}:(OI)(CI)(F)`, 'SYSTEM:(OI)(CI)(F)'], { windowsHide: true });
