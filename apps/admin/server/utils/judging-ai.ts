@@ -25,7 +25,10 @@ const MAX_JOB_ERROR = 1_000
 const MAX_ACTIVE_JUDGING_JOBS = 9
 const MAX_ACTIVE_PROVIDER_REQUESTS = 2
 const JUDGING_JOB_LEASE_MS = 2 * 60 * 1_000
-const JUDGING_BATCH_LEASE_MS = 15 * 60 * 1_000
+// Workers AI documents eventual completion for queued requests but do not publish
+// a request-id retention SLA. Keep a saved provider request through a bounded
+// offline window instead of expiring it with the short interrupted-submit lease.
+const JUDGING_BATCH_LEASE_MS = 24 * 60 * 60 * 1_000
 const BATCH_PROVIDER = 'workers-ai-batch'
 
 const AI_RESPONSE_EXAMPLE = JSON.stringify({
@@ -828,8 +831,14 @@ async function recoverStaleJudgingJobs(db: D1Database): Promise<void> {
         updated_at = ?,
         finished_at = ?
     WHERE event_id = ? AND status = 'running'
-      AND ((json_extract(draft_json, '$.provider') = ? AND updated_at < ?)
-        OR (COALESCE(json_extract(draft_json, '$.provider'), '') <> ? AND updated_at < ?))`).bind(nowIso, nowIso, 'sdc-2026', BATCH_PROVIDER, batchCutoff, BATCH_PROVIDER, cutoff).run()
+      AND ((json_extract(draft_json, '$.provider') = ?
+        AND json_type(draft_json, '$.requestId') = 'text'
+        AND length(json_extract(draft_json, '$.requestId')) > 0
+        AND updated_at < ?)
+        OR ((COALESCE(json_extract(draft_json, '$.provider'), '') <> ?
+          OR json_type(draft_json, '$.requestId') <> 'text'
+          OR length(COALESCE(json_extract(draft_json, '$.requestId'), '')) = 0)
+          AND updated_at < ?))`).bind(nowIso, nowIso, 'sdc-2026', BATCH_PROVIDER, batchCutoff, BATCH_PROVIDER, cutoff).run()
 }
 
 async function scheduleNext(event: H3Event): Promise<void> {

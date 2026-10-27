@@ -81,11 +81,11 @@ function insertJob(database: SqliteD1, id: string, teamId: string, inputHash: st
     .run(id, 'sdc-2026', teamId, 'owner@example.test', inputHash, '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z')
 }
 
-function setPendingJob(database: SqliteD1, id: string, inputHash: string, requestId: string | null = 'batch-1'): void {
+function setPendingJob(database: SqliteD1, id: string, inputHash: string, requestId: string | null = 'batch-1', updatedAt = '2026-10-28T00:00:00.000Z'): void {
   database.db.prepare(`UPDATE judging_jobs
     SET status = 'running', progress = 50, attempts = 1, started_at = ?, updated_at = ?, draft_json = ?
     WHERE id = ?`)
-    .run('2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z', JSON.stringify({ provider: 'workers-ai-batch', requestId, inputHash, submittedAt: '2026-10-28T00:00:00.000Z' }), id)
+    .run(updatedAt, updatedAt, JSON.stringify({ provider: 'workers-ai-batch', requestId, inputHash, submittedAt: '2026-10-28T00:00:00.000Z' }), id)
 }
 
 function insertAssessmentFixture(database: SqliteD1, evidenceId: string, teamId = '01-console'): void {
@@ -332,6 +332,64 @@ describe('judging AI runtime contract', () => {
     const row = database.db.prepare('SELECT status, progress FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, progress: number }
     expect(row.status).toBe('running')
     expect(row.progress).toBe(50)
+  })
+
+  it('keeps a saved provider request resumable beyond the interrupted-submit lease', async () => {
+    const evidenceId = 'a'.repeat(32)
+    insertAssessmentFixture(database, evidenceId)
+    const input = await buildAssessmentInput(database as never, '01-console')
+    const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab'
+    insertJob(database, jobId, '01-console', input.inputHash)
+    setPendingJob(database, jobId, input.inputHash, 'batch-resume', new Date(Date.now() - (20 * 60 * 1_000)).toISOString())
+    const calls: Record<string, unknown>[] = []
+    const waiters: Promise<unknown>[] = []
+    const event = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: {
+              run: async (_model: string, payload: Record<string, unknown>) => {
+                calls.push(payload)
+                return { status: 'running', request_id: 'batch-resume' }
+              },
+            },
+          },
+          context: { waitUntil: (promise: Promise<unknown>) => { waiters.push(promise) } },
+        },
+      },
+    } as unknown as H3Event
+
+    await listJudgingJobs(event, 'paired-device-1')
+    await Promise.all(waiters)
+
+    const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string | null }
+    expect(row.status).toBe('running')
+    expect(row.error).toBeNull()
+    expect(calls).toEqual([{ request_id: 'batch-resume' }])
+  })
+
+  it('keeps the short lease for an interrupted batch submission without a request id', async () => {
+    const evidenceId = 'a'.repeat(32)
+    insertAssessmentFixture(database, evidenceId)
+    const input = await buildAssessmentInput(database as never, '01-console')
+    const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac'
+    insertJob(database, jobId, '01-console', input.inputHash)
+    setPendingJob(database, jobId, input.inputHash, null, new Date(Date.now() - (3 * 60 * 1_000)).toISOString())
+    const event = {
+      context: {
+        cloudflare: {
+          env: { DB: database },
+          context: { waitUntil: () => undefined },
+        },
+      },
+    } as unknown as H3Event
+
+    const jobs = await listJudgingJobs(event, 'paired-device-1')
+
+    const job = jobs.find(item => item.id === jobId)
+    expect(job?.status).toBe('failed')
+    expect(job?.error).toContain('Judging job lease expired')
   })
 
   it('polls both active batches and fills one free provider slot without duplicating requests', async () => {
