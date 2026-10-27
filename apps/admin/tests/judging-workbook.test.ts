@@ -5,6 +5,7 @@ import JSZip from 'jszip'
 
 import {
   ASSIGNMENT,
+  DEADLINE,
   DOMAIN,
   JUDGE_NAME,
   TEAM_IDS,
@@ -48,6 +49,43 @@ const judge = {
   warningsAcknowledged: false,
 }
 
+const evidenceFixture = {
+  id: '0123456789abcdef0123456789abcdef',
+  teamId: TEAM_IDS[0],
+  snapshotSha: 'a'.repeat(40),
+  path: 'README.md',
+  kind: 'source',
+  sha256: 'b'.repeat(64),
+  text: 'x'.repeat(250000),
+  lines: 1,
+  pages: [{ page: 1, text: '' }],
+  coverage: 'Inspected text source; execution and demo behavior unverified',
+  createdAt: '2026-10-27T19:25:03.957Z',
+}
+
+function intakeFixture(artifactCount = 1) {
+  return {
+    teamId: TEAM_IDS[0],
+    repoUrl: TEAMS[0].repoUrl,
+    branch: 'main',
+    sha: 'a'.repeat(40),
+    retrievedAt: '2026-10-27T19:24:12.507Z',
+    snapshotPath: 'repos/01-console/' + 'a'.repeat(40),
+    verified: true,
+    evidenceIds: [evidenceFixture.id],
+    artifacts: Array.from({ length: artifactCount }, (_, index) => ({
+      path: 'file-' + index + '.txt',
+      size: index,
+      sha256: 'b'.repeat(64),
+    })),
+    links: [{ url: TEAMS[0].repoUrl, kind: 'reference', status: null, parity: 'unverified' }],
+    demoParity: 'unverified',
+    issues: [],
+    declaredDemoCommits: [],
+    previousSnapshots: [],
+  }
+}
+
 async function sheetXml(bytes) {
   const zip = await JSZip.loadAsync(bytes)
   return zip.file(SHEET_PATH).async('string')
@@ -66,6 +104,10 @@ function cellXml(xml, reference) {
   return undefined
 }
 
+function cellNumber(xml, reference) {
+  return Number(cellXml(xml, reference).match(/<v>([\s\S]*?)<\/v>/)[1])
+}
+
 describe('canonical judging model', () => {
   it('calculates unrounded weighted totals and competition ranks', () => {
     const rows = calculateReviews({
@@ -82,6 +124,11 @@ describe('canonical judging model', () => {
     expect(rows[3].total).toBe(0)
     expect(rows[3].status).toBe('Complete')
     expect(rows[4].status).toBe('Not started')
+
+    const missingRepo = calculateReviews({ [TEAM_IDS[0]]: review(TEAM_IDS[0], [80, 80, 80, 80], '') })[0]
+    expect(missingRepo.status).toBe('Missing repo check')
+    expect(missingRepo.total).toBe(80)
+    expect(missingRepo.rank).toBe(1)
   })
 
   it('keeps negative repository selections score-neutral and gates readiness acknowledgements', () => {
@@ -98,13 +145,15 @@ describe('canonical judging model', () => {
   })
 
   it('validates constrained server record keys and bounded evidence/intake payloads', () => {
+    expect(DEADLINE).toBe('2026-10-28T00:00:00.000Z')
     expect(validateRecord('judge', judge)).toBe(true)
     expect(validateRecord('review:' + TEAM_IDS[0], review(TEAM_IDS[0]))).toBe(true)
     expect(validateRecord('review:not-a-team', review(TEAM_IDS[0]))).toBe(false)
-    expect(validateRecord('evidence:00000000-0000-4000-8000-000000000000', { teamId: TEAM_IDS[0], text: 'x'.repeat(262144) })).toBe(true)
-    expect(validateRecord('evidence:00000000-0000-4000-8000-000000000000', { teamId: TEAM_IDS[0], text: 'x'.repeat(262145) })).toBe(false)
-    expect(validateRecord('intake:' + TEAM_IDS[0], { teamId: TEAM_IDS[0], inventory: Array.from({ length: 1000 }, (_, index) => ({ path: String(index) })) })).toBe(true)
-    expect(validateRecord('intake:' + TEAM_IDS[0], { teamId: TEAM_IDS[0], inventory: Array.from({ length: 1001 }, (_, index) => ({ path: String(index) })) })).toBe(false)
+    expect(validateRecord('evidence:' + evidenceFixture.id, evidenceFixture)).toBe(true)
+    expect(validateRecord('evidence:' + evidenceFixture.id, { ...evidenceFixture, text: 'x'.repeat(250001) })).toBe(false)
+    expect(validateRecord('evidence:00000000-0000-4000-8000-000000000000', { ...evidenceFixture, id: '00000000-0000-4000-8000-000000000000' })).toBe(true)
+    expect(validateRecord('intake:' + TEAM_IDS[0], intakeFixture(1000))).toBe(true)
+    expect(validateRecord('intake:' + TEAM_IDS[0], intakeFixture(1001))).toBe(false)
     expect(validateRecord('assessment:00000000-0000-4000-8000-000000000000', { score: Number.NaN })).toBe(false)
   })
 })
@@ -159,8 +208,8 @@ describe('organizer workbook adapter', () => {
     expect(cellXml(outputSheet, 'A37')).toContain('General note')
     expect(cellXml(outputSheet, 'D13')).toContain('Yes')
     expect(cellXml(outputSheet, 'E13')).toContain('<v>80.1234</v>')
-    expect(cellXml(outputSheet, 'I13')).toContain('<v>24.03702</v>')
-    expect(cellXml(outputSheet, 'M13')).toContain('<v>81.623385</v>')
+    expect(cellNumber(outputSheet, 'I13')).toBeCloseTo(24.03702, 12)
+    expect(cellNumber(outputSheet, 'M13')).toBeCloseTo(81.623385, 12)
     expect(cellXml(outputSheet, 'N13')).toContain('<v>1</v>')
     expect(cellXml(outputSheet, 'O13')).toContain('<v>Complete</v>')
     expect(cellXml(outputSheet, 'C28')).toContain('<v>3 / 9</v>')
@@ -182,8 +231,27 @@ describe('organizer workbook adapter', () => {
     expect(cellXml(outputSheet, 'E14')).toMatch(/<c\b[^>]*\/>$/)
     expect(cellXml(outputSheet, 'O14')).toContain('<v>Not started</v>')
 
+    const missingRepo = await exportWorkbook(sourceBytes, {
+      judge: { ...judge, date: '2026-10-28' },
+      reviews: { [TEAM_IDS[0]]: review(TEAM_IDS[0], [80, 80, 80, 80], '') },
+    })
+    expect(cellXml(await sheetXml(missingRepo), 'M13')).toContain('<v>80</v>')
+    expect(cellXml(await sheetXml(missingRepo), 'O13')).toContain('<v>Missing repo check</v>')
+
     const complete = await exportWorkbook(sourceBytes, { judge: { ...judge, date: '2026-10-28' }, reviews: allReviews() }, { final: true })
     expect(cellXml(await sheetXml(complete), 'C33')).toContain('YES — upload via the Google Form')
     await expect(exportWorkbook(sourceBytes, { judge: { ...judge, date: '2026-10-28' }, reviews: { ...allReviews(), [TEAM_IDS[0]]: review(TEAM_IDS[0], [80, 80, 80, 80], 'No – private/broken') } }, { final: true })).rejects.toThrow('not ready')
+  })
+
+  parity('accepts actual intake/evidence fields and exports a local fixture workbook', async () => {
+    expect(validateRecord('evidence:' + evidenceFixture.id, evidenceFixture)).toBe(true)
+    expect(validateRecord('intake:' + TEAM_IDS[0], intakeFixture(330))).toBe(true)
+    const sourceBytes = new Uint8Array(await readFile(SOURCE_PATH))
+    const outputBytes = await exportWorkbook(sourceBytes, {
+      judge: { ...judge, date: '2026-10-28', generalNotes: 'Local fixture export' },
+      reviews: { [TEAM_IDS[0]]: review(TEAM_IDS[0], [0, 75, 80, 90], 'Yes', { notes: 'Fixture review' }) },
+    })
+    expect(outputBytes).toBeInstanceOf(Uint8Array)
+    expect(cellXml(await sheetXml(outputBytes), 'P13')).toContain('Fixture review')
   })
 })

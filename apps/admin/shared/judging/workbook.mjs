@@ -157,7 +157,7 @@ function numericCell(cellXml, value) {
 function serializeNumber(value) {
   if (typeof value === 'number') {
     assertCondition(Number.isFinite(value), 'Formula cache number must be finite')
-    return Number(value.toPrecision(15)).toString()
+    return String(value)
   }
   return String(value)
 }
@@ -329,7 +329,7 @@ function patchFormulaCache(sheetXml, reference, value) {
 function summaryCacheValues(rowsById, judge) {
   const rows = [...rowsById.values()]
   const complete = rows.filter(row => row.status === STATUS.COMPLETE)
-  const totals = complete.map(row => row.total).filter(value => typeof value === 'number')
+  const totals = rows.map(row => row.total).filter(value => typeof value === 'number')
   const average = totals.length ? totals.reduce((sum, value) => sum + value, 0) / totals.length : ''
   const maximum = totals.length ? Math.max(...totals) : ''
   const minimum = totals.length ? Math.min(...totals) : ''

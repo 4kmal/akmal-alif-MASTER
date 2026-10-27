@@ -10,7 +10,7 @@ export const ASSIGNMENT_ID = 'sdc-2026'
 export const JUDGE_ID = 'D1-J04'
 export const DOMAIN = 'Domain 1 – Aiversecity Future-Ready Workforce'
 export const JUDGE_NAME = 'Muhammad Akmal Alif bin Azam'
-export const DEADLINE = null
+export const DEADLINE = '2026-10-28T00:00:00.000Z'
 
 export const CRITERIA = Object.freeze([
   Object.freeze({ id: 'innovation', label: 'Innovation & Creativity', weight: 0.3 }),
@@ -70,7 +70,12 @@ const TEAM_BY_ID = new Map(TEAMS.map(team => [team.id, team]))
 const NEGATIVE_REPO_CHECK_SET = new Set(NEGATIVE_REPO_CHECK_VALUES)
 const REPO_CHECK_SET = new Set(REPO_CHECK_VALUES)
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
-const UUID_PATTERN = /^[\da-f]{8}-[\da-f]{4}-[1-5][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i
+const UUID_PATTERN = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
+const RECORD_ID_PATTERN = /^(?:[\da-f]{32}|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})$/i
+const SHA1_PATTERN = /^[\da-f]{40}$/i
+const SHA256_PATTERN = /^[\da-f]{64}$/i
+const EVIDENCE_KINDS = new Set(['source', 'document', 'transcript', 'link'])
+const DEMO_PARITY_VALUES = new Set(['unverified', 'match', 'mismatch'])
 
 function isPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value))
@@ -91,12 +96,6 @@ function assertString(value, field, maxLength) {
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value))
-}
-
-function cleanNumber(value) {
-  if (!Number.isFinite(value))
-    return value
-  return Number(value.toPrecision(15))
 }
 
 function isValidDateOnly(value) {
@@ -173,7 +172,7 @@ export function normalizeReview(review, teamId, options = {}) {
   const hasRepoCheck = Object.prototype.hasOwnProperty.call(review, 'repoCheck')
   assertCondition(allowDefaults || hasRepoCheck, 'Review repoCheck is required')
   const repoCheck = review.repoCheck === undefined && allowDefaults ? '' : review.repoCheck
-  assertCondition(typeof repoCheck === 'string' && REPO_CHECK_SET.has(repoCheck), 'Review repoCheck is invalid')
+  assertCondition(typeof repoCheck === 'string' && (repoCheck === '' || REPO_CHECK_SET.has(repoCheck)), 'Review repoCheck is invalid')
 
   const hasNotes = Object.prototype.hasOwnProperty.call(review, 'notes')
   assertCondition(allowDefaults || hasNotes, 'Review notes are required')
@@ -276,9 +275,9 @@ export function calculateReviews(reviews) {
   const input = reviewInputMap(reviews)
   const rows = TEAMS.map(team => {
     const review = input.get(team.id) || emptyReview(team.id)
-    const contribution = review.scores.map((score, index) => score === null ? null : cleanNumber(score * CRITERIA[index].weight))
-    const complete = review.scores.every(score => score !== null) && review.repoCheck !== ''
-    const total = complete ? cleanNumber(contribution.reduce((sum, value) => sum + value, 0)) : null
+    const contribution = review.scores.map((score, index) => score === null ? null : score * CRITERIA[index].weight)
+    const scoreComplete = review.scores.every(score => score !== null)
+    const total = scoreComplete ? contribution.reduce((sum, value) => sum + value, 0) : null
     return {
       ...team,
       ...review,
@@ -431,6 +430,123 @@ function validateFreeformRecord(data, keyTeamId, kind) {
     assertCondition(data.teamId === keyTeamId, 'Record teamId does not match its key')
 }
 
+function requireOwnField(data, field, message) {
+  assertCondition(Object.prototype.hasOwnProperty.call(data, field), message || ('Record field is required: ' + field))
+  return data[field]
+}
+
+function validateIsoTimestamp(value, field) {
+  assertCondition(typeof value === 'string' && value.length <= 128 && Number.isFinite(Date.parse(value)), field + ' must be an ISO timestamp')
+  return value
+}
+
+function validateStringField(value, field, maxLength, allowEmpty = true) {
+  assertString(value, field, maxLength)
+  if (!allowEmpty)
+    assertCondition(value.length > 0, field + ' must not be blank')
+  return value
+}
+
+function validateRecordId(value, field) {
+  assertCondition(typeof value === 'string' && RECORD_ID_PATTERN.test(value), field + ' must be a UUID or 32-character hexadecimal ID')
+  return value
+}
+
+function validateEvidenceRecord(keyId, data) {
+  validateFreeformRecord(data, null, 'evidence')
+  const id = requireOwnField(data, 'id')
+  validateRecordId(id, 'Evidence id')
+  assertCondition(id.toLowerCase() === keyId.toLowerCase(), 'Evidence id does not match its key')
+  const teamId = requireOwnField(data, 'teamId')
+  assertCondition(isTeamId(teamId), 'Evidence teamId is unknown')
+  validateStringField(requireOwnField(data, 'snapshotSha'), 'Evidence snapshotSha', 128, false)
+  assertCondition(SHA1_PATTERN.test(data.snapshotSha) || SHA256_PATTERN.test(data.snapshotSha), 'Evidence snapshotSha must be a hexadecimal commit or snapshot hash')
+  validateStringField(requireOwnField(data, 'path'), 'Evidence path', 4096, false)
+  const kind = requireOwnField(data, 'kind')
+  assertCondition(typeof kind === 'string' && EVIDENCE_KINDS.has(kind), 'Evidence kind is invalid')
+  const sha256 = requireOwnField(data, 'sha256')
+  assertCondition(typeof sha256 === 'string' && SHA256_PATTERN.test(sha256), 'Evidence sha256 must be a 64-character hexadecimal hash')
+  validateStringField(requireOwnField(data, 'text'), 'Evidence text', 250000)
+  const lines = requireOwnField(data, 'lines')
+  assertCondition(Number.isSafeInteger(lines) && lines >= 0 && lines <= 100000000, 'Evidence lines must be a bounded non-negative integer')
+  if (data.pages !== undefined) {
+    assertCondition(Array.isArray(data.pages) && data.pages.length <= 1000, 'Evidence pages must contain at most 1000 entries')
+    for (const [index, page] of data.pages.entries()) {
+      assertCondition(isPlainObject(page), 'Evidence pages[' + index + '] must be an object')
+      const pageNumber = requireOwnField(page, 'page')
+      assertCondition(Number.isSafeInteger(pageNumber) && pageNumber >= 1 && pageNumber <= 100000000, 'Evidence pages[' + index + '].page is invalid')
+      validateStringField(requireOwnField(page, 'text'), 'Evidence pages[' + index + '].text', 250000)
+    }
+  }
+  validateStringField(requireOwnField(data, 'coverage'), 'Evidence coverage', 10000)
+  validateIsoTimestamp(requireOwnField(data, 'createdAt'), 'Evidence createdAt')
+  return data
+}
+
+function validateArtifact(artifact, index) {
+  assertCondition(isPlainObject(artifact), 'Intake artifacts[' + index + '] must be an object')
+  validateStringField(requireOwnField(artifact, 'path'), 'Intake artifacts[' + index + '].path', 4096, false)
+  const size = requireOwnField(artifact, 'size')
+  assertCondition(Number.isSafeInteger(size) && size >= 0 && size <= 1e12, 'Intake artifacts[' + index + '].size is invalid')
+  const sha256 = requireOwnField(artifact, 'sha256')
+  assertCondition(typeof sha256 === 'string' && SHA256_PATTERN.test(sha256), 'Intake artifacts[' + index + '].sha256 is invalid')
+}
+
+function validateIntakeLink(link, index) {
+  assertCondition(isPlainObject(link), 'Intake links[' + index + '] must be an object')
+  validateStringField(requireOwnField(link, 'url'), 'Intake links[' + index + '].url', 4096, false)
+  validateStringField(requireOwnField(link, 'kind'), 'Intake links[' + index + '].kind', 128, false)
+  const status = requireOwnField(link, 'status')
+  assertCondition(status === null || (typeof status === 'number' && Number.isFinite(status) && status >= 0 && status <= 1000), 'Intake links[' + index + '].status must be null or a bounded number')
+  const parity = requireOwnField(link, 'parity')
+  assertCondition(typeof parity === 'string' && DEMO_PARITY_VALUES.has(parity), 'Intake links[' + index + '].parity is invalid')
+  if (link.error !== undefined)
+    validateStringField(link.error, 'Intake links[' + index + '].error', 10000)
+  if (link.accessible !== undefined)
+    assertCondition(typeof link.accessible === 'boolean', 'Intake links[' + index + '].accessible must be boolean')
+  if (link.finalUrl !== undefined)
+    validateStringField(link.finalUrl, 'Intake links[' + index + '].finalUrl', 4096)
+  if (link.checkedAt !== undefined)
+    validateIsoTimestamp(link.checkedAt, 'Intake links[' + index + '].checkedAt')
+}
+
+function validateIntakeRecord(keyTeamId, data) {
+  validateFreeformRecord(data, keyTeamId, 'intake')
+  assertCondition(data.teamId === keyTeamId, 'Intake teamId does not match its key')
+  validateStringField(requireOwnField(data, 'repoUrl'), 'Intake repoUrl', 4096, false)
+  validateStringField(requireOwnField(data, 'branch'), 'Intake branch', 512, false)
+  const sha = requireOwnField(data, 'sha')
+  assertCondition(typeof sha === 'string' && SHA1_PATTERN.test(sha), 'Intake sha must be a 40-character hexadecimal commit hash')
+  validateIsoTimestamp(requireOwnField(data, 'retrievedAt'), 'Intake retrievedAt')
+  validateStringField(requireOwnField(data, 'snapshotPath'), 'Intake snapshotPath', 4096, false)
+  assertCondition(typeof requireOwnField(data, 'verified') === 'boolean', 'Intake verified must be boolean')
+
+  const evidenceIds = requireOwnField(data, 'evidenceIds')
+  assertCondition(Array.isArray(evidenceIds) && evidenceIds.length <= 1000, 'Intake evidenceIds must contain at most 1000 entries')
+  for (const [index, evidenceId] of evidenceIds.entries())
+    validateRecordId(evidenceId, 'Intake evidenceIds[' + index + ']')
+
+  const artifacts = requireOwnField(data, 'artifacts')
+  assertCondition(Array.isArray(artifacts) && artifacts.length <= 1000, 'Intake artifacts must contain at most 1000 entries')
+  artifacts.forEach(validateArtifact)
+
+  const links = requireOwnField(data, 'links')
+  assertCondition(Array.isArray(links) && links.length <= 1000, 'Intake links must contain at most 1000 entries')
+  links.forEach(validateIntakeLink)
+
+  const demoParity = requireOwnField(data, 'demoParity')
+  assertCondition(typeof demoParity === 'string' && DEMO_PARITY_VALUES.has(demoParity), 'Intake demoParity is invalid')
+  const issues = requireOwnField(data, 'issues')
+  assertCondition(Array.isArray(issues) && issues.length <= 1000, 'Intake issues must contain at most 1000 entries')
+  issues.forEach((issue, index) => validateStringField(issue, 'Intake issues[' + index + ']', 10000))
+  const declaredDemoCommits = requireOwnField(data, 'declaredDemoCommits')
+  assertCondition(Array.isArray(declaredDemoCommits) && declaredDemoCommits.length <= 1000, 'Intake declaredDemoCommits must contain at most 1000 entries')
+  declaredDemoCommits.forEach((commit, index) => validateStringField(commit, 'Intake declaredDemoCommits[' + index + ']', 256))
+  const previousSnapshots = requireOwnField(data, 'previousSnapshots')
+  assertCondition(Array.isArray(previousSnapshots) && previousSnapshots.length <= 1000, 'Intake previousSnapshots must contain at most 1000 entries')
+  return data
+}
+
 function parseRecordInternal(key, data) {
   assertCondition(typeof key === 'string' && key.length <= 128, 'Record key is invalid')
   if (key === 'judge') {
@@ -444,16 +560,12 @@ function parseRecordInternal(key, data) {
   const intakeMatch = /^intake:(.+)$/.exec(key)
   if (intakeMatch) {
     assertCondition(TEAM_BY_ID.has(intakeMatch[1]), 'Record key contains an unknown intake teamId')
-    validateFreeformRecord(data, intakeMatch[1], 'intake')
-    return data
+    return validateIntakeRecord(intakeMatch[1], data)
   }
   const evidenceMatch = /^evidence:(.+)$/.exec(key)
   if (evidenceMatch) {
-    assertCondition(UUID_PATTERN.test(evidenceMatch[1]), 'Evidence record key must contain a UUID')
-    validateFreeformRecord(data, data && typeof data.teamId === 'string' ? data.teamId : null, 'evidence')
-    if (data && data.teamId !== undefined)
-      assertCondition(TEAM_BY_ID.has(data.teamId), 'Evidence record teamId is unknown')
-    return data
+    assertCondition(RECORD_ID_PATTERN.test(evidenceMatch[1]), 'Evidence record key must contain a UUID or 32-character hexadecimal ID')
+    return validateEvidenceRecord(evidenceMatch[1], data)
   }
   const assessmentMatch = /^assessment:(.+)$/.exec(key)
   if (assessmentMatch) {
