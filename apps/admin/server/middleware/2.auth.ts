@@ -1,10 +1,19 @@
 import type { H3Event } from 'h3'
 import { timingSafeEqual } from 'node:crypto'
+import { authenticateJudgingDeviceRequest } from '../utils/judging'
 import { getRuntimeBoolean, getRuntimeString } from '../utils/runtime-config'
 
 export default eventHandler(async (event) => {
   const isAnalyticsIngest = event.path === '/internal/events'
   const isRuntimeRequest = event.path === '/runtime' || event.path.startsWith('/runtime/')
+  const isJudgingSyncRequest = event.path === '/api/judging-sync' || event.path.startsWith('/api/judging-sync/')
+  if (isJudgingSyncRequest) {
+    if (event.path === '/api/judging-sync/pair' && event.method === 'POST')
+      return
+    if (await authenticateJudgingDeviceRequest(event))
+      return
+    throw createError({ statusCode: 401, statusText: 'A valid judging device token is required' })
+  }
   if (!event.path.startsWith('/api/') && !isAnalyticsIngest && !isRuntimeRequest)
     return
 
