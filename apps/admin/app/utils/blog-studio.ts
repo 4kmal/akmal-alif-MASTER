@@ -77,6 +77,11 @@ export interface BlogCategory {
   id: string
   name: string
   slug: string
+  description?: string | null
+  sort_order?: number
+  is_active?: boolean | number
+  icon_key?: string | null
+  version?: number
 }
 
 export interface BlogTag extends BlogCategory {}
@@ -84,6 +89,10 @@ export interface BlogTag extends BlogCategory {}
 export interface BlogTaxonomy {
   categories: BlogCategory[]
   tags: BlogTag[]
+}
+
+export function isBlogCategoryActive(value: unknown): boolean {
+  return value !== false && value !== 0
 }
 
 export interface BlogAsset {

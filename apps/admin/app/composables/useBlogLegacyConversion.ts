@@ -1,8 +1,9 @@
 import type { JSONContent } from '@tiptap/vue-3'
 import type { LegacyConversionIssue, LegacyConversionResult } from '@/utils/blog-studio'
+import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 
 const UNSUPPORTED_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form', 'canvas', 'svg'])
-const BLOCK_NODE_TYPES = new Set(['blockquote', 'codeBlock', 'heading', 'horizontalRule', 'orderedList', 'paragraph', 'table', 'bulletList', 'blogMedia'])
+const BLOCK_NODE_TYPES = new Set(['blockquote', 'codeBlock', 'heading', 'horizontalRule', 'orderedList', 'paragraph', 'table', 'bulletList', 'blogMedia', 'blogGallery', 'blogYouTube'])
 const STRUCTURAL_TAGS = new Set(['address', 'aside', 'footer', 'header', 'main', 'nav'])
 
 function issueFor(issues: LegacyConversionIssue[], tag: string, message: string) {
@@ -41,6 +42,22 @@ function convertElement(element: Element, issues: LegacyConversionIssue[]): JSON
       return []
     }
     return [{ type: 'blogMedia', attrs: { assetId: element.getAttribute('data-asset-id') || `legacy:${src}`, kind: 'video', src, alt: '', caption: '', width: 100, align: 'left' } }]
+  }
+  if (tag === 'figure' && element.hasAttribute('data-blog-gallery')) {
+    const manifestId = element.getAttribute('data-manifest-id') || element.getAttribute('data-gallery-manifest-id') || ''
+    if (!manifestId) {
+      issueFor(issues, 'gallery', 'Gallery without a manifest reference was skipped.')
+      return []
+    }
+    return [{ type: 'blogGallery', attrs: { manifestId } }]
+  }
+  if (tag === 'figure' && element.hasAttribute('data-blog-youtube')) {
+    const videoId = normalizeYouTubeVideoId(element.getAttribute('data-video-id'))
+    if (!videoId) {
+      issueFor(issues, 'youtube', 'YouTube embed without a valid 11-character video ID was skipped.')
+      return []
+    }
+    return [{ type: 'blogYouTube', attrs: { videoId, title: element.getAttribute('data-title') || element.querySelector('figcaption')?.textContent || '' } }]
   }
   const children = Array.from(element.childNodes).flatMap((child) => {
     if (child.nodeType === Node.TEXT_NODE) {

@@ -3,6 +3,7 @@
 import type { Editor } from '@tiptap/vue-3'
 import type { BlogDocxImportReview } from '@/composables/useBlogDocuments'
 import type { BlogAsset, BlogDraft, BlogMediaAttrs, BlogPostDetail, BlogRevision, LegacyConversionResult } from '@/utils/blog-studio'
+import type { GallerySummary } from '@/utils/content-calendar'
 import { Archive, ArrowLeft, Check, Clock3, Download, ExternalLink, FileText, History, LoaderCircle, PanelRight, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Upload, X } from '@lucide/vue'
 import { EditorContent } from '@tiptap/vue-3'
 import { useBlogApi } from '@/composables/useBlogApi'
@@ -12,6 +13,7 @@ import { useBlogEditor } from '@/composables/useBlogEditor'
 import { convertLegacyHtmlToTiptap } from '@/composables/useBlogLegacyConversion'
 import { preserveDraftEditsAfterServerSave, rebaseDraftOntoServer } from '@/composables/useBlogStudio'
 import { cloneDraft, createEmptyDraft, formatDate, isStaleDraftError } from '@/utils/blog-studio'
+import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 import { getBlogPosterAssets } from './blog-media-library-state'
 import BlogModal from './BlogModal.vue'
 
@@ -34,6 +36,13 @@ const inspectorOpen = ref(true)
 const mediaDialogOpen = ref(false)
 const mediaAssets = ref<BlogAsset[]>([])
 const mediaLoading = ref(false)
+const galleryDialogOpen = ref(false)
+const gallerySummaries = ref<GallerySummary[]>([])
+const galleryLoading = ref(false)
+const youtubeDialogOpen = ref(false)
+const youtubeVideoId = ref('')
+const youtubeTitle = ref('')
+const youtubeError = ref('')
 const selectedMediaAttrs = ref<BlogMediaAttrs | null>(null)
 const legacyReview = ref<LegacyConversionResult | null>(null)
 const legacyReviewOpen = ref(false)
@@ -543,6 +552,51 @@ async function openMediaDialog() {
   await loadMediaAssets()
 }
 
+async function openGalleryDialog() {
+  galleryDialogOpen.value = true
+  galleryLoading.value = true
+  try {
+    const result = await api.listGalleries()
+    gallerySummaries.value = result.galleries.filter(gallery => gallery.status === 'finalized')
+  }
+  catch (reason: unknown) {
+    error.value = reason instanceof Error ? reason.message : 'Could not load finalized galleries.'
+  }
+  finally {
+    galleryLoading.value = false
+  }
+}
+
+function insertGallery(manifestId: string) {
+  if (!editorState.insertGallery(manifestId)) {
+    error.value = 'That gallery is no longer available. Refresh the gallery list and try again.'
+    return
+  }
+  galleryDialogOpen.value = false
+  statusNotice.value = 'Gallery inserted'
+}
+
+function openYouTubeDialog() {
+  youtubeVideoId.value = ''
+  youtubeTitle.value = ''
+  youtubeError.value = ''
+  youtubeDialogOpen.value = true
+}
+
+function insertYouTube() {
+  const videoId = normalizeYouTubeVideoId(youtubeVideoId.value)
+  if (!videoId) {
+    youtubeError.value = 'Use a valid 11-character YouTube video ID or URL.'
+    return
+  }
+  if (!editorState.insertYouTube(videoId, youtubeTitle.value)) {
+    youtubeError.value = 'This YouTube video could not be inserted.'
+    return
+  }
+  youtubeDialogOpen.value = false
+  statusNotice.value = 'YouTube video inserted'
+}
+
 function insertAsset(asset: BlogAsset) {
   editorState.insertMedia({ assetId: asset.id, kind: asset.kind, src: asset.source_url, alt: asset.name, caption: '', width: 100, align: 'left' })
   mediaDialogOpen.value = false
@@ -726,7 +780,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </div>
     <template v-else>
       <section class="blog-editor-shell">
-        <BlogRibbon :editor="activeEditor" :find-text="editorState.findText" :replace-text="editorState.replaceText" @insert-media="openMediaDialog" />
+        <BlogRibbon :editor="activeEditor" :find-text="editorState.findText" :replace-text="editorState.replaceText" @insert-media="openMediaDialog" @insert-gallery="openGalleryDialog" @insert-you-tube="openYouTubeDialog" />
         <div class="blog-editor-body">
           <div class="blog-editor-paper-wrap">
             <EditorContent :editor="editor" />
@@ -1061,6 +1115,51 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <ExternalLink :size="15" /> Open media library
         </NuxtLink>
       </div>
+    </BlogModal>
+    <BlogModal v-model:open="galleryDialogOpen" title="Insert gallery" modal-class="blog-modal--wide">
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">Insert</p>
+          <h2>Finalized galleries</h2>
+        </div>
+        <button type="button" class="blog-icon-button" aria-label="Close gallery picker" @click="galleryDialogOpen = false">
+          <X :size="18" />
+        </button>
+      </div>
+      <p class="blog-modal__intro">Only immutable finalized revisions can appear in a published article.</p>
+      <div v-if="galleryLoading" class="blog-state blog-state--small">
+        <LoaderCircle :size="18" class="blog-spin" /> Loading galleries…
+      </div>
+      <div v-else-if="!gallerySummaries.length" class="blog-empty-note">
+        No finalized galleries yet. Create one in the Galleries workspace.
+      </div>
+      <div v-else class="blog-picker-grid">
+        <button v-for="gallery in gallerySummaries" :key="`${gallery.id}:${gallery.revision}`" type="button" class="blog-picker-card" @click="insertGallery(gallery.manifest_id || gallery.id)">
+          <span class="blog-picker-card__video" aria-hidden="true"><FileText :size="20" /></span>
+          <strong>{{ gallery.title || 'Untitled gallery' }}</strong>
+          <span>Revision {{ gallery.revision }} · {{ gallery.page_count }} pages</span>
+        </button>
+      </div>
+      <div class="blog-modal__footer">
+        <NuxtLink to="/admin/blog/galleries" class="blog-button"><ExternalLink :size="15" /> Open galleries</NuxtLink>
+      </div>
+    </BlogModal>
+    <BlogModal v-model:open="youtubeDialogOpen" title="Insert YouTube video">
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">Insert</p>
+          <h2>YouTube video</h2>
+        </div>
+        <button type="button" class="blog-icon-button" aria-label="Close YouTube dialog" @click="youtubeDialogOpen = false">
+          <X :size="18" />
+        </button>
+      </div>
+      <form class="blog-modal__form" @submit.prevent="insertYouTube">
+        <label class="blog-field"><span>Video ID or URL</span><input v-model="youtubeVideoId" required maxlength="200" placeholder="hez2yR4GyTA" autocomplete="off"></label>
+        <label class="blog-field"><span>Title (optional)</span><input v-model="youtubeTitle" maxlength="180" placeholder="Talk title"></label>
+        <p v-if="youtubeError" class="blog-alert blog-alert--error" role="alert">{{ youtubeError }}</p>
+        <div class="blog-modal__footer"><button type="submit" class="blog-button blog-button--primary">Insert video</button></div>
+      </form>
     </BlogModal>
     <BlogModal v-if="docxReview" :open="true" title="DOCX import review" modal-class="blog-modal--wide" @update:open="docxReview = null">
       <div

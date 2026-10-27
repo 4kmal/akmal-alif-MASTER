@@ -127,5 +127,6 @@ onMounted(load)
         </button>
       </div>
     </section>
+    <BlogCategoryManager />
   </main>
 </template>

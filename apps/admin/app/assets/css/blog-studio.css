@@ -9,6 +9,386 @@
   padding-bottom: 2rem;
 }
 
+.gallery-editor-grid,
+.calendar-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.gallery-editor-grid > *,
+.calendar-layout > * {
+  min-width: 0;
+}
+
+.gallery-source-actions,
+.gallery-upload-status__row,
+.gallery-page-actions,
+.calendar-editor-actions,
+.calendar-settings-form,
+.blog-category-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.gallery-upload-status {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: var(--background);
+}
+
+.gallery-upload-status__row {
+  justify-content: space-between;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.gallery-upload-status progress {
+  width: 100%;
+  height: 0.55rem;
+  accent-color: var(--blog-yellow);
+}
+
+.gallery-page-list,
+.gallery-revision-list,
+.blog-category-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.gallery-page-row,
+.gallery-revision-row,
+.blog-category-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.6rem;
+  background: var(--background);
+}
+
+.gallery-page-row.is-complete {
+  border-color: color-mix(in srgb, var(--blog-yellow) 58%, var(--border));
+}
+
+.gallery-page-thumb {
+  display: grid;
+  width: 4rem;
+  height: 3.4rem;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.gallery-page-thumb:focus-visible {
+  outline: 2px solid var(--blog-yellow);
+  outline-offset: 2px;
+}
+
+.gallery-page-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gallery-page-copy,
+.gallery-revision-row,
+.blog-category-fields {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.gallery-page-copy span,
+.gallery-revision-row span,
+.blog-category-slug {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.gallery-page-field {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+}
+
+.gallery-page-field span,
+.gallery-page-visibility {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+}
+
+.gallery-page-field :is(input, textarea) {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.38rem 0.48rem;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.74rem;
+}
+
+.gallery-page-field textarea {
+  resize: vertical;
+}
+
+.gallery-page-visibility {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+}
+
+.gallery-page-visibility input {
+  accent-color: var(--blog-yellow);
+}
+
+.gallery-page-preview {
+  display: grid;
+  gap: 0.8rem;
+  max-height: min(88svh, 60rem);
+  overflow: auto;
+  padding: 1rem;
+}
+
+.gallery-page-preview__image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 70svh;
+  margin: 0 auto;
+  object-fit: contain;
+  background: #111;
+}
+
+.gallery-page-preview__caption {
+  margin: 0;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.calendar-list-panel,
+.calendar-editor-panel {
+  min-width: 0;
+}
+
+.calendar-event-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: 100%;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  padding: 0.75rem;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+
+.calendar-event-row:hover,
+.calendar-event-row.is-selected {
+  border-color: var(--border);
+  background: var(--accent);
+}
+
+.calendar-event-row.is-archived {
+  opacity: 0.62;
+}
+
+.calendar-event-row span:not(.calendar-event-row__marker) {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.calendar-event-row small {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+
+.calendar-event-row__marker {
+  width: 0.6rem;
+  height: 2.1rem;
+  border-radius: 999px;
+  background: var(--blog-yellow);
+}
+
+.calendar-event-row__marker[data-kind='meeting'] {
+  background: #8fa4ff;
+}
+
+.calendar-event-row__marker[data-kind='activity'] {
+  background: #7cc9a3;
+}
+
+.calendar-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.calendar-all-day,
+.calendar-blocks {
+  margin: 0.7rem 0;
+}
+
+.calendar-privacy-preview {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--blog-yellow);
+  border-radius: 12px;
+  padding: 0.8rem;
+  background: color-mix(in srgb, var(--blog-yellow) 8%, var(--card));
+}
+
+.calendar-privacy-preview .blog-panel__header {
+  margin-bottom: 0.35rem;
+}
+
+.calendar-privacy-preview p,
+.calendar-privacy-preview span {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.calendar-settings-form {
+  align-items: end;
+}
+
+.calendar-settings-form .blog-field {
+  min-width: min(100%, 22rem);
+  flex: 1;
+}
+
+.blog-category-manager {
+  display: grid;
+  gap: 1rem;
+}
+
+.blog-category-row {
+  grid-template-columns: auto minmax(0, 1fr) minmax(10rem, 0.7fr) auto;
+  align-items: start;
+}
+
+.blog-category-order {
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.blog-category-row__handle {
+  align-self: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: grab;
+}
+
+.blog-category-create {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(10rem, 1fr) minmax(9rem, 0.7fr) auto;
+  align-items: end;
+  gap: 0.7rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.blog-category-create h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.blog-field-error {
+  color: var(--destructive);
+  font-size: 0.68rem;
+}
+
+.blog-gallery-node,
+.blog-youtube-node {
+  display: grid;
+  min-height: 5rem;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.blog-youtube-node {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  padding: 0;
+}
+
+.blog-youtube-node iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.blog-youtube-node figcaption {
+  position: absolute;
+  bottom: 0.5rem;
+  left: 0.75rem;
+  color: white;
+  text-shadow: 0 1px 2px black;
+}
+
+@media (max-width: 840px) {
+  .gallery-editor-grid,
+  .calendar-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .blog-category-row,
+  .blog-category-create {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .blog-category-row > :nth-child(3),
+  .blog-category-row__handle,
+  .blog-category-create > :nth-child(n + 3) {
+    grid-column: 2;
+  }
+}
+
+@media (max-width: 520px) {
+  .calendar-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-page-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .gallery-page-actions {
+    grid-column: 2;
+  }
+}
+
 .blog-page-heading,
 .blog-editor-heading {
   display: flex;

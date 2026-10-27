@@ -7,3 +7,4 @@ node_modules/
 public/admin/world.json
 public/admin/countries.geojson
 public/admin/sphere.bin
+public/admin/pdfjs/pdf.worker.mjs
