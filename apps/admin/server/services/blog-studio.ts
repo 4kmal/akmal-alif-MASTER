@@ -1432,7 +1432,7 @@ export async function updateBlogCategory(event: H3Event, categoryId: string) {
     db.prepare('UPDATE blog_categories SET name = ?, description = ?, sort_order = ?, is_active = ?, icon_key = ?, version = ?, updated_at = ? WHERE id = ? AND version = ?').bind(name, description, sortOrder, isActive ? 1 : 0, iconKey, nextVersion, now, categoryId, version),
     auditInsert(db, actor, 'taxonomy.category.update', categoryId, { status: 'updated', version: nextVersion }, 'changes() = 1'),
   ])
-  if (changes(result[0]) !== 1) {
+  if (changes(result[0]) < 1) {
     const latest = first<{ version: number }>(await db.prepare('SELECT version FROM blog_categories WHERE id = ?').bind(categoryId).all())
     if (!latest)
       throw createError({ statusCode: 404, statusMessage: 'Category not found' })

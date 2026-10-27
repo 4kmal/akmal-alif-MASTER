@@ -1,0 +1,22 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "akmalalif-admin-portfolio-taxonomy-tests",
+  "main": "../.output/server/index.mjs",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ALLOW_LOCAL_ADMIN": "true",
+    "ADMIN_EMAIL": "owner@example.test",
+    "PORTFOLIO_ADMIN_ORIGIN": "http://localhost",
+    "SITE_TOKEN": "test-site-token",
+    "SHORTLINK_ORIGIN": "https://go.example.test"
+  },
+  "d1_databases": [
+    {
+      "binding": "PORTFOLIO_DB",
+      "database_name": "akmalalif-portfolio-taxonomy-test",
+      "database_id": "portfolio-taxonomy-test",
+      "migrations_dir": "../../migrations"
+    }
+  ]
+}
