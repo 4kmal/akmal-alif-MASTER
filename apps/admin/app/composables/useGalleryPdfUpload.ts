@@ -311,7 +311,7 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
     }
     task.value = current
     try {
-      await run(current, upload.parts)
+      await run(task.value, upload.parts)
     }
     catch {
       // The task exposes its failure state to the form; callers can retry.

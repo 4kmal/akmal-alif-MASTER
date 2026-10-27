@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createApp, defineComponent, h, ref } from 'vue'
+import { computed, createApp, defineComponent, h, ref } from 'vue'
 import { GALLERY_SOURCE_PART_SIZE, useGalleryPdfUpload } from '../app/composables/useGalleryPdfUpload'
 
 const api = vi.hoisted(() => ({
@@ -117,6 +117,29 @@ afterEach(() => {
 })
 
 describe('gallery PDF upload lifecycle', () => {
+  it('updates reactive progress and releases the rendering lock after the initial upload', async () => {
+    let releasePart!: () => void
+    api.putGallerySourcePart.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        releasePart = resolve
+      })
+      return { part_number: 1, etag: 'etag-1', size: 37 }
+    })
+    const { app, upload } = mountUpload()
+    const uploading = computed(() => upload.task.value?.status === 'uploading')
+    const pending = upload.selectFile(makeFile())
+    await waitFor(() => upload.task.value?.status === 'uploading')
+    expect(uploading.value).toBe(true)
+    expect(upload.progress.value).toBe(0)
+    releasePart()
+    await pending
+
+    expect(uploading.value).toBe(false)
+    expect(upload.progress.value).toBe(100)
+    expect(upload.task.value?.status).toBe('complete')
+    app.unmount()
+  })
+
   it('pauses and resumes recorded parts without reopening the source upload', async () => {
     let releasePart!: () => void
     api.putGallerySourcePart.mockImplementationOnce(async (_galleryId: string, _uploadId: string, part: number) => {
