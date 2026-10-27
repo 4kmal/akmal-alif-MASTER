@@ -9,7 +9,7 @@ function requestEvent(path = '/api/admin/judging/sdc-2026/state', headers: Recor
     path,
     method: 'GET',
     context: {},
-    node: { req: { headers: { host: 'admin.example', 'x-forwarded-proto': 'https', ...headers }, url: new URL(path, 'https://admin.example').toString() } },
+    node: { req: { headers: { 'host': 'admin.example', 'x-forwarded-proto': 'https', ...headers }, url: new URL(path, 'https://admin.example').toString() } },
   } as unknown as H3Event
 }
 
@@ -60,7 +60,7 @@ describe('judging owner authentication boundary', () => {
 
   it('requires a trusted gateway or exact canonical origin for pair redemption', () => {
     const direct = requestEvent('/api/judging-sync/pair', {
-      origin: 'https://worker.dev',
+      'origin': 'https://worker.dev',
       'x-judging-pair-ip': 'spoofed-client',
     })
     expect(() => requireJudgingPairRequest(direct)).toThrow(/trusted judging gateway|canonical admin origin/)
@@ -73,7 +73,7 @@ describe('judging owner authentication boundary', () => {
     expect(gateway.context.judgingPairGateway).toBe(true)
 
     const canonical = requestEvent('/api/judging-sync/pair', {
-      origin: 'https://admin.example',
+      'origin': 'https://admin.example',
       'sec-fetch-site': 'same-origin',
     })
     requireJudgingPairRequest(canonical)
