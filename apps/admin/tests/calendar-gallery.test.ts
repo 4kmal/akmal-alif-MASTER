@@ -27,15 +27,23 @@ const migrationSql = [
   readFileSync(new URL('../../../migrations/0004_gallery_calendar.sql', import.meta.url), 'utf8'),
 ].join('\n')
 
+interface D1Limits {
+  maxPrepareCalls?: number
+  maxBatchStatements?: number
+  maxBinds?: number
+}
+
 class SQLiteStatement {
   private readonly statement: ReturnType<DatabaseSync['prepare']>
   private params: unknown[] = []
 
-  constructor(database: DatabaseSync, sql: string) {
+  constructor(database: DatabaseSync, sql: string, private readonly limits: D1Limits) {
     this.statement = database.prepare(sql)
   }
 
   bind(...params: unknown[]) {
+    if (this.limits.maxBinds !== undefined && params.length > this.limits.maxBinds)
+      throw new Error(`simulated D1 bind limit exceeded: ${params.length}`)
     this.params = params
     return this
   }
@@ -51,13 +59,24 @@ class SQLiteStatement {
 }
 
 class SQLiteD1 {
-  constructor(private readonly database: DatabaseSync) {}
+  private prepareCalls = 0
+
+  constructor(private readonly database: DatabaseSync, private readonly limits: D1Limits = {}) {}
+
+  get prepareCount() {
+    return this.prepareCalls
+  }
 
   prepare(sql: string) {
-    return new SQLiteStatement(this.database, sql)
+    this.prepareCalls += 1
+    if (this.limits.maxPrepareCalls !== undefined && this.prepareCalls > this.limits.maxPrepareCalls)
+      throw new Error(`simulated D1 query limit exceeded: ${this.prepareCalls}`)
+    return new SQLiteStatement(this.database, sql, this.limits)
   }
 
   async batch(statements: SQLiteStatement[]) {
+    if (this.limits.maxBatchStatements !== undefined && statements.length > this.limits.maxBatchStatements)
+      throw new Error(`simulated D1 batch limit exceeded: ${statements.length}`)
     this.database.exec('BEGIN')
     try {
       const result = statements.map(statement => statement.run())
@@ -90,10 +109,10 @@ class FakeBucket {
   }
 }
 
-function fixture() {
+function fixture(limits: D1Limits = {}) {
   const database = new DatabaseSync(':memory:')
   database.exec(migrationSql)
-  const d1 = new SQLiteD1(database)
+  const d1 = new SQLiteD1(database, limits)
   const bucket = new FakeBucket()
   database.prepare('INSERT INTO blog_posts (id, slug, title, excerpt, content_html, status, read_minutes) VALUES (?, ?, ?, ?, ?, ?, ?)').run('post-one', 'post-one', 'Post', 'Excerpt', '<p>Body</p>', 'draft', 1)
   database.prepare('INSERT INTO blog_post_drafts (post_id, version, schema_version, title, slug, excerpt, content_html, updated_by) VALUES (?, 1, 1, ?, ?, ?, ?, ?)').run('post-one', 'Post', 'post-one', 'Excerpt', '<p>Body</p>', 'owner')
@@ -262,6 +281,47 @@ describe('gallery publication contract', () => {
       }), gallery.gallery.id)
       expect(saved.gallery.resume.next_page).toBe(512)
       expect(database.prepare('SELECT resume_page FROM blog_galleries WHERE id = ?').get(gallery.gallery.id).resume_page).toBe(512)
+    }
+    finally {
+      database.close()
+    }
+  })
+
+  it('saves a 512-page gallery within bounded D1 query, bind, and batch limits', async () => {
+    const { database, d1, bucket } = fixture({ maxPrepareCalls: 64, maxBatchStatements: 32, maxBinds: 32 })
+    try {
+      database.prepare(`
+        INSERT INTO blog_galleries (id, post_id, version, status, title, page_count, finalized_manifest_id, created_by, updated_by)
+        VALUES (?, ?, 1, 'finalized', ?, 512, ?, ?, ?)
+      `).run('scale-gallery', 'post-one', 'Anthem', 'scale-manifest', 'owner', 'owner')
+      database.prepare('INSERT INTO blog_gallery_manifests (id, gallery_id, revision, title, created_by) VALUES (?, ?, 1, ?, ?)').run('scale-manifest', 'scale-gallery', 'Anthem', 'owner')
+      const insertAsset = database.prepare(`
+        INSERT INTO blog_assets (id, name, mime_type, kind, size, object_key, source_object_key, status, created_by)
+        VALUES (?, ?, 'image/webp', 'image', 2, ?, ?, 'ready', 'owner')
+      `)
+      const insertPage = database.prepare(`
+        INSERT INTO blog_gallery_manifest_pages (manifest_id, page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id)
+        VALUES ('scale-manifest', ?, ?, ?, NULL, ?, 1, ?, ?)
+      `)
+      database.exec('BEGIN')
+      for (let page = 1; page <= 512; page++) {
+        const suffix = String(page).padStart(3, '0')
+        const assetId = `scale-page-${suffix}`
+        const thumbnailId = `scale-thumb-${suffix}`
+        insertAsset.run(assetId, `${assetId}.webp`, `blog/gallery-scale/${assetId}`, `blog/gallery-scale/${assetId}`)
+        insertAsset.run(thumbnailId, `${thumbnailId}.webp`, `blog/gallery-scale/${thumbnailId}`, `blog/gallery-scale/${thumbnailId}`)
+        insertPage.run(`scale-page-row-${suffix}`, page, `Page ${page}`, page - 1, assetId, thumbnailId)
+      }
+      database.exec('COMMIT')
+
+      const updated = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/posts/post-one/draft', {
+        version: 1,
+        content_json: { type: 'doc', content: [{ type: 'blogGallery', attrs: { manifestId: 'scale-manifest' } }] },
+      }), 'post-one')
+      expect(updated.draft.version).toBe(2)
+      expect(d1.prepareCount).toBeLessThanOrEqual(64)
+      expect(database.prepare('SELECT COUNT(*) AS count FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\'').get('post-one').count).toBe(1024)
+      expect(database.prepare('SELECT COUNT(*) AS count FROM blog_post_gallery_refs WHERE post_id = ? AND scope = \'draft\'').get('post-one').count).toBe(1)
     }
     finally {
       database.close()

@@ -810,8 +810,18 @@ async function draftInputFromBody(db: D1Like, actor: string, body: Record<string
   }
   if (blogByteLength(contentHtml) > BLOG_MAX_CANONICAL_BYTES)
     throw createError({ statusCode: 400, statusMessage: 'Rendered content is too large' })
+  const assets = new Map<string, { id: string, kind: HtmlMediaKind, created_by: string, status: string }>()
+  if (assetIds.length) {
+    const assetResult = await db.prepare(`
+      SELECT a.id, a.kind, a.created_by, a.status
+      FROM blog_assets AS a
+      INNER JOIN json_each(?) AS requested ON requested.value = a.id
+    `).bind(JSON.stringify(assetIds)).all()
+    for (const asset of rows<{ id: string, kind: HtmlMediaKind, created_by: string, status: string }>(assetResult))
+      assets.set(asset.id, asset)
+  }
   for (const assetId of assetIds) {
-    const asset = await first<{ id: string, kind: HtmlMediaKind, created_by: string, status: string }>(await db.prepare('SELECT id, kind, created_by, status FROM blog_assets WHERE id = ?').bind(assetId).all())
+    const asset = assets.get(assetId)
     const requirements = htmlMediaRequirements.get(assetId) ?? []
     const validHtmlKind = !requirements.length || requirements.every(kinds => asset ? kinds.includes(asset.kind) : false)
     const validCoverKind = coverAssetId !== assetId || asset?.kind === 'image' || asset?.kind === 'gif'
@@ -1035,10 +1045,14 @@ export async function createBlogPost(event: H3Event, body: Record<string, unknow
   ]
   for (const tagId of initial.tag_ids)
     statements.push(db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) VALUES (?, ?)').bind(id, tagId))
-  for (const assetId of initial.asset_ids)
-    statements.push(db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) VALUES (?, ?, \'draft\')').bind(id, assetId))
-  for (const manifestId of initial.gallery_manifest_ids)
-    statements.push(db.prepare('INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope) VALUES (?, ?, \'draft\')').bind(id, manifestId))
+  statements.push(db.prepare(`
+    INSERT INTO blog_post_asset_refs (post_id, asset_id, scope)
+    SELECT ?, value, 'draft' FROM json_each(?)
+  `).bind(id, JSON.stringify(initial.asset_ids)))
+  statements.push(db.prepare(`
+    INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+    SELECT ?, value, 'draft' FROM json_each(?)
+  `).bind(id, JSON.stringify(initial.gallery_manifest_ids)))
   statements.push(auditInsert(db, actor, 'post.create', id, { status: 'draft', version: 1 }))
   try {
     await db.batch(statements)
@@ -1059,6 +1073,13 @@ async function currentDraftVersion(db: D1Like, postId: string): Promise<number> 
   const row = first<{ version: number }>(await db.prepare('SELECT version FROM blog_post_drafts WHERE post_id = ?').bind(postId).all())
   if (!row)
     throw createError({ statusCode: 404, statusMessage: 'Blog post draft not found' })
+  return Number(row.version)
+}
+
+async function currentGalleryVersion(db: D1Like, actor: string, galleryId: string): Promise<number> {
+  const row = first<{ version: number }>(await db.prepare('SELECT version FROM blog_galleries WHERE id = ? AND created_by = ?').bind(galleryId, actor).all())
+  if (!row)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery not found' })
   return Number(row.version)
 }
 
@@ -1088,9 +1109,17 @@ export async function updateBlogDraft(event: H3Event, postId: string): Promise<B
     db.prepare('DELETE FROM blog_post_draft_tags WHERE post_id = ? AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...next.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
-    ...next.asset_ids.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    db.prepare(`
+      INSERT INTO blog_post_asset_refs (post_id, asset_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(next.asset_ids), postId, token),
     db.prepare('DELETE FROM blog_post_gallery_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
-    ...next.gallery_manifest_ids.map(manifestId => db.prepare('INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, manifestId, postId, token)),
+    db.prepare(`
+      INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(next.gallery_manifest_ids), postId, token),
     auditInsert(db, actor, 'post.draft', postId, { status: 'draft', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)', [postId, token, nextVersion]),
   ]
   const result = await db.batch(statements)
@@ -1156,9 +1185,17 @@ export async function restoreBlogPost(event: H3Event, postId: string): Promise<B
     db.prepare('DELETE FROM blog_post_draft_tags WHERE post_id = ? AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
     ...restored.tag_ids.map(tagId => db.prepare('INSERT INTO blog_post_draft_tags (post_id, tag_id) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, tagId, postId, token)),
     db.prepare('DELETE FROM blog_post_asset_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
-    ...restored.asset_ids.map(assetId => db.prepare('INSERT INTO blog_post_asset_refs (post_id, asset_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, assetId, postId, token)),
+    db.prepare(`
+      INSERT INTO blog_post_asset_refs (post_id, asset_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(restored.asset_ids), postId, token),
     db.prepare('DELETE FROM blog_post_gallery_refs WHERE post_id = ? AND scope = \'draft\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
-    ...restored.gallery_manifest_ids.map(manifestId => db.prepare('INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope) SELECT ?, ?, \'draft\' WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, manifestId, postId, token)),
+    db.prepare(`
+      INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+      SELECT ?, value, 'draft' FROM json_each(?)
+      WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
+    `).bind(postId, JSON.stringify(restored.gallery_manifest_ids), postId, token),
     db.prepare(`INSERT INTO blog_post_revisions (post_id, version, kind, snapshot_json, created_at, created_by)
       SELECT ?, ?, 'restore', ?, ?, ?
       WHERE EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ? AND version = ?)`)
@@ -2027,7 +2064,7 @@ async function saveGalleryPage(event: H3Event, id: string, pageId: string | null
   ]
   const result = await db.batch(statements)
   if (changes(result[0]) !== 1)
-    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentDraftVersion(db, id) } })
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
   return galleryDetail(db, actor, id)
 }
 
@@ -2061,7 +2098,7 @@ export async function deleteBlogGalleryPage(event: H3Event, id: string, pageId: 
     auditInsert(db, actor, 'gallery.page.delete', id, { status: 'deleted', version: nextVersion }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
   ])
   if (changes(result[1]) !== 1)
-    throw createError({ statusCode: 404, statusMessage: 'Gallery page not found' })
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
   return galleryDetail(db, actor, id)
 }
 
@@ -2116,7 +2153,7 @@ export async function finalizeBlogGallery(event: H3Event, id: string) {
   ]
   const result = await db.batch(statements)
   if (changes(result[0]) !== 1)
-    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentDraftVersion(db, id) } })
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
   return galleryDetail(db, actor, id)
 }
 
@@ -2138,7 +2175,7 @@ export async function reopenBlogGalleryDraft(event: H3Event, id: string) {
     auditInsert(db, actor, 'gallery.reopen', id, { status: 'draft', version: nextVersion, manifest_id: current.finalized_manifest_id }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
   ])
   if (changes(result[0]) !== 1)
-    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentDraftVersion(db, id) } })
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
   return galleryDetail(db, actor, id)
 }
 
@@ -2199,7 +2236,7 @@ export async function reorderBlogGalleryPages(event: H3Event, id: string) {
     auditInsert(db, actor, 'gallery.pages.reorder', id, { status: 'draft', version: nextVersion, page_ids: orderedIds }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
   ])
   if (changes(result[0]) !== 1)
-    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentDraftVersion(db, id) } })
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
   return galleryDetail(db, actor, id)
 }
 
@@ -2220,7 +2257,7 @@ export async function deleteBlogGallery(event: H3Event, id: string) {
     auditInsert(db, actor, 'gallery.delete', id, { status: 'deleted', version }, 'changes() = 1'),
   ])
   if (changes(result[0]) !== 1)
-    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed' })
+    throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
   return { deleted: true }
 }
 
@@ -2286,7 +2323,7 @@ export async function initBlogGallerySource(event: H3Event, id: string) {
       auditInsert(db, actor, 'gallery.source.init', id, { status: 'active', version: nextVersion, source_id: sourceId }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
     ])
     if (changes(result[0]) !== 1 || changes(result[1]) !== 1)
-      throw createError({ statusCode: 409, statusMessage: 'Gallery has changed' })
+      throw createError({ statusCode: 409, statusMessage: 'Gallery has changed', data: { current_version: await currentGalleryVersion(db, actor, id) } })
   }
   catch (error) {
     await multipart.abort().catch(() => undefined)
