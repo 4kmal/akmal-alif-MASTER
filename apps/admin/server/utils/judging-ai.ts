@@ -1,7 +1,6 @@
 import type { H3Event } from 'h3'
 import type { AiChatResponse } from './ai'
 import { CRITERIA, FEATURES, TEAM_IDS } from '../../shared/judging/model.mjs'
-import { parseAiResponse } from './ai'
 import {
   changes,
   first,
@@ -155,9 +154,16 @@ function objectKeysShape(value: Record<string, unknown> | null): string {
   return keys.length > 12 ? `${shown},...` : (shown || 'none')
 }
 
+function arrayShape(value: unknown): string {
+  if (!Array.isArray(value))
+    return valueShape(value)
+  const first = objectValue(value[0])
+  return `array:${value.length}${first ? ` firstKeys=${objectKeysShape(first)}` : ''}`
+}
+
 function batchResponseShape(value: Record<string, unknown>): string {
   const status = typeof value.status === 'string' ? value.status.slice(0, 32) : valueShape(value.status)
-  return `keys=${objectKeysShape(value)} status=${status} responses=${valueShape(value.responses)}`
+  return `keys=${objectKeysShape(value)} status=${status} responses=${arrayShape(value.responses)} results=${arrayShape(value.results)}`
 }
 
 function aiResponseShape(value: unknown): string {
@@ -637,7 +643,9 @@ function batchPollResult(value: unknown): BatchPollResult {
     throw new Error('Workers AI batch response was not an object')
   if (object.status === 'queued' || object.status === 'running')
     return { pending: true }
-  const responses = object.responses
+  const responses = Array.isArray(object.responses) && object.responses.length > 0
+    ? object.responses
+    : object.results
   if (!Array.isArray(responses) || responses.length === 0) {
     throw new Error(typeof object.error === 'string'
       ? `Workers AI batch failed: ${object.error.slice(0, 512)} (${batchResponseShape(object)})`
@@ -645,7 +653,7 @@ function batchPollResult(value: unknown): BatchPollResult {
   }
   const firstResponse = objectValue(responses[0])
   if (!firstResponse)
-    throw new Error('Workers AI batch returned an invalid response entry')
+    throw new Error(`Workers AI batch returned an invalid response entry (${batchResponseShape(object)})`)
   if (firstResponse.success === false) {
     const error = objectValue(firstResponse.error)
     throw new Error(typeof error?.message === 'string' ? `Workers AI batch failed: ${error.message}` : 'Workers AI batch response failed')
@@ -659,13 +667,50 @@ function batchPollResult(value: unknown): BatchPollResult {
   return { pending: false, response: resultObject as AiChatResponse }
 }
 
-function parseJudgingAiResponse(response: AiChatResponse): Record<string, unknown> {
-  let draft: Record<string, unknown>
+function strictJsonObject(content: string): Record<string, unknown> {
+  let payload = content.trim()
+  if (payload.startsWith('<think>')) {
+    const end = payload.indexOf('</think>', '<think>'.length)
+    if (end < 0)
+      throw new Error('AI draft response has an unclosed think block')
+    payload = payload.slice(end + '</think>'.length).trim()
+  }
+  if (payload.startsWith('```')) {
+    const lines = payload.split('\n')
+    const marker = lines[0]?.trim().toLowerCase()
+    const closing = lines[lines.length - 1]?.trim()
+    if ((marker !== '```' && marker !== '```json') || lines.length < 3 || closing !== '```')
+      throw new Error('AI draft response has an invalid JSON code fence')
+    payload = lines.slice(1, -1).join('\n').trim()
+  }
+  let parsed: unknown
   try {
-    draft = parseAiResponse(response)
+    parsed = JSON.parse(payload)
   }
   catch {
-    throw new Error(`AI draft response could not be parsed (${aiResponseShape(response)})`)
+    throw new Error('AI draft response was not strict JSON')
+  }
+  const object = objectValue(parsed)
+  if (!object)
+    throw new Error('AI draft response was not a JSON object')
+  return object
+}
+
+function parseJudgingAiResponse(response: AiChatResponse): Record<string, unknown> {
+  const responseObject = objectValue(response)
+  const choices = Array.isArray(responseObject?.choices) ? responseObject.choices : []
+  const content = responseObject?.response ?? objectValue(choices[0])?.message
+  const message = objectValue(content)
+  const text = typeof content === 'string' ? content : message?.content
+  if (typeof text !== 'string')
+    throw new Error(`AI draft response content was not a string (${aiResponseShape(response)})`)
+  let draft: Record<string, unknown>
+  try {
+    draft = strictJsonObject(text)
+  }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : 'AI draft response could not be parsed'
+    throw new Error(`${reason} (${aiResponseShape(response)})`)
   }
   if (!Object.keys(draft).length)
     throw new Error(`AI draft response yielded an empty JSON object (${aiResponseShape(response)})`)

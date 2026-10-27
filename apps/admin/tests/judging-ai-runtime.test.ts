@@ -422,7 +422,7 @@ describe('judging AI runtime contract', () => {
     expect(row.error).toContain('responses=undefined')
   })
 
-  it('reports bounded response shape when model output is not a JSON object', async () => {
+  it('accepts the results batch envelope and a closed think block with a JSON code fence', async () => {
     const evidenceId = 'a'.repeat(32)
     insertAssessmentFixture(database, evidenceId)
     const input = await buildAssessmentInput(database as never, '01-console')
@@ -436,8 +436,43 @@ describe('judging AI runtime contract', () => {
             DB: database,
             AI: {
               run: async () => ({
-                status: 'completed',
-                responses: [{ success: true, result: { response: '<think>private reasoning</think>\\n{"features":[]}' } }],
+                results: [{
+                  id: 0,
+                  success: true,
+                  result: { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` },
+                }],
+                usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+              }),
+            },
+          },
+        },
+      },
+    } as unknown as H3Event
+
+    await runJudgingJob(event, jobId)
+
+    const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string }
+    expect(row.status).toBe('completed')
+    expect(row.error).toBeNull()
+    const draft = database.db.prepare('SELECT draft_json FROM judging_jobs WHERE id = ?').get(jobId) as { draft_json: string }
+    expect(JSON.parse(draft.draft_json).features).toHaveLength(6)
+  })
+
+  it('rejects an unclosed think block without exposing its content', async () => {
+    const evidenceId = 'a'.repeat(32)
+    insertAssessmentFixture(database, evidenceId)
+    const input = await buildAssessmentInput(database as never, '01-console')
+    const jobId = '99999999-9999-4999-8999-999999999999'
+    insertJob(database, jobId, '01-console', input.inputHash)
+    setPendingJob(database, jobId, input.inputHash)
+    const event = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: {
+              run: async () => ({
+                results: [{ success: true, result: { response: '<think>private reasoning' } }],
               }),
             },
           },
@@ -449,9 +484,7 @@ describe('judging AI runtime contract', () => {
 
     const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string }
     expect(row.status).toBe('failed')
-    expect(row.error).toContain('AI draft response yielded an empty JSON object')
-    expect(row.error).toContain('responseKeys=response')
-    expect(row.error).toContain(':think')
+    expect(row.error).toContain('AI draft response has an unclosed think block')
     expect(row.error).not.toContain('private reasoning')
   })
 
