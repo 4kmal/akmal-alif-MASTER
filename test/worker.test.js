@@ -166,6 +166,17 @@ function environment(db, assets = new FakeAssets(), media = new FakeR2()) {
   return { DB: db, ASSETS: assets, MEDIA: media };
 }
 
+function klDate(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function blogFixtures() {
   return {
     categories: [
@@ -603,10 +614,12 @@ test('published gallery manifests expose safe asset URLs only for current publis
   `);
   asset.run('gallery-image', 'page.webp', 'image/webp', 4, 'blog/originals/gallery-image/page.webp', 'blog/originals/gallery-image/page.webp', 'owner', now);
   asset.run('gallery-thumb', 'thumb.webp', 'image/webp', 4, 'blog/originals/gallery-thumb/thumb.webp', 'blog/originals/gallery-thumb/thumb.webp', 'owner', now);
+  asset.run('gallery-hidden-image', 'hidden.webp', 'image/webp', 4, 'blog/originals/gallery-hidden-image/hidden.webp', 'blog/originals/gallery-hidden-image/hidden.webp', 'owner', now);
+  asset.run('gallery-hidden-thumb', 'hidden-thumb.webp', 'image/webp', 4, 'blog/originals/gallery-hidden-thumb/hidden-thumb.webp', 'blog/originals/gallery-hidden-thumb/hidden-thumb.webp', 'owner', now);
   database.prepare(`
     INSERT INTO blog_galleries
       (id, post_id, version, status, title, page_count, finalized_manifest_id, created_by, updated_by, created_at, updated_at)
-    VALUES ('gallery-one', 'post-new-post', 2, 'finalized', 'Anthem', 1, 'manifest-one', 'owner', 'owner', ?, ?)
+    VALUES ('gallery-one', 'post-new-post', 2, 'finalized', 'Anthem', 2, 'manifest-one', 'owner', 'owner', ?, ?)
   `).run(now, now);
   database.prepare(`
     INSERT INTO blog_gallery_manifests (id, gallery_id, revision, title, created_by, created_at)
@@ -621,6 +634,11 @@ test('published gallery manifests expose safe asset URLs only for current publis
     INSERT INTO blog_gallery_manifest_pages
       (manifest_id, page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id)
     VALUES ('manifest-one', 'page-one', 1, 'Cover', 'Caption', 0, 1, 'gallery-image', 'gallery-thumb')
+  `).run();
+  database.prepare(`
+    INSERT INTO blog_gallery_manifest_pages
+      (manifest_id, page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id)
+    VALUES ('manifest-one', 'page-hidden', 2, 'Hidden page', 'Private caption', 1, 0, 'gallery-hidden-image', 'gallery-hidden-thumb')
   `).run();
   database.prepare(`
     INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
@@ -651,6 +669,16 @@ test('published gallery manifests expose safe asset URLs only for current publis
       contentType: 'image/webp',
       etag: 'thumb',
     },
+    'blog/originals/gallery-hidden-image/hidden.webp': {
+      bytes: new TextEncoder().encode('hidden'),
+      contentType: 'image/webp',
+      etag: 'hidden',
+    },
+    'blog/originals/gallery-hidden-thumb/hidden-thumb.webp': {
+      bytes: new TextEncoder().encode('hidden thumb'),
+      contentType: 'image/webp',
+      etag: 'hidden-thumb',
+    },
   });
   const env = environment(d1, new FakeAssets(), media);
 
@@ -680,6 +708,10 @@ test('published gallery manifests expose safe asset URLs only for current publis
   const original = await workerFetch(request('/media/blog/originals/gallery-image/page.webp'), env);
   assert.equal(original.status, 404);
   assert.equal(media.calls.length, 0);
+
+  const hiddenMedia = await workerFetch(request('/media/blog/gallery-hidden-image'), env);
+  assert.equal(hiddenMedia.status, 404);
+  assert.equal(media.calls.some(call => call.key === 'blog/originals/gallery-hidden-image/hidden.webp'), false);
 
   const future = await workerFetch(request('/api/blog/galleries/manifest-future'), env);
   assert.equal(future.status, 404);
@@ -747,4 +779,36 @@ test('public calendar returns bounded KL ranges without private metadata', async
   assert.equal((await workerFetch(request('/api/calendar?start=2025-06-01&end=2026-07-01'), env)).status, 400);
   assert.equal((await workerFetch(request('/api/calendar?start=2025-06-01'), env)).status, 400);
   assert.equal((await workerFetch(request('/api/calendar?start=2025-02-31&end=2025-03-02'), env)).status, 400);
+});
+
+test('public calendar keeps upcoming all-day and busy timed events independent of selected range', async (t) => {
+  const { database, d1 } = createDatabase();
+  t.after(() => database.close());
+  const allDayStart = klDate(new Date(Date.now() + 86_400_000));
+  const allDayEnd = klDate(new Date(Date.now() + 172_800_000));
+  const timedStart = new Date(Date.now() + 3_600_000).toISOString();
+  const timedEnd = new Date(Date.now() + 7_200_000).toISOString();
+  database.prepare(`
+    INSERT INTO calendar_events
+      (id, title, kind, timezone, all_day, start_date, end_date, visibility, participation, blocks_availability, created_by, updated_by)
+    VALUES ('upcoming-day', 'Public release day', 'event', 'Asia/Kuala_Lumpur', 1, ?, ?, 'public', 'confirmed', 1, 'owner', 'owner')
+  `).run(allDayStart, allDayEnd);
+  database.prepare(`
+    INSERT INTO calendar_events
+      (id, title, kind, timezone, all_day, starts_at, ends_at, visibility, participation, blocks_availability, created_by, updated_by)
+    VALUES ('upcoming-busy', 'Private timed meeting', 'meeting', 'Asia/Kuala_Lumpur', 0, ?, ?, 'busy', 'planning', 1, 'owner', 'owner')
+  `).run(timedStart, timedEnd);
+  const response = await workerFetch(request('/api/calendar?start=2025-06-01&end=2025-06-02'), environment(d1));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.events, []);
+  assert.equal(body.upcoming.length, 2);
+  const publicUpcoming = body.upcoming.find((item) => item.id === 'upcoming-day');
+  assert.ok(publicUpcoming);
+  assert.equal(publicUpcoming.all_day, true);
+  const busyUpcoming = body.upcoming.find((item) => item.title === 'Busy');
+  assert.ok(busyUpcoming);
+  assert.equal(busyUpcoming.starts_at, timedStart);
+  assert.equal(Object.hasOwn(busyUpcoming, 'id'), false);
+  assert.equal(Object.hasOwn(busyUpcoming, 'title') && busyUpcoming.title === 'Private timed meeting', false);
 });

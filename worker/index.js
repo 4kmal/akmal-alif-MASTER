@@ -796,7 +796,8 @@ async function handlePublishedBlogGallery(request, env, manifestId) {
   }
   const pages = await env.DB.prepare(`
     SELECT page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id
-    FROM blog_gallery_manifest_pages WHERE manifest_id = ? ORDER BY sort_order ASC, original_page ASC
+    FROM blog_gallery_manifest_pages WHERE manifest_id = ? AND visible = 1
+    ORDER BY sort_order ASC, original_page ASC
   `).bind(manifestId).all();
   return jsonResponse({
     id: manifest.id,

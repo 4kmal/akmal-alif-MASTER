@@ -168,8 +168,8 @@ function eventResponse(row: Record<string, unknown>) {
   }
 }
 
-async function calendarRow(db: D1Like, id: string): Promise<Record<string, unknown>> {
-  const row = first<Record<string, unknown>>(await db.prepare('SELECT id, version, title, description, location, url, kind, timezone, all_day, start_date, end_date, starts_at, ends_at, visibility, participation, blocks_availability, archived_at, created_by, updated_by, created_at, updated_at FROM calendar_events WHERE id = ? LIMIT 1').bind(id).all())
+async function calendarRow(db: D1Like, actor: string, id: string): Promise<Record<string, unknown>> {
+  const row = first<Record<string, unknown>>(await db.prepare('SELECT id, version, title, description, location, url, kind, timezone, all_day, start_date, end_date, starts_at, ends_at, visibility, participation, blocks_availability, archived_at, created_by, updated_by, created_at, updated_at FROM calendar_events WHERE id = ? AND created_by = ? LIMIT 1').bind(id, actor).all())
   if (!row)
     throw createError({ statusCode: 404, statusMessage: 'Calendar event not found' })
   return row
@@ -218,8 +218,8 @@ export async function listCalendarEvents(event: H3Event) {
 }
 
 export async function getCalendarEvent(event: H3Event, id: string) {
-  actorFor(event)
-  return { event: eventResponse(await calendarRow(dbFor(event), id)) }
+  const actor = actorFor(event)
+  return { event: eventResponse(await calendarRow(dbFor(event), actor, id)) }
 }
 
 export async function createCalendarEvent(event: H3Event) {
@@ -236,15 +236,13 @@ export async function createCalendarEvent(event: H3Event) {
     `).bind(id, input.title, input.description, input.location, input.url, input.kind, input.timezone, input.allDay ? 1 : 0, input.startDate, input.endDate, input.startsAt, input.endsAt, input.visibility, input.participation, input.blocksAvailability ? 1 : 0, actor, actor, now, now),
     audit(db, actor, 'calendar.create', id, { status: 'created', version: 1 }),
   ])
-  return { event: eventResponse(await calendarRow(db, id)) }
+  return { event: eventResponse(await calendarRow(db, actor, id)) }
 }
 
 export async function updateCalendarEvent(event: H3Event, id: string) {
   const actor = actorFor(event)
   const db = dbFor(event)
-  const current = await calendarRow(db, id)
-  if (current.created_by !== actor)
-    throw createError({ statusCode: 404, statusMessage: 'Calendar event not found' })
+  const current = await calendarRow(db, actor, id)
   const body = await parseJsonBody<Record<string, unknown>>(event)
   const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
   if (Number(current.version) !== version)
@@ -260,16 +258,14 @@ export async function updateCalendarEvent(event: H3Event, id: string) {
     audit(db, actor, 'calendar.update', id, { status: 'updated', version: nextVersion }, 'changes() = 1'),
   ])
   if (changes(result[0]) !== 1)
-    throw createError({ statusCode: 409, statusMessage: 'Calendar event has changed', data: { current_version: Number((await calendarRow(db, id)).version) } })
-  return { event: eventResponse(await calendarRow(db, id)) }
+    throw createError({ statusCode: 409, statusMessage: 'Calendar event has changed', data: { current_version: Number((await calendarRow(db, actor, id)).version) } })
+  return { event: eventResponse(await calendarRow(db, actor, id)) }
 }
 
 export async function updateCalendarEventStatus(event: H3Event, id: string) {
   const actor = actorFor(event)
   const db = dbFor(event)
-  const current = await calendarRow(db, id)
-  if (current.created_by !== actor)
-    throw createError({ statusCode: 404, statusMessage: 'Calendar event not found' })
+  const current = await calendarRow(db, actor, id)
   const body = await parseJsonBody<Record<string, unknown>>(event)
   const version = integerField(body.version, 'version', 1, Number.MAX_SAFE_INTEGER)
   const action = body.status === 'archive' || body.archived === true ? 'archive' : body.status === 'restore' || body.archived === false ? 'restore' : null
@@ -286,7 +282,7 @@ export async function updateCalendarEventStatus(event: H3Event, id: string) {
   ])
   if (changes(result[0]) !== 1)
     throw createError({ statusCode: 409, statusMessage: 'Calendar event has changed' })
-  return { event: eventResponse(await calendarRow(db, id)) }
+  return { event: eventResponse(await calendarRow(db, actor, id)) }
 }
 
 function settingsResponse(row: Record<string, unknown>) {

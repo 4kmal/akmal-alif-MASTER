@@ -14,6 +14,7 @@ import {
 } from '../server/services/blog-studio'
 import {
   createCalendarEvent,
+  getCalendarEvent,
   listCalendarEvents,
   updateCalendarEvent,
   updateCalendarEventStatus,
@@ -358,6 +359,32 @@ describe('calendar owner contract', () => {
       expect(archived.event.archived).toBe(true)
       await expect(updateCalendarEventStatus(eventFor(d1, bucket, 'POST', '/calendar/events/id/status', { version: 1, status: 'restore' }), created.event.id)).rejects.toMatchObject({ statusCode: 409 })
       expect(database.prepare('SELECT COUNT(*) AS count FROM calendar_audit_records').get().count).toBe(auditsBeforeArchive + 1)
+    }
+    finally {
+      database.close()
+    }
+  })
+
+  it('does not let another owner read or mutate a calendar event', async () => {
+    const { database, d1, bucket } = fixture()
+    try {
+      const created = await createCalendarEvent(eventFor(d1, bucket, 'POST', '/calendar/events', {
+        title: 'Owner event',
+        kind: 'event',
+        all_day: true,
+        start_date: '2026-10-28',
+        end_date: '2026-10-29',
+      }))
+      const intruder = eventFor(d1, bucket, 'GET', '/calendar/events')
+      intruder.context.userID = 'intruder'
+      await expect(getCalendarEvent(intruder, created.event.id)).rejects.toMatchObject({ statusCode: 404 })
+      const update = eventFor(d1, bucket, 'PUT', `/calendar/events/${created.event.id}`, { version: 1, title: 'Stolen', kind: 'event', all_day: true, start_date: '2026-10-28', end_date: '2026-10-29' })
+      update.context.userID = 'intruder'
+      await expect(updateCalendarEvent(update, created.event.id)).rejects.toMatchObject({ statusCode: 404 })
+      const status = eventFor(d1, bucket, 'POST', `/calendar/events/${created.event.id}/status`, { version: 1, status: 'archive' })
+      status.context.userID = 'intruder'
+      await expect(updateCalendarEventStatus(status, created.event.id)).rejects.toMatchObject({ statusCode: 404 })
+      expect(database.prepare('SELECT archived_at FROM calendar_events WHERE id = ?').get(created.event.id).archived_at).toBeNull()
     }
     finally {
       database.close()

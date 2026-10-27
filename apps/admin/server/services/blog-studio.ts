@@ -490,6 +490,7 @@ async function galleryManifestAssetIds(db: D1Like, actor: string, manifestIds: s
     INNER JOIN blog_galleries AS g ON g.id = m.gallery_id
     INNER JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = m.id
     WHERE m.id IN (${placeholders})
+      AND mp.visible = 1
       AND g.created_by = ?${postClause}
   `).bind(...params).all()
   const ids: string[] = []
@@ -1246,13 +1247,13 @@ export async function publishBlogPost(event: H3Event, postId: string): Promise<B
       SELECT ?, mp.asset_id, 'published'
       FROM blog_post_gallery_refs AS gr
       INNER JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = gr.manifest_id
-      WHERE gr.post_id = ? AND gr.scope = 'draft'
+      WHERE gr.post_id = ? AND gr.scope = 'draft' AND mp.visible = 1
         AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
       UNION
       SELECT ?, mp.thumbnail_asset_id, 'published'
       FROM blog_post_gallery_refs AS gr
       INNER JOIN blog_gallery_manifest_pages AS mp ON mp.manifest_id = gr.manifest_id
-      WHERE gr.post_id = ? AND gr.scope = 'draft'
+      WHERE gr.post_id = ? AND gr.scope = 'draft' AND mp.visible = 1
         AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)
     `).bind(postId, postId, postId, token, postId, postId, postId, token, postId, postId, postId, token),
     db.prepare('DELETE FROM blog_post_gallery_refs WHERE post_id = ? AND scope = \'published\' AND EXISTS (SELECT 1 FROM blog_post_drafts WHERE post_id = ? AND mutation_token = ?)').bind(postId, postId, token),
