@@ -24,6 +24,8 @@ const MAX_DRAFT_TEXT = 8_000
 const MAX_JOB_ERROR = 1_000
 const MAX_ACTIVE_JUDGING_JOBS = 9
 const JUDGING_JOB_LEASE_MS = 2 * 60 * 1_000
+const JUDGING_BATCH_LEASE_MS = 15 * 60 * 1_000
+const BATCH_PROVIDER = 'workers-ai-batch'
 
 const AI_RESPONSE_EXAMPLE = JSON.stringify({
   strengths: [{
@@ -112,6 +114,18 @@ interface AssessmentInput {
   inputHash: string
 }
 
+interface PendingBatchState {
+  provider: typeof BATCH_PROVIDER
+  requestId: string | null
+  inputHash: string
+  submittedAt: string
+}
+
+interface BatchPollResult {
+  pending: boolean
+  response?: AiChatResponse
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value))
     return `[${value.map(stableJson).join(',')}]`
@@ -137,6 +151,24 @@ function parseDraft(value: string | null): Record<string, unknown> | null {
   }
 }
 
+function parsePendingBatch(value: string | null): PendingBatchState | null {
+  const parsed = parseDraft(value)
+  if (parsed?.provider !== BATCH_PROVIDER || typeof parsed.inputHash !== 'string' || typeof parsed.submittedAt !== 'string')
+    return null
+  if (parsed.requestId !== null && typeof parsed.requestId !== 'string')
+    return null
+  return {
+    provider: BATCH_PROVIDER,
+    requestId: parsed.requestId as string | null,
+    inputHash: parsed.inputHash,
+    submittedAt: parsed.submittedAt,
+  }
+}
+
+function pendingBatchJson(inputHash: string, submittedAt: string, requestId: string | null): string {
+  return JSON.stringify({ provider: BATCH_PROVIDER, requestId, inputHash, submittedAt })
+}
+
 function toJob(row: JudgingJobRow, stale?: boolean): JudgingJob {
   return {
     id: row.id,
@@ -147,7 +179,7 @@ function toJob(row: JudgingJobRow, stale?: boolean): JudgingJob {
     deviceId: row.device_id,
     inputHash: row.input_hash,
     progress: Number(row.progress ?? 0),
-    draft: parseDraft(row.draft_json),
+    draft: row.status === 'completed' ? parseDraft(row.draft_json) : null,
     error: row.error,
     attempts: Number(row.attempts ?? 0),
     cancelRequested: Number(row.cancel_requested ?? 0) === 1,
@@ -554,6 +586,39 @@ function modelMessages(input: AssessmentInput): { messages: { role: 'system' | '
   }
 }
 
+function batchRequestId(value: unknown): string {
+  const object = objectValue(value)
+  const requestId = object?.request_id
+  if (typeof requestId !== 'string' || !requestId.trim() || requestId.length > 512)
+    throw new Error('Workers AI batch submission did not return a request_id')
+  return requestId
+}
+
+function batchPollResult(value: unknown): BatchPollResult {
+  const object = objectValue(value)
+  if (!object)
+    throw new Error('Workers AI batch response was not an object')
+  if (object.status === 'queued' || object.status === 'running')
+    return { pending: true }
+  const responses = object.responses
+  if (!Array.isArray(responses) || responses.length === 0)
+    throw new Error(typeof object.error === 'string' ? `Workers AI batch failed: ${object.error}` : 'Workers AI batch returned no responses')
+  const firstResponse = objectValue(responses[0])
+  if (!firstResponse)
+    throw new Error('Workers AI batch returned an invalid response entry')
+  if (firstResponse.success === false) {
+    const error = objectValue(firstResponse.error)
+    throw new Error(typeof error?.message === 'string' ? `Workers AI batch failed: ${error.message}` : 'Workers AI batch response failed')
+  }
+  const result = firstResponse.result
+  if (typeof result === 'string')
+    return { pending: false, response: { response: result } }
+  const resultObject = objectValue(result)
+  if (!resultObject)
+    throw new Error('Workers AI batch returned an invalid result')
+  return { pending: false, response: resultObject as AiChatResponse }
+}
+
 async function updateJob(db: D1Database, id: string, values: Record<string, unknown>): Promise<void> {
   const entries = Object.entries(values)
   if (!entries.length)
@@ -572,7 +637,7 @@ async function assessmentRecord(db: D1Database, job: JudgingJobRow, data: Record
 
 async function markFailure(db: D1Database, job: JudgingJobRow, message: string): Promise<void> {
   const now = new Date().toISOString()
-  await updateJob(db, job.id, { status: 'failed', progress: 100, error: message.slice(0, MAX_JOB_ERROR), updated_at: now, finished_at: now })
+  await updateJob(db, job.id, { status: 'failed', progress: 100, draft_json: null, error: message.slice(0, MAX_JOB_ERROR), updated_at: now, finished_at: now })
   try {
     await assessmentRecord(db, job, { status: 'failed', error: message.slice(0, MAX_JOB_ERROR), finishedAt: now }, `assessment:${job.id}`)
   }
@@ -583,7 +648,7 @@ async function markFailure(db: D1Database, job: JudgingJobRow, message: string):
 
 async function markCancelled(db: D1Database, job: JudgingJobRow): Promise<void> {
   const now = new Date().toISOString()
-  await updateJob(db, job.id, { status: 'cancelled', progress: 100, updated_at: now, finished_at: now, cancel_requested: 1 })
+  await updateJob(db, job.id, { status: 'cancelled', progress: 100, draft_json: null, updated_at: now, finished_at: now, cancel_requested: 1 })
   try {
     await assessmentRecord(db, job, { status: 'cancelled', finishedAt: now }, `assessment:${job.id}`)
   }
@@ -601,13 +666,17 @@ async function recoverStaleJudgingJobs(db: D1Database): Promise<void> {
   const now = new Date()
   const nowIso = now.toISOString()
   const cutoff = new Date(now.getTime() - JUDGING_JOB_LEASE_MS).toISOString()
+  const batchCutoff = new Date(now.getTime() - JUDGING_BATCH_LEASE_MS).toISOString()
   await db.prepare(`UPDATE judging_jobs
     SET status = CASE WHEN cancel_requested = 1 THEN 'cancelled' ELSE 'failed' END,
         progress = 100,
+        draft_json = NULL,
         error = CASE WHEN cancel_requested = 1 THEN error ELSE 'Judging job lease expired; retry is required' END,
         updated_at = ?,
         finished_at = ?
-    WHERE event_id = ? AND status = 'running' AND updated_at < ?`).bind(nowIso, nowIso, 'sdc-2026', cutoff).run()
+    WHERE event_id = ? AND status = 'running'
+      AND ((json_extract(draft_json, '$.provider') = ? AND updated_at < ?)
+        OR (COALESCE(json_extract(draft_json, '$.provider'), '') <> ? AND updated_at < ?))`).bind(nowIso, nowIso, 'sdc-2026', BATCH_PROVIDER, batchCutoff, BATCH_PROVIDER, cutoff).run()
 }
 
 async function scheduleNext(event: H3Event): Promise<void> {
@@ -616,19 +685,38 @@ async function scheduleNext(event: H3Event): Promise<void> {
     return
   eventContext.judgingNextScheduled = true
   const db = requireJudgingDb(event)
-  const row = first<{ id: string }>(await db.prepare('SELECT id FROM judging_jobs WHERE event_id = ? AND status = \'queued\' ORDER BY created_at ASC LIMIT 1').bind('sdc-2026').all())
+  const row = first<{ id: string }>(await db.prepare(`SELECT id FROM judging_jobs
+    WHERE event_id = ? AND (status = 'queued' OR (status = 'running' AND json_extract(draft_json, '$.provider') = ? AND json_extract(draft_json, '$.requestId') IS NOT NULL))
+    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at ASC LIMIT 1`).bind('sdc-2026', BATCH_PROVIDER).all())
   if (row)
     await scheduleJudgingJob(event, row.id)
 }
 
 export async function runJudgingJob(event: H3Event, jobId: string): Promise<void> {
   const db = requireJudgingDb(event)
-  const now = new Date().toISOString()
-  const claimed = await db.prepare(`UPDATE judging_jobs SET status = 'running', progress = 5, attempts = attempts + 1, started_at = ?, updated_at = ?, error = NULL
-    WHERE event_id = ? AND id = ? AND status = 'queued'
-      AND NOT EXISTS (SELECT 1 FROM judging_jobs WHERE event_id = ? AND status = 'running')`).bind(now, now, 'sdc-2026', jobId, 'sdc-2026').run()
-  if (changes(claimed) !== 1)
+  const candidate = first<JudgingJobRow>(await db.prepare('SELECT * FROM judging_jobs WHERE event_id = ? AND id = ? LIMIT 1').bind('sdc-2026', jobId).all())
+  if (!candidate)
     return
+  const candidatePending = parsePendingBatch(candidate.draft_json)
+  const nowMillis = Date.now()
+  const previousMillis = Date.parse(candidate.updated_at)
+  const claimAt = new Date(Math.max(nowMillis, Number.isFinite(previousMillis) ? previousMillis + 1 : nowMillis)).toISOString()
+  if (candidate.status === 'queued') {
+    const claimed = await db.prepare(`UPDATE judging_jobs SET status = 'running', progress = 5, attempts = attempts + 1, started_at = COALESCE(started_at, ?), updated_at = ?, error = NULL
+      WHERE event_id = ? AND id = ? AND status = 'queued'
+        AND NOT EXISTS (SELECT 1 FROM judging_jobs WHERE event_id = ? AND status = 'running')`).bind(claimAt, claimAt, 'sdc-2026', jobId, 'sdc-2026').run()
+    if (changes(claimed) !== 1)
+      return
+  }
+  else if (candidate.status === 'running' && candidatePending) {
+    const claimed = await db.prepare(`UPDATE judging_jobs SET updated_at = ?
+      WHERE event_id = ? AND id = ? AND status = 'running' AND updated_at = ?`).bind(claimAt, 'sdc-2026', jobId, candidate.updated_at).run()
+    if (changes(claimed) !== 1)
+      return
+  }
+  else {
+    return
+  }
   const job = first<JudgingJobRow>(await db.prepare('SELECT * FROM judging_jobs WHERE event_id = ? AND id = ? LIMIT 1').bind('sdc-2026', jobId).all())
   if (!job)
     return
@@ -638,7 +726,12 @@ export async function runJudgingJob(event: H3Event, jobId: string): Promise<void
       return
     }
     const input = await buildAssessmentInput(db, job.team_id)
-    if (input.inputHash !== job.input_hash) {
+    const pending = parsePendingBatch(job.draft_json)
+    if (pending && (pending.inputHash !== job.input_hash || input.inputHash !== job.input_hash || input.missing.length)) {
+      await markFailure(db, job, 'Judging input changed while the AI batch was pending; retry is required')
+      return
+    }
+    if (!pending && input.inputHash !== job.input_hash) {
       await updateJob(db, job.id, { input_hash: input.inputHash, updated_at: new Date().toISOString() })
       job.input_hash = input.inputHash
     }
@@ -651,32 +744,97 @@ export async function runJudgingJob(event: H3Event, jobId: string): Promise<void
       await markFailure(db, job, 'Workers AI binding is not configured')
       return
     }
-    await updateJob(db, job.id, { progress: 25, updated_at: new Date().toISOString() })
     const prepared = modelMessages(input)
-    let response: AiChatResponse
-    try {
-      const aiRunner = AI as unknown as { run: (model: string, payload: unknown) => Promise<AiChatResponse> }
-      response = await aiRunner.run(AI_MODEL, {
-        messages: prepared.messages,
-        max_tokens: 4_096,
-        temperature: 0.2,
-        chat_template_kwargs: { enable_thinking: false, thinking: false },
+    const aiRunner = AI as unknown as { run: (model: string, payload: unknown, options?: unknown) => Promise<unknown> }
+    let response: AiChatResponse | null = null
+    if (pending) {
+      if (!pending.requestId) {
+        await markFailure(db, job, 'Workers AI batch submission was interrupted before its request_id was saved; retry is required')
+        return
+      }
+      let providerResponse: unknown
+      try {
+        providerResponse = await aiRunner.run(AI_MODEL, { request_id: pending.requestId })
+      }
+      catch (error) {
+        throw new Error(`Workers AI batch poll failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (await cancelled(db, job.id)) {
+        await markCancelled(db, job)
+        return
+      }
+      const result = batchPollResult(providerResponse)
+      if (result.pending) {
+        const polledAt = new Date().toISOString()
+        const refreshed = await db.prepare(`UPDATE judging_jobs SET progress = ?, updated_at = ?
+          WHERE event_id = ? AND id = ? AND status = 'running' AND cancel_requested = 0 AND updated_at = ?`).bind(Math.max(Number(job.progress ?? 25), 50), polledAt, 'sdc-2026', job.id, job.updated_at).run()
+        if (changes(refreshed) !== 1 && await cancelled(db, job.id))
+          await markCancelled(db, job)
+        return
+      }
+      response = result.response ?? null
+    }
+    else {
+      const submittedAt = new Date().toISOString()
+      await updateJob(db, job.id, {
+        progress: 25,
+        draft_json: pendingBatchJson(job.input_hash, submittedAt, null),
+        updated_at: submittedAt,
       })
+      let providerResponse: unknown
+      try {
+        providerResponse = await aiRunner.run(AI_MODEL, {
+          requests: [{
+            messages: prepared.messages,
+            max_tokens: 4_096,
+            temperature: 0.2,
+            chat_template_kwargs: { enable_thinking: false, thinking: false },
+          }],
+        }, { queueRequest: true })
+      }
+      catch (error) {
+        throw new Error(`Workers AI batch submission failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      const requestId = batchRequestId(providerResponse)
+      const persistedAt = new Date().toISOString()
+      const persisted = await db.prepare(`UPDATE judging_jobs SET progress = ?, draft_json = ?, updated_at = ?
+        WHERE event_id = ? AND id = ? AND status = 'running' AND cancel_requested = 0 AND updated_at = ?`).bind(50, pendingBatchJson(job.input_hash, submittedAt, requestId), persistedAt, 'sdc-2026', job.id, submittedAt).run()
+      if (changes(persisted) !== 1) {
+        if (await cancelled(db, job.id))
+          await markCancelled(db, job)
+        return
+      }
+      if (await cancelled(db, job.id)) {
+        await markCancelled(db, job)
+        return
+      }
+      return
     }
-    catch (error) {
-      throw new Error(`Workers AI request failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    if (!response)
+      throw new Error('Workers AI batch returned no completed response')
     if (await cancelled(db, job.id)) {
       await markCancelled(db, job)
       return
     }
-    await updateJob(db, job.id, { progress: 75, updated_at: new Date().toISOString() })
+    const progressAt = new Date().toISOString()
+    const progress = await db.prepare(`UPDATE judging_jobs SET progress = 75, updated_at = ?
+      WHERE event_id = ? AND id = ? AND status = 'running' AND cancel_requested = 0 AND updated_at = ?`).bind(progressAt, 'sdc-2026', job.id, job.updated_at).run()
+    if (changes(progress) !== 1)
+      return
     const draft = validateAiDraft(parseAiResponse(response), prepared.evidence, new Map(prepared.evidence.map(evidence => [String(evidence.id), evidence])))
     const finishedAt = new Date().toISOString()
-    await updateJob(db, job.id, { status: 'completed', progress: 100, draft_json: JSON.stringify(draft), updated_at: finishedAt, finished_at: finishedAt })
+    const completed = await db.prepare(`UPDATE judging_jobs
+      SET status = 'completed', progress = 100, draft_json = ?, error = NULL, updated_at = ?, finished_at = ?
+      WHERE event_id = ? AND id = ? AND status = 'running' AND cancel_requested = 0 AND updated_at = ?`).bind(JSON.stringify(draft), finishedAt, finishedAt, 'sdc-2026', job.id, progressAt).run()
+    if (changes(completed) !== 1)
+      return
     await assessmentRecord(db, job, { status: 'completed', draft, finishedAt }, `assessment:${job.id}`)
   }
   catch (error) {
+    if (await cancelled(db, job.id)) {
+      await markCancelled(db, job)
+      return
+    }
     await markFailure(db, job, error instanceof Error ? error.message : String(error))
   }
 }
@@ -745,9 +903,9 @@ export async function queueJudgingAssessment(event: H3Event, teamValue: unknown,
 export async function listJudgingJobs(event: H3Event, deviceId?: string): Promise<JudgingJob[]> {
   const db = requireJudgingDb(event)
   await recoverStaleJudgingJobs(db)
-  const result = deviceId
-    ? await db.prepare('SELECT * FROM judging_jobs WHERE event_id = ? AND device_id = ? ORDER BY created_at DESC LIMIT 100').bind('sdc-2026', deviceId).all()
-    : await db.prepare('SELECT * FROM judging_jobs WHERE event_id = ? ORDER BY created_at DESC LIMIT 100').bind('sdc-2026').all()
+  // Paired devices are scoped to the event, so they must also see owner-created jobs.
+  void deviceId
+  const result = await db.prepare('SELECT * FROM judging_jobs WHERE event_id = ? ORDER BY created_at DESC LIMIT 100').bind('sdc-2026').all()
   const jobs = rows<JudgingJobRow>(result).map(row => toJob(row))
   const currentHashes = new Map<string, string>()
   for (const job of jobs.filter(job => job.status === 'completed')) {
