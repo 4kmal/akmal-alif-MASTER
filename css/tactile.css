@@ -1071,8 +1071,12 @@ body.tracklist-drawer-open {
   top: calc(var(--portfolio-header-clearance) + 16px);
   align-self: start;
   overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--portfolio-border-strong) transparent;
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+.calendar-rail::-webkit-scrollbar {
+  display: none;
 }
 
 .calendar-rail:focus-visible,
@@ -1091,6 +1095,14 @@ body.tracklist-drawer-open {
   max-height: none;
   margin: 0 !important;
   overflow: visible;
+}
+
+#calendar-rail #clock-widget-panel,
+#calendar-rail .clock-widget-panel {
+  position: static !important;
+  top: auto !important;
+  max-height: none !important;
+  transform: none !important;
 }
 
 .calendar-rail .clock-widget-panel {
@@ -1203,8 +1215,7 @@ body.tracklist-drawer-open {
 
 .calendar-month-toggle,
 .calendar-nav-button,
-.calendar-today-button,
-.calendar-participation-button {
+.calendar-today-button {
   min-height: 36px;
   box-sizing: border-box;
   border: 1px solid var(--portfolio-border);
@@ -1227,8 +1238,7 @@ body.tracklist-drawer-open {
 
 .calendar-month-toggle:hover,
 .calendar-nav-button:hover,
-.calendar-today-button:hover,
-.calendar-participation-button:hover {
+.calendar-today-button:hover {
   border-color: var(--portfolio-border-strong);
   background: var(--portfolio-surface-muted);
 }
@@ -1236,7 +1246,6 @@ body.tracklist-drawer-open {
 .calendar-month-toggle:focus-visible,
 .calendar-nav-button:focus-visible,
 .calendar-today-button:focus-visible,
-.calendar-participation-button:focus-visible,
 .calendar-day:focus-visible {
   outline: 2px solid var(--portfolio-focus);
   outline-offset: 2px;
@@ -1338,24 +1347,36 @@ body.tracklist-drawer-open {
   font-size: 0.78rem;
 }
 
-.calendar-event-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 4px;
-}
-
-.calendar-participation-button {
-  min-height: 30px;
-  padding: 3px 7px;
+.calendar-event-description {
+  margin: 4px 0 0;
   color: var(--portfolio-text-muted);
-  font-size: 0.62rem;
+  font-size: 0.7rem;
+  line-height: 1.45;
 }
 
-.calendar-participation-button.is-selected {
+.calendar-event-link,
+.calendar-event-metadata,
+.calendar-event-participation,
+.calendar-nonblocking {
+  color: var(--portfolio-text-muted);
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+
+.calendar-event-link {
+  width: fit-content;
+  color: var(--portfolio-focus);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.16em;
+}
+
+.calendar-nonblocking {
+  width: fit-content;
+  padding: 2px 5px;
   color: var(--portfolio-accent-ink);
   background: var(--portfolio-accent);
-  border-color: var(--portfolio-accent);
+  border-radius: 5px;
+  font-weight: 700;
 }
 
 .calendar-empty,

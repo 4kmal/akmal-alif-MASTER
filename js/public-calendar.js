@@ -1,7 +1,8 @@
 const TIME_ZONE = 'Asia/Kuala_Lumpur';
 const CALENDAR_ENDPOINT = '/api/calendar';
 const REFRESH_INTERVAL_MS = 60_000;
-const MAX_RANGE_DAYS = 62;
+const MAX_RANGE_DAYS = 366;
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const controllers = new WeakMap();
 
@@ -18,6 +19,22 @@ function getDateParts(value, timeZone = TIME_ZONE) {
   }, {});
 }
 
+function formatUtcDateOnly(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function parseStrictDateOnly(value) {
+  const match = String(value ?? '').trim().match(DATE_ONLY_RE);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date;
+}
+
 export function formatCalendarDateOnly(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     const parts = getDateParts(value);
@@ -26,18 +43,20 @@ export function formatCalendarDateOnly(value) {
 
   const match = String(value ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return '';
+  const date = parseStrictDateOnly(`${match[1]}-${match[2]}-${match[3]}`);
+  return date ? formatUtcDateOnly(date) : '';
+}
 
-  const candidate = `${match[1]}-${match[2]}-${match[3]}`;
-  const parsed = new Date(`${candidate}T00:00:00Z`);
-  return Number.isNaN(parsed.getTime()) ? '' : candidate;
+export function parseCalendarDateOnly(value) {
+  return parseStrictDateOnly(value);
 }
 
 function parseDateOnly(value) {
-  const date = formatCalendarDateOnly(value);
-  if (!date) return null;
-
-  const parsed = new Date(`${date}T00:00:00Z`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+  }
+  return parseStrictDateOnly(value);
 }
 
 function addDays(date, amount) {
@@ -68,11 +87,11 @@ export function getCalendarMonthRange(value) {
   const gridEnd = addDays(lastDay, 6 - mondayIndex(lastDay) + 1);
 
   return {
-    monthStart: formatCalendarDateOnly(monthStart),
-    monthEnd: formatCalendarDateOnly(addDays(monthEnd, -1)),
-    start: formatCalendarDateOnly(gridStart),
-    end: formatCalendarDateOnly(gridEnd),
-    endExclusive: formatCalendarDateOnly(gridEnd),
+    monthStart: formatUtcDateOnly(monthStart),
+    monthEnd: formatUtcDateOnly(lastDay),
+    start: formatUtcDateOnly(gridStart),
+    end: formatUtcDateOnly(gridEnd),
+    endExclusive: formatUtcDateOnly(gridEnd),
   };
 }
 
@@ -83,124 +102,126 @@ function clampRange(start, end) {
 
   const maximumEnd = addDays(startDate, MAX_RANGE_DAYS);
   return {
-    start: formatCalendarDateOnly(startDate),
-    end: formatCalendarDateOnly(endDate > maximumEnd ? maximumEnd : endDate),
+    start: formatUtcDateOnly(startDate),
+    end: formatUtcDateOnly(endDate > maximumEnd ? maximumEnd : endDate),
   };
 }
 
-function getEventField(event, names) {
-  for (const name of names) {
-    if (event && event[name] !== undefined && event[name] !== null && event[name] !== '') return event[name];
-  }
-  return null;
-}
-
-function isPrivateEvent(event) {
-  const visibility = String(getEventField(event, ['visibility', 'access', 'audience', 'scope']) ?? '').trim().toLowerCase();
-  const status = String(event?.status ?? '').trim().toLowerCase();
-  return event?.private === true
-    || event?.is_private === true
-    || ['private', 'internal', 'secret', 'draft'].includes(visibility)
-    || ['private', 'internal', 'secret', 'draft'].includes(status);
-}
-
-function isBusyEvent(event) {
-  const visibility = String(getEventField(event, ['visibility', 'access', 'audience', 'scope']) ?? '').trim().toLowerCase();
-  const status = String(event?.status ?? '').trim().toLowerCase();
-  return event?.busy === true
-    || event?.is_busy === true
-    || visibility === 'busy'
-    || status === 'busy';
-}
-
-function isAllDayEvent(event, startValue) {
-  const kind = String(getEventField(event, ['kind', 'event_type', 'date_type']) ?? '').trim().toLowerCase();
-  return event?.all_day === true
-    || event?.allDay === true
-    || event?.dateonly === true
-    || event?.date_only === true
-    || ['all-day', 'allday', 'dateonly', 'date-only'].includes(kind)
-    || /^\d{4}-\d{2}-\d{2}$/.test(String(startValue ?? '').trim());
-}
-
 function normaliseDateTime(value) {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const source = String(value ?? '').trim();
   if (!source) return null;
-
   const parsed = new Date(source);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function safeEventUrl(value) {
+  const source = String(value ?? '').trim();
+  if (!source) return '';
+  try {
+    const parsed = new URL(source, 'https://akmalalif.com');
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+    return source;
+  } catch {
+    return '';
+  }
+}
+
+function sortId(event) {
+  return String(event?.id ?? '');
+}
+
 export function normaliseCalendarEvent(rawEvent) {
-  if (!rawEvent || typeof rawEvent !== 'object' || isPrivateEvent(rawEvent)) return null;
+  if (!rawEvent || typeof rawEvent !== 'object' || rawEvent.archived_at) return null;
 
-  const startValue = getEventField(rawEvent, ['start', 'start_at', 'start_utc', 'starts_at', 'date', 'start_date']);
-  const endValue = getEventField(rawEvent, ['end', 'end_at', 'end_utc', 'ends_at', 'end_date']);
-  if (!startValue) return null;
-
-  const allDay = isAllDayEvent(rawEvent, startValue);
+  const visibility = String(rawEvent.visibility ?? '').trim().toLowerCase();
+  if (!['public', 'busy'].includes(visibility)) return null;
+  const busy = visibility === 'busy';
+  const timezone = String(rawEvent.timezone ?? TIME_ZONE).trim() || TIME_ZONE;
+  const allDay = rawEvent.all_day === true;
   let start;
   let end;
   let sortValue;
 
   if (allDay) {
-    start = formatCalendarDateOnly(startValue);
-    if (!start) return null;
-    end = formatCalendarDateOnly(endValue) || formatCalendarDateOnly(addDays(parseDateOnly(start), 1));
-    if (!end || end <= start) end = formatCalendarDateOnly(addDays(parseDateOnly(start), 1));
-    sortValue = parseDateOnly(start)?.getTime() ?? Number.POSITIVE_INFINITY;
-  } else {
-    const startDate = normaliseDateTime(startValue);
-    const endDate = normaliseDateTime(endValue) || (startDate ? new Date(startDate.getTime() + 60 * 60 * 1000) : null);
+    const startDate = parseStrictDateOnly(rawEvent.start_date);
+    const endDate = parseStrictDateOnly(rawEvent.end_date);
     if (!startDate || !endDate || endDate <= startDate) return null;
-    start = startDate.toISOString();
-    end = endDate.toISOString();
+    start = formatUtcDateOnly(startDate);
+    end = formatUtcDateOnly(endDate);
     sortValue = startDate.getTime();
+  } else {
+    const startsAt = normaliseDateTime(rawEvent.starts_at);
+    const endsAt = normaliseDateTime(rawEvent.ends_at);
+    if (!startsAt || !endsAt || endsAt <= startsAt) return null;
+    start = startsAt.toISOString();
+    end = endsAt.toISOString();
+    sortValue = startsAt.getTime();
   }
 
-  const busy = isBusyEvent(rawEvent);
-  const id = String(getEventField(rawEvent, ['id', 'event_id', 'uid']) ?? `${start}:${end}`).trim();
-  const title = busy ? 'Busy' : String(getEventField(rawEvent, ['title', 'name', 'summary']) ?? 'Public event').trim() || 'Public event';
-
-  return {
-    id,
-    title,
+  const event = {
+    title: busy ? 'Busy' : String(rawEvent.title ?? '').trim() || 'Public event',
     start,
     end,
     allDay,
     busy,
-    online: Boolean(rawEvent.online || rawEvent.is_online || rawEvent.is_virtual || rawEvent.online_url || rawEvent.meeting_url || rawEvent.location_type === 'online'),
-    onlineUrl: busy ? '' : String(getEventField(rawEvent, ['online_url', 'meeting_url', 'url']) ?? '').trim(),
-    location: busy ? '' : String(getEventField(rawEvent, ['location', 'venue']) ?? '').trim(),
-    description: busy ? '' : String(rawEvent.description ?? '').trim(),
+    visibility,
+    timezone,
     sortValue,
-    source: rawEvent,
   };
+
+  if (allDay) {
+    event.startDate = start;
+    event.endDate = end;
+  } else {
+    event.startsAt = start;
+    event.endsAt = end;
+  }
+
+  if (!busy) {
+    const id = String(rawEvent.id ?? '').trim();
+    if (id) event.id = id;
+    event.description = String(rawEvent.description ?? '').trim();
+    event.location = String(rawEvent.location ?? '').trim();
+    event.url = safeEventUrl(rawEvent.url);
+    event.kind = String(rawEvent.kind ?? '').trim();
+    event.participation = String(rawEvent.participation ?? '').trim().toLowerCase();
+    event.blocksAvailability = rawEvent.blocks_availability === true;
+  }
+
+  return event;
+}
+
+function sortEvents(events) {
+  return events
+    .filter(Boolean)
+    .sort((left, right) => left.sortValue - right.sortValue || sortId(left).localeCompare(sortId(right)));
 }
 
 export function normaliseCalendarEvents(payload) {
-  const values = Array.isArray(payload)
-    ? payload
-    : Array.isArray(payload?.events)
-      ? payload.events
-      : Array.isArray(payload?.data)
-        ? payload.data
-        : [];
-
-  return values
-    .map(normaliseCalendarEvent)
-    .filter(Boolean)
-    .sort((left, right) => left.sortValue - right.sortValue || left.id.localeCompare(right.id));
+  const values = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
+  return sortEvents(values.map(normaliseCalendarEvent));
 }
 
-function eventOverlapsRange(event, start, end) {
+export function normaliseCalendarUpcoming(payload) {
+  const values = Array.isArray(payload?.upcoming) ? payload.upcoming : [];
+  return sortEvents(values.map(normaliseCalendarEvent)).slice(0, 3);
+}
+
+function malaysiaBoundaryMs(dateOnly) {
+  const date = parseStrictDateOnly(dateOnly);
+  return date ? Date.parse(`${formatUtcDateOnly(date)}T00:00:00+08:00`) : Number.NaN;
+}
+
+export function eventOverlapsRange(event, start, end) {
+  if (!event || !parseStrictDateOnly(start) || !parseStrictDateOnly(end)) return false;
   if (event.allDay) return event.start < end && event.end > start;
   const startTime = Date.parse(event.start);
   const endTime = Date.parse(event.end);
-  const rangeStart = Date.parse(`${start}T00:00:00Z`);
-  const rangeEnd = Date.parse(`${end}T00:00:00Z`);
-  return startTime < rangeEnd && endTime > rangeStart;
+  const rangeStart = malaysiaBoundaryMs(start);
+  const rangeEnd = malaysiaBoundaryMs(end);
+  return Number.isFinite(startTime) && Number.isFinite(endTime)
+    && Number.isFinite(rangeStart) && Number.isFinite(rangeEnd)
+    && startTime < rangeEnd && endTime > rangeStart;
 }
 
 function eventDateOnly(event) {
@@ -213,7 +234,7 @@ function formatMonthLabel(month) {
 }
 
 function formatLongDate(dateOnly) {
-  const date = parseDateOnly(dateOnly);
+  const date = parseStrictDateOnly(dateOnly);
   return date
     ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date)
     : dateOnly;
@@ -221,16 +242,23 @@ function formatLongDate(dateOnly) {
 
 function formatEventTime(event) {
   if (event.allDay) return 'All day';
-
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: TIME_ZONE,
-  });
-  const start = formatter.format(new Date(event.start));
-  const end = formatter.format(new Date(event.end));
-  return `${start}–${end}`;
+  let formatter;
+  try {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: event.timezone || TIME_ZONE,
+    });
+  } catch {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: TIME_ZONE,
+    });
+  }
+  return `${formatter.format(new Date(event.start))}–${formatter.format(new Date(event.end))}`;
 }
 
 function createElement(documentRef, tag, className, text) {
@@ -245,11 +273,13 @@ function isVisible(documentRef) {
 }
 
 function getTodayDateOnly(nowRef) {
-  return formatCalendarDateOnly(new Date(nowRef()));
+  const value = nowRef instanceof Function ? nowRef() : nowRef;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? formatUtcDateOnly(new Date()) : formatCalendarDateOnly(date);
 }
 
 function monthFromKey(key) {
-  const match = String(key ?? '').match(/^(\d{4})-(\d{2})$/);
+  const match = String(key ?? '').match(/^(\d{4})-(0[1-9]|1[0-2])$/);
   return match ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)) : startOfMonth(new Date());
 }
 
@@ -263,35 +293,27 @@ function shiftMonth(date, amount) {
 
 function buildRangeForMonth(month) {
   const range = getCalendarMonthRange(month);
-  const bounded = clampRange(range.start, range.end);
-  return bounded || { start: range.start, end: range.end };
+  return clampRange(range.start, range.end) || { start: range.start, end: range.end };
 }
 
-function getPayloadEvents(payload) {
-  return normaliseCalendarEvents(payload);
+function readDayEvents(events, dateOnly) {
+  const date = parseStrictDateOnly(dateOnly);
+  if (!date) return [];
+  const nextDate = formatUtcDateOnly(addDays(date, 1));
+  return events.filter((event) => eventOverlapsRange(event, dateOnly, nextDate));
 }
 
-function readMonthEvents(events, dateOnly) {
-  return events
-    .filter((event) => eventOverlapsRange(event, dateOnly, formatCalendarDateOnly(addDays(parseDateOnly(dateOnly), 1))))
-    .sort((left, right) => left.sortValue - right.sortValue);
-}
-
-function getUpcomingEvents(events, nowRef) {
-  const now = Number(nowRef());
-  return events
-    .filter((event) => event.allDay
-      ? event.end >= getTodayDateOnly(nowRef)
-      : Date.parse(event.end) > now)
-    .slice(0, 3);
+function isUpcoming(event, nowRef) {
+  const today = getTodayDateOnly(nowRef);
+  if (event.allDay) return event.end > today;
+  return Date.parse(event.end) > Number(nowRef());
 }
 
 function renderUpcoming(state) {
   const list = state.elements.upcoming;
   if (!list) return;
   list.replaceChildren();
-
-  const upcoming = getUpcomingEvents(state.events, state.nowRef);
+  const upcoming = (state.upcoming ?? []).filter((event) => isUpcoming(event, state.nowRef)).slice(0, 3);
   if (!upcoming.length) {
     list.appendChild(createElement(state.documentRef, 'li', 'calendar-empty', 'No public events'));
     return;
@@ -299,24 +321,47 @@ function renderUpcoming(state) {
 
   upcoming.forEach((event) => {
     const item = createElement(state.documentRef, 'li', 'calendar-upcoming-item');
-    const date = createElement(state.documentRef, 'span', 'calendar-upcoming-date', formatLongDate(eventDateOnly(event)));
-    const title = createElement(state.documentRef, 'span', 'calendar-upcoming-title', event.title);
-    const time = createElement(state.documentRef, 'span', 'calendar-upcoming-time', formatEventTime(event));
-    item.append(date, title, time);
-    if (event.online) item.appendChild(createElement(state.documentRef, 'span', 'calendar-event-badge', 'Online'));
+    item.append(
+      createElement(state.documentRef, 'span', 'calendar-upcoming-date', formatLongDate(eventDateOnly(event))),
+      createElement(state.documentRef, 'span', 'calendar-upcoming-title', event.title),
+      createElement(state.documentRef, 'span', 'calendar-upcoming-time', formatEventTime(event)),
+    );
     list.appendChild(item);
   });
+}
+
+function appendEventDetails(state, item, event) {
+  if (event.busy) return;
+  if (event.description) item.appendChild(createElement(state.documentRef, 'p', 'calendar-event-description', event.description));
+  if (event.location) item.appendChild(createElement(state.documentRef, 'span', 'calendar-agenda-event-location', event.location));
+  if (event.url) {
+    const link = createElement(state.documentRef, 'a', 'calendar-event-link', 'Open event details');
+    link.href = event.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    item.appendChild(link);
+  }
+  if (event.kind || event.timezone) {
+    const metadata = [event.kind, event.timezone].filter(Boolean).join(' · ');
+    item.appendChild(createElement(state.documentRef, 'span', 'calendar-event-metadata', metadata));
+  }
+  if (event.participation) {
+    item.appendChild(createElement(state.documentRef, 'span', 'calendar-event-participation', `Your participation: ${event.participation}`));
+  }
+  item.appendChild(createElement(
+    state.documentRef,
+    'span',
+    `calendar-nonblocking${event.blocksAvailability ? '' : ' is-nonblocking'}`,
+    event.blocksAvailability ? 'Blocks calendar' : 'Nonblocking',
+  ));
 }
 
 function renderAgenda(state) {
   const agenda = state.elements.agenda;
   if (!agenda) return;
   agenda.replaceChildren();
-
-  const heading = createElement(state.documentRef, 'h4', 'calendar-agenda-title', formatLongDate(state.selectedDate));
-  agenda.appendChild(heading);
-  const events = readMonthEvents(state.events, state.selectedDate);
-
+  agenda.appendChild(createElement(state.documentRef, 'h4', 'calendar-agenda-title', formatLongDate(state.selectedDate)));
+  const events = readDayEvents(state.events, state.selectedDate);
   if (!events.length) {
     agenda.appendChild(createElement(state.documentRef, 'p', 'calendar-empty', 'No public events'));
     return;
@@ -325,24 +370,11 @@ function renderAgenda(state) {
   const list = createElement(state.documentRef, 'ol', 'calendar-agenda-list');
   events.forEach((event) => {
     const item = createElement(state.documentRef, 'li', 'calendar-agenda-item');
-    const title = createElement(state.documentRef, 'strong', 'calendar-agenda-event-title', event.title);
-    const time = createElement(state.documentRef, 'span', 'calendar-agenda-event-time', formatEventTime(event));
-    item.append(title, time);
-    if (event.location) item.appendChild(createElement(state.documentRef, 'span', 'calendar-agenda-event-location', event.location));
-    if (event.online) item.appendChild(createElement(state.documentRef, 'span', 'calendar-event-badge', 'Online'));
-
-    const actions = createElement(state.documentRef, 'div', 'calendar-event-actions');
-    ['Interested', 'Planning'].forEach((label) => {
-      const button = createElement(state.documentRef, 'button', 'calendar-participation-button', label);
-      button.type = 'button';
-      button.dataset.calendarParticipation = label.toLowerCase();
-      button.dataset.calendarEventId = event.id;
-      const selected = state.participation.get(event.id) === label.toLowerCase();
-      button.setAttribute('aria-pressed', String(selected));
-      if (selected) button.classList.add('is-selected');
-      actions.appendChild(button);
-    });
-    item.appendChild(actions);
+    item.append(
+      createElement(state.documentRef, 'strong', 'calendar-agenda-event-title', event.title),
+      createElement(state.documentRef, 'span', 'calendar-agenda-event-time', formatEventTime(event)),
+    );
+    appendEventDetails(state, item, event);
     list.appendChild(item);
   });
   agenda.appendChild(list);
@@ -352,33 +384,30 @@ function renderGrid(state) {
   const grid = state.elements.grid;
   if (!grid) return;
   grid.replaceChildren();
-
   const month = monthFromKey(state.monthKey);
   const range = getCalendarMonthRange(month);
-  const first = parseDateOnly(range.start);
-  const last = parseDateOnly(range.end);
+  const first = parseStrictDateOnly(range.start);
+  const last = parseStrictDateOnly(range.end);
+  if (!first || !last) return;
   const today = getTodayDateOnly(state.nowRef);
-  const selected = state.selectedDate;
-  const date = new Date(first.getTime());
+  const date = first;
 
   while (date < last) {
-    const dateOnly = formatCalendarDateOnly(date);
+    const dateOnly = formatUtcDateOnly(date);
     const button = createElement(state.documentRef, 'button', 'calendar-day', String(date.getUTCDate()));
     button.type = 'button';
     button.setAttribute('role', 'gridcell');
     button.dataset.calendarDate = dateOnly;
     button.setAttribute('aria-label', formatLongDate(dateOnly));
-    button.setAttribute('aria-selected', String(dateOnly === selected));
-    button.tabIndex = dateOnly === selected ? 0 : -1;
+    button.setAttribute('aria-selected', String(dateOnly === state.selectedDate));
+    button.tabIndex = dateOnly === state.selectedDate ? 0 : -1;
     if (date.getUTCMonth() !== month.getUTCMonth()) button.classList.add('is-outside-month');
     if (dateOnly === today) button.classList.add('is-today');
-    if (dateOnly === selected) button.classList.add('is-selected');
-
-    const events = readMonthEvents(state.events, dateOnly);
+    if (dateOnly === state.selectedDate) button.classList.add('is-selected');
+    const events = readDayEvents(state.events, dateOnly);
     if (events.length) {
-      const marker = createElement(state.documentRef, 'span', 'calendar-day-marker');
+      const marker = createElement(state.documentRef, 'span', 'calendar-day-marker', events.length > 1 ? String(Math.min(events.length, 9)) : '•');
       marker.setAttribute('aria-hidden', 'true');
-      marker.textContent = events.length > 1 ? `${Math.min(events.length, 9)}` : '•';
       button.appendChild(marker);
     }
     grid.appendChild(button);
@@ -393,38 +422,53 @@ function render(state) {
   renderUpcoming(state);
   renderGrid(state);
   renderAgenda(state);
-
   if (state.elements.status) {
     state.elements.status.textContent = state.error
-      ? 'Calendar is temporarily unavailable. Showing the last public schedule.'
+        ? (state.events.length || (state.upcoming ?? []).length
+        ? 'Calendar is temporarily unavailable. Showing the last public schedule.'
+        : 'Calendar is temporarily unavailable.')
       : state.loading
         ? 'Updating public events…'
         : '';
   }
 }
 
+function applyCachedMonth(state, key) {
+  const cached = state.cache.get(key);
+  state.events = cached?.events ? cached.events.slice() : [];
+  state.error = cached?.error ?? null;
+  if (cached?.upcoming) state.upcoming = cached.upcoming.slice();
+}
+
 function setMonth(state, month) {
   state.monthKey = monthKey(startOfMonth(month));
   const monthDate = monthFromKey(state.monthKey);
   const selected = parseDateOnly(state.selectedDate);
-  const selectedMonth = selected ? monthKey(selected) : '';
-  if (selectedMonth !== state.monthKey) state.selectedDate = formatCalendarDateOnly(monthDate);
+  if (!selected || monthKey(selected) !== state.monthKey) state.selectedDate = formatUtcDateOnly(monthDate);
+  applyCachedMonth(state, state.monthKey);
   render(state);
   void refresh(state, true);
 }
 
 function selectDate(state, dateOnly) {
-  if (!parseDateOnly(dateOnly)) return;
-  state.selectedDate = dateOnly;
-  const selectedMonth = monthKey(parseDateOnly(dateOnly));
-  if (selectedMonth !== state.monthKey) state.monthKey = selectedMonth;
+  const parsed = parseStrictDateOnly(dateOnly);
+  if (!parsed) return;
+  const nextMonthKey = monthKey(parsed);
+  state.selectedDate = formatUtcDateOnly(parsed);
+  if (nextMonthKey !== state.monthKey) {
+    state.monthKey = nextMonthKey;
+    applyCachedMonth(state, nextMonthKey);
+    render(state);
+    void refresh(state, true);
+    return;
+  }
   render(state);
 }
 
 function handleGridKeydown(state, event) {
   const current = event.target?.closest?.('[data-calendar-date]');
   if (!current) return;
-  const currentDate = parseDateOnly(current.dataset.calendarDate);
+  const currentDate = parseStrictDateOnly(current.dataset.calendarDate);
   if (!currentDate) return;
 
   let nextDate = null;
@@ -441,55 +485,46 @@ function handleGridKeydown(state, event) {
     return;
   }
   if (!nextDate) return;
-
   event.preventDefault();
-  const nextDateOnly = formatCalendarDateOnly(nextDate);
+  const nextDateOnly = formatUtcDateOnly(nextDate);
   selectDate(state, nextDateOnly);
-  state.elements.grid?.querySelector(`[data-calendar-date="${nextDateOnly}"]`)?.focus();
+  state.elements.grid?.querySelector?.(`[data-calendar-date="${nextDateOnly}"]`)?.focus?.();
+}
+
+function listen(state, target, type, handler, options) {
+  if (!target?.addEventListener) return;
+  target.addEventListener(type, handler, options);
+  state.cleanup.push(() => target.removeEventListener(type, handler, options));
 }
 
 function bind(state) {
   const { documentRef, elements } = state;
-  elements.grid?.addEventListener('click', (event) => {
+  listen(state, elements.grid, 'click', (event) => {
     const day = event.target?.closest?.('[data-calendar-date]');
     if (day) selectDate(state, day.dataset.calendarDate);
   });
-  elements.grid?.addEventListener('keydown', (event) => handleGridKeydown(state, event));
-  elements.prev?.addEventListener('click', () => setMonth(state, shiftMonth(monthFromKey(state.monthKey), -1)));
-  elements.next?.addEventListener('click', () => setMonth(state, shiftMonth(monthFromKey(state.monthKey), 1)));
-  elements.today?.addEventListener('click', () => {
+  listen(state, elements.grid, 'keydown', (event) => handleGridKeydown(state, event));
+  listen(state, elements.prev, 'click', () => setMonth(state, shiftMonth(monthFromKey(state.monthKey), -1)));
+  listen(state, elements.next, 'click', () => setMonth(state, shiftMonth(monthFromKey(state.monthKey), 1)));
+  listen(state, elements.today, 'click', () => {
     const today = getTodayDateOnly(state.nowRef);
     state.selectedDate = today;
-    setMonth(state, startOfMonth(parseDateOnly(today)));
+    setMonth(state, startOfMonth(parseStrictDateOnly(today)));
   });
-  elements.monthToggle?.addEventListener('click', () => {
+  listen(state, elements.monthToggle, 'click', () => {
     const expanded = elements.monthToggle.getAttribute('aria-expanded') === 'true';
     elements.monthToggle.setAttribute('aria-expanded', String(!expanded));
-    elements.monthToggle.querySelector('span:last-child').textContent = expanded ? '+' : '−';
+    const icon = elements.monthToggle.querySelector?.('span:last-child');
+    if (icon) icon.textContent = expanded ? '+' : '−';
     if (elements.monthPanel) elements.monthPanel.hidden = expanded;
-  });
-  elements.agenda?.addEventListener('click', (event) => {
-    const button = event.target?.closest?.('[data-calendar-participation]');
-    if (!button) return;
-    const id = button.dataset.calendarEventId;
-    const value = button.dataset.calendarParticipation;
-    const current = state.participation.get(id);
-    if (current === value) state.participation.delete(id);
-    else state.participation.set(id, value);
-    render(state);
-    if (state.elements.status) state.elements.status.textContent = current === value
-      ? 'Participation preference cleared on this device.'
-      : `Marked ${value} for this event on this device.`;
   });
 
   const refreshOnVisible = () => {
-    if (isVisible(documentRef)) void refresh(state, false);
+    if (isVisible(documentRef)) void refresh(state, true);
   };
-  documentRef?.addEventListener?.('visibilitychange', refreshOnVisible);
-  state.cleanup.push(() => documentRef?.removeEventListener?.('visibilitychange', refreshOnVisible));
+  listen(state, documentRef, 'visibilitychange', refreshOnVisible);
   const windowRef = documentRef?.defaultView ?? globalThis.window;
-  windowRef?.addEventListener?.('online', refreshOnVisible);
-  state.cleanup.push(() => windowRef?.removeEventListener?.('online', refreshOnVisible));
+  listen(state, windowRef, 'online', refreshOnVisible);
 }
 
 function elementsFor(root, documentRef) {
@@ -508,52 +543,92 @@ function elementsFor(root, documentRef) {
   };
 }
 
-export async function refresh(state, force = false) {
-  if (!state || state.disposed || !isVisible(state.documentRef)) return state?.events ?? [];
-  const range = buildRangeForMonth(monthFromKey(state.monthKey));
-  const cacheKey = `${range.start}:${range.end}`;
-  const cached = state.cache.get(cacheKey);
+function abortRequest(state) {
+  state.requestController?.abort?.();
+  state.requestController = null;
+}
+
+export function refresh(state, force = false) {
+  if (!state || state.disposed || !isVisible(state.documentRef)) return Promise.resolve(state?.events ?? []);
+  const requestedMonthKey = state.monthKey;
+  const range = buildRangeForMonth(monthFromKey(requestedMonthKey));
+  const cached = state.cache.get(requestedMonthKey);
   const now = Number(state.nowRef());
-  if (!force && cached && now - cached.timestamp < REFRESH_INTERVAL_MS) {
-    state.events = cached.events;
-    state.error = '';
-    render(state);
-    return state.events;
-  }
+
   if (state.request) {
-    state.refreshAgain = true;
+    state.queuedMonthKey = requestedMonthKey;
+    state.queuedForce = state.queuedForce || force;
     return state.request;
   }
 
+  if (!force && cached && now - cached.timestamp < REFRESH_INTERVAL_MS) {
+    applyCachedMonth(state, requestedMonthKey);
+    render(state);
+    return Promise.resolve(state.events);
+  }
+
+  const token = ++state.requestToken;
+  const abortController = typeof AbortController === 'function' ? new AbortController() : null;
+  state.requestController = abortController;
+  state.requestMonthKey = requestedMonthKey;
   state.loading = true;
-  state.error = '';
+  state.error = cached?.error ?? null;
   render(state);
+
   const requestUrl = `${CALENDAR_ENDPOINT}?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`;
-  state.request = Promise.resolve()
-    .then(() => state.fetchRef(requestUrl, { headers: { Accept: 'application/json' } }))
+  const request = Promise.resolve()
+    .then(() => state.fetchRef(requestUrl, {
+      headers: { Accept: 'application/json' },
+      ...(abortController ? { signal: abortController.signal } : {}),
+    }))
     .then(async (response) => {
       if (!response?.ok) throw new Error(`Calendar request failed (${response?.status ?? 'unknown'})`);
-      const payload = await response.json();
-      const events = getPayloadEvents(payload).filter((event) => eventOverlapsRange(event, range.start, range.end));
-      state.cache.set(cacheKey, { timestamp: Number(state.nowRef()), events });
-      state.events = events;
-      state.error = '';
+      return response.json();
+    })
+    .then((payload) => {
+      if (state.disposed || token !== state.requestToken) return state.events;
+      const events = normaliseCalendarEvents(payload).filter((event) => eventOverlapsRange(event, range.start, range.end));
+      const upcoming = normaliseCalendarUpcoming(payload);
+      state.cache.set(requestedMonthKey, { timestamp: Number(state.nowRef()), events, upcoming, error: null });
+      state.upcoming = upcoming;
+      if (state.monthKey === requestedMonthKey) {
+        state.events = events;
+        state.error = null;
+      }
       return events;
     })
     .catch((error) => {
-      state.error = error;
-      return state.events;
+      if (state.disposed || token !== state.requestToken || error?.name === 'AbortError') return state.events;
+      const stale = cached?.events ? cached.events.slice() : state.monthKey === requestedMonthKey ? state.events : [];
+      const staleUpcoming = cached?.upcoming ? cached.upcoming.slice() : state.upcoming;
+      state.cache.set(requestedMonthKey, {
+        timestamp: cached?.timestamp ?? 0,
+        events: stale,
+        upcoming: staleUpcoming,
+        error,
+      });
+      if (state.monthKey === requestedMonthKey) {
+        state.events = stale;
+        state.upcoming = staleUpcoming;
+        state.error = error;
+      }
+      return stale;
     })
     .finally(() => {
+      if (state.disposed || token !== state.requestToken) return;
       state.loading = false;
       state.request = null;
+      state.requestController = null;
       render(state);
-      if (state.refreshAgain) {
-        state.refreshAgain = false;
-        void refresh(state, true);
-      }
+      const queuedMonthKey = state.queuedMonthKey;
+      const queuedForce = state.queuedForce;
+      state.queuedMonthKey = null;
+      state.queuedForce = false;
+      if (queuedMonthKey && !state.disposed) void refresh(state, queuedForce || queuedMonthKey !== state.monthKey);
     });
-  return state.request;
+
+  state.request = request;
+  return request;
 }
 
 export function createPublicCalendarController({
@@ -575,14 +650,18 @@ export function createPublicCalendarController({
     fetchRef: typeof fetchRef === 'function' ? fetchRef : () => Promise.reject(new Error('Calendar fetch is unavailable')),
     nowRef,
     elements,
-    monthKey: monthKey(startOfMonth(parseDateOnly(today) || new Date())),
+    monthKey: monthKey(startOfMonth(parseStrictDateOnly(today) || new Date())),
     selectedDate: today,
     events: [],
-    participation: new Map(),
+    upcoming: [],
     cache: new Map(),
     cleanup: [],
     request: null,
-    refreshAgain: false,
+    requestController: null,
+    requestToken: 0,
+    requestMonthKey: null,
+    queuedMonthKey: null,
+    queuedForce: false,
     loading: false,
     error: null,
     disposed: false,
@@ -592,7 +671,8 @@ export function createPublicCalendarController({
   const viewportWidth = Number(documentRef.defaultView?.innerWidth ?? 0);
   if (viewportWidth >= 1280 && elements.monthToggle && elements.monthPanel) {
     elements.monthToggle.setAttribute('aria-expanded', 'true');
-    elements.monthToggle.querySelector('span:last-child').textContent = '−';
+    const icon = elements.monthToggle.querySelector?.('span:last-child');
+    if (icon) icon.textContent = '−';
     elements.monthPanel.hidden = false;
   }
 
@@ -609,7 +689,10 @@ export function createPublicCalendarController({
   state.dispose = () => {
     if (state.disposed) return;
     state.disposed = true;
+    state.requestToken += 1;
+    abortRequest(state);
     state.cleanup.splice(0).forEach((cleanup) => cleanup());
+    state.request = null;
     state.elements.grid?.replaceChildren();
     state.elements.agenda?.replaceChildren();
     state.elements.upcoming?.replaceChildren();
@@ -618,6 +701,7 @@ export function createPublicCalendarController({
     monthKey: state.monthKey,
     selectedDate: state.selectedDate,
     events: state.events.slice(),
+    upcoming: state.upcoming.slice(),
     loading: state.loading,
     error: state.error,
     disposed: state.disposed,
@@ -634,7 +718,11 @@ export function initPublicCalendar(root = globalThis.document?.querySelector?.('
     return existing;
   }
   existing?.dispose?.();
-  const controller = createPublicCalendarController({ root, documentRef, fetchRef: documentRef?.defaultView?.fetch?.bind(documentRef.defaultView) ?? globalThis.fetch });
+  const controller = createPublicCalendarController({
+    root,
+    documentRef,
+    fetchRef: documentRef?.defaultView?.fetch?.bind(documentRef.defaultView) ?? globalThis.fetch,
+  });
   if (controller) controllers.set(root, controller);
   return controller;
 }
@@ -652,7 +740,10 @@ const publicCalendarApi = {
   refresh,
   normaliseCalendarEvent,
   normaliseCalendarEvents,
+  normaliseCalendarUpcoming,
   getCalendarMonthRange,
+  parseCalendarDateOnly,
+  eventOverlapsRange,
 };
 
 if (typeof window !== 'undefined') window.PublicCalendar = publicCalendarApi;

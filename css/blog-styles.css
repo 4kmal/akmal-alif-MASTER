@@ -1562,10 +1562,7 @@ body.blog-page:has(.blog-outline-aside[hidden]) .blog-post-full {
 }
 
 /* Article galleries keep the public page links available while adding a small, lazy thumbnail view. */
-.blog-gallery-marker,
-[data-blog-gallery],
-[data-gallery-manifest],
-[data-gallery-marker] {
+.blog-gallery {
     display: block;
     margin-block: 2rem;
 }
@@ -1665,6 +1662,7 @@ body.blog-page:has(.blog-outline-aside[hidden]) .blog-post-full {
     margin-top: 3px;
     color: var(--portfolio-text-muted, #666);
     font-size: 0.64rem;
+    line-height: 1.35;
     text-align: left;
 }
 
