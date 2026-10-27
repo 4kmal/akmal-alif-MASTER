@@ -35,8 +35,15 @@ import {
 } from 'vue'
 import {
   ASSIGNMENT as SHARED_ASSIGNMENT,
-  calculateReviews as calculateReviewsFromModel,
-  readiness as readinessFromModel,
+  CRITERIA,
+  DOMAIN,
+  FEATURE_COUNT,
+  JUDGE_NAME,
+  TEAMS,
+  calculateReviews,
+  emptyReview,
+  normalizeReview as normalizeReviewFromModel,
+  readiness,
   validateRecord,
 } from '../../../shared/judging/model.mjs'
 
@@ -63,6 +70,7 @@ interface FeatureReview {
 }
 
 interface ReviewData {
+  teamId: string
   scores: Array<number | null>
   repoCheck: RepoCheck
   notes: string
@@ -90,15 +98,17 @@ interface Team {
   id: string
   name: string
   shortName: string
+  repoUrl?: string
 }
 
 interface AssignmentData {
   id: string
+  judgeId: string
   domain: string
   title: string
   deadline: string
   timezone: string
-  weights: Array<{ id: string; label: string; weight: number }>
+  criteria: Array<{ id: string; label: string; weight: number }>
   features: string[]
   teams: Team[]
 }
@@ -114,13 +124,14 @@ interface EvidenceItem {
   id: string
   teamId: string
   title: string
-  kind: 'source' | 'document' | 'transcript' | 'link' | 'video' | 'other'
+  kind: 'source' | 'document' | 'transcript' | 'link'
   path?: string
   url?: string
   text?: string
-  lines?: Array<{ line: number; text: string }>
+  lines?: number
   pages?: Array<{ page: number; text: string }>
-  hash?: string
+  snapshotSha?: string
+  sha256?: string
   observed?: boolean
   updatedAt?: string
 }
@@ -131,49 +142,30 @@ interface AssessmentJob {
   status: string
   progress?: number
   message?: string
+  suggestedScores?: Array<number | null>
   updatedAt?: string
 }
 
-const FALLBACK_TEAMS: Team[] = [
-  { id: '01-console', name: 'Team Console', shortName: 'Console' },
-  { id: '02-ctrl-ai', name: 'ctrl + ai', shortName: 'ctrl + ai' },
-  { id: '03-ctrl-cv', name: 'Ctrl CV', shortName: 'Ctrl CV' },
-  { id: '04-ctrl-alt-three', name: 'Ctrl+Alt+Three', shortName: 'Ctrl+Alt+Three' },
-  { id: '05-ctrl-s', name: 'Ctrl+S', shortName: 'Ctrl+S' },
-  { id: '06-decisive', name: 'Decisive', shortName: 'Decisive' },
-  { id: '07-dovun', name: 'DOVUN', shortName: 'DOVUN' },
-  { id: '08-dsaise', name: 'Dsaise', shortName: 'Dsaise' },
-  { id: '09-duologic', name: 'DuoLogic', shortName: 'DuoLogic' },
-]
+const DEADLINE_ISO = '2026-10-28T08:00:00+08:00'
+const FEATURE_LABELS = Object.freeze([
+  'Profiles',
+  'Trends',
+  'Matching',
+  'Reskilling',
+  'SDG alignment',
+  'Scenarios',
+])
 
-const FALLBACK_FEATURES = [
-  'Problem framing',
-  'Human centred design',
-  'AI use and judgement',
-  'Working prototype',
-  'Evidence and clarity',
-  'Future readiness',
-]
-
-const FALLBACK_WEIGHTS = [
-  { id: 'human', label: 'Human judgement', weight: 30 },
-  { id: 'ai', label: 'AI use and judgement', weight: 25 },
-  { id: 'impact', label: 'Impact and feasibility', weight: 25 },
-  { id: 'presentation', label: 'Presentation', weight: 20 },
-]
-
-const fallbackAssignment: AssignmentData = {
-  id: 'Domain1D1-J04',
-  domain: 'SDC 2026',
-  title: 'SDC 2026 judging workspace',
-  deadline: '2026-10-28T08:00:00+08:00',
-  timezone: 'MYT',
-  weights: FALLBACK_WEIGHTS,
-  features: FALLBACK_FEATURES,
-  teams: FALLBACK_TEAMS,
+const canonicalTeams = TEAMS as unknown as Team[]
+const canonicalCriteria = CRITERIA.map(criterion => ({ ...criterion }))
+const canonicalAssignment = {
+  ...SHARED_ASSIGNMENT,
+  deadline: DEADLINE_ISO,
+  criteria: canonicalCriteria,
+  teams: canonicalTeams,
 }
 
-const assignment = ref<AssignmentData>(normalizeAssignment(SHARED_ASSIGNMENT))
+const assignment = ref<AssignmentData>(normalizeAssignment(canonicalAssignment))
 const records = reactive<Record<string, RecordEnvelope>>({})
 const reviewDrafts = reactive<Record<string, ReviewData>>({})
 const versions = reactive<Record<string, number>>({})
@@ -181,17 +173,16 @@ const dirtyKeys = reactive(new Set<string>())
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const hydrating = ref(false)
 const loading = ref(false)
-const saving = ref(false)
-const initialLoadDone = ref(false)
 const errorMessage = ref('')
 const lastSyncAt = ref('')
 const serverTime = ref('')
 const isOnline = ref(typeof navigator === 'undefined' ? true : navigator.onLine)
 const isVisible = ref(true)
-const syncState = ref<'idle' | 'pending' | 'offline' | 'error' | 'conflict'>('idle')
+type SyncStatus = 'unpaired' | 'pending' | 'syncing' | 'synced' | 'offline' | 'expired' | 'conflict'
+const syncState = ref<SyncStatus>(props.local ? 'unpaired' : 'pending')
 const syncPendingCount = ref(0)
 const syncConflicts = ref<ConflictState[]>([])
-const selectedTeamId = ref(FALLBACK_TEAMS[0].id)
+const selectedTeamId = ref(canonicalTeams[0].id)
 const selectedEvidenceId = ref('')
 const activeTab = ref<WorkspaceTab>('queue')
 const filter = ref<ReviewFilter>('all')
@@ -216,6 +207,7 @@ const submissionMessage = ref('')
 const newNote = ref('')
 const assessmentJobs = ref<AssessmentJob[]>([])
 const assessmentMessage = ref('')
+const exportMessage = ref('')
 const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const deadlineNow = ref(Date.now())
 const filterOptions: Array<[ReviewFilter, string]> = [
@@ -227,12 +219,12 @@ const filterOptions: Array<[ReviewFilter, string]> = [
 
 const judgeDraft = reactive<JudgeData>(defaultJudge())
 
-const features = computed(() => assignment.value.features?.length ? assignment.value.features : FALLBACK_FEATURES)
-const teams = computed(() => assignment.value.teams?.length ? assignment.value.teams : FALLBACK_TEAMS)
-const weights = computed(() => assignment.value.weights?.length ? assignment.value.weights : FALLBACK_WEIGHTS)
+const features = computed(() => assignment.value.features.slice(0, FEATURE_COUNT))
+const teams = computed(() => assignment.value.teams)
+const criteria = computed(() => assignment.value.criteria)
 
 const selectedTeam = computed(() => teams.value.find(team => team.id === selectedTeamId.value) ?? teams.value[0])
-const selectedReview = computed(() => reviewDrafts[selectedTeamId.value] ?? defaultReview())
+const selectedReview = computed(() => reviewDrafts[selectedTeamId.value] ?? defaultReview(selectedTeamId.value))
 const evidenceRecords = computed(() => Object.values(records)
   .filter(record => record.key.startsWith('evidence:'))
   .map(record => ({ ...normalizeEvidence({ ...record.data, id: record.data?.id ?? record.key.slice('evidence:'.length) }), updatedAt: record.updatedAt }))
@@ -243,25 +235,34 @@ const selectedEvidence = computed(() => evidencePayload.value
   ?? selectedTeamEvidence.value[0]
   ?? null)
 
-const reviewCount = computed(() => teams.value.filter(team => Boolean(reviewDrafts[team.id]?.reviewedAt)).length)
+const reviewInputMap = computed(() => Object.fromEntries(teams.value.map(team => [team.id, { ...reviewDrafts[team.id], teamId: team.id }])))
+const intakeInputMap = computed(() => {
+  const entries = Object.values(records)
+    .filter(record => record.key.startsWith('intake:'))
+    .map(record => [record.key.slice('intake:'.length), record.data])
+  return entries.length ? Object.fromEntries(entries) : undefined
+})
+const reviewRows = computed(() => calculateReviews(reviewInputMap.value))
+const readinessResult = computed(() => readiness(judgeDraft, reviewInputMap.value, intakeInputMap.value))
+const reviewCount = computed(() => readinessResult.value.reviewedCount)
 const evidenceCount = computed(() => evidenceRecords.value.length)
-const incompleteCount = computed(() => teams.value.filter(team => isIncomplete(reviewDrafts[team.id])).length)
+const incompleteCount = computed(() => reviewRows.value.filter(row => row.status !== 'Complete').length)
 const issueCount = computed(() => teams.value.filter(team => hasIssues(reviewDrafts[team.id])).length)
-const readinessCount = computed(() => teams.value.filter(team => isReady(reviewDrafts[team.id])).length)
 const deadlineText = computed(() => formatCountdown(assignment.value.deadline, deadlineNow.value))
 const deadlineDate = computed(() => formatDateTime(assignment.value.deadline))
-const overallReadiness = computed(() => `${readinessCount.value}/${teams.value.length} ready`)
+const overallReadiness = computed(() => `${readinessResult.value.reviewedCount}/${readinessResult.value.totalTeams} ready`)
 const syncLabel = computed(() => {
-  if (!isOnline.value || syncState.value === 'offline') return 'Offline · edits stay local'
+  if (syncState.value === 'unpaired') return 'Unpaired · pair station'
+  if (syncState.value === 'offline' || !isOnline.value) return 'Offline · edits stay local'
+  if (syncState.value === 'expired') return 'Pairing expired · reconnect required'
   if (syncState.value === 'conflict') return `${syncConflicts.value.length || 1} conflict${syncConflicts.value.length === 1 ? '' : 's'} needs a choice`
-  if (syncState.value === 'error') return 'Sync error · retry available'
-  if (syncState.value === 'pending' || dirtyKeys.size > 0 || syncPendingCount.value > 0) return syncPendingCount.value ? `Sync pending · ${syncPendingCount.value}` : 'Saving changes…'
+  if (syncState.value === 'syncing' || syncState.value === 'pending' || dirtyKeys.size > 0 || syncPendingCount.value > 0) return syncPendingCount.value ? `Sync pending · ${syncPendingCount.value}` : 'Syncing changes…'
   return lastSyncAt.value ? `Synced ${formatTime(lastSyncAt.value)}` : 'Ready to sync'
 })
 const syncTone = computed(() => {
-  if (!isOnline.value || syncState.value === 'offline') return 'offline'
-  if (syncState.value === 'conflict' || syncState.value === 'error') return 'danger'
-  if (syncState.value === 'pending' || dirtyKeys.size > 0) return 'pending'
+  if (!isOnline.value || syncState.value === 'offline' || syncState.value === 'unpaired') return 'offline'
+  if (syncState.value === 'conflict' || syncState.value === 'expired') return 'danger'
+  if (syncState.value === 'pending' || syncState.value === 'syncing' || dirtyKeys.size > 0) return 'pending'
   return 'online'
 })
 
@@ -279,7 +280,7 @@ const filteredTeams = computed(() => {
   return filtered.sort((left, right) => {
     let comparison = 0
     if (sortKey.value === 'team') comparison = left.name.localeCompare(right.name)
-    if (sortKey.value === 'score') comparison = scoreFor(reviewDrafts[left.id]) - scoreFor(reviewDrafts[right.id])
+    if (sortKey.value === 'score') comparison = (scoreFor(reviewDrafts[left.id]) ?? 0) - (scoreFor(reviewDrafts[right.id]) ?? 0)
     if (sortKey.value === 'status') comparison = statusLabel(reviewDrafts[left.id]).localeCompare(statusLabel(reviewDrafts[right.id]))
     if (sortKey.value === 'updated') comparison = updatedAtFor(left.id).localeCompare(updatedAtFor(right.id))
     return sortDescending.value ? -comparison : comparison
@@ -288,80 +289,70 @@ const filteredTeams = computed(() => {
 
 const currentReviewStatus = computed(() => statusLabel(selectedReview.value))
 const selectedScore = computed(() => scoreFor(selectedReview.value))
-const selectedReviewReady = computed(() => isReady(selectedReview.value))
+const selectedReviewReady = computed(() => canApproveReview(selectedReview.value))
+const selectedAssessment = computed(() => assessmentJobs.value
+  .filter(job => job.teamId === selectedTeamId.value && job.suggestedScores?.some(score => score !== null))
+  .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))[0])
 const selectedEvidenceLines = computed(() => {
   const item = selectedEvidence.value
   if (!item) return []
-  if (item.lines?.length) return item.lines.map(line => ({ number: line.line, text: line.text }))
   return String(item.text ?? '').split('\n').map((text, index) => ({ number: index + 1, text }))
 })
 
 function normalizeAssignment(source: any): AssignmentData {
   const value = source && typeof source === 'object' ? source : {}
-  const sourceTeams = Array.isArray(value.teams) ? value.teams : FALLBACK_TEAMS
   return {
-    ...fallbackAssignment,
-    ...value,
-    weights: Array.isArray(value.weights) && value.weights.length ? value.weights : FALLBACK_WEIGHTS,
-    features: Array.isArray(value.features) && value.features.length ? value.features : FALLBACK_FEATURES,
-    teams: sourceTeams.map((team: any, index: number) => ({
-      id: String(team.id ?? team.teamId ?? FALLBACK_TEAMS[index]?.id ?? `team-${index + 1}`),
-      name: String(team.name ?? team.label ?? FALLBACK_TEAMS[index]?.name ?? `Team ${index + 1}`),
-      shortName: String(team.shortName ?? team.name ?? team.label ?? FALLBACK_TEAMS[index]?.shortName ?? `Team ${index + 1}`),
+    id: SHARED_ASSIGNMENT.id,
+    judgeId: SHARED_ASSIGNMENT.judgeId,
+    domain: DOMAIN,
+    title: String(value.title ?? 'SDC 2026 judging workspace'),
+    deadline: DEADLINE_ISO,
+    timezone: 'MYT',
+    criteria: canonicalCriteria.map((criterion, index) => ({
+      id: String(criterion.id ?? canonicalCriteria[index].id),
+      label: String(criterion.label ?? canonicalCriteria[index].label),
+      weight: criterion.weight,
+    })),
+    features: [...FEATURE_LABELS],
+    teams: canonicalTeams.map(team => ({
+      id: String(team.id),
+      name: String(team.name),
+      shortName: String(team.shortName ?? team.name),
+      repoUrl: team.repoUrl ? String(team.repoUrl) : undefined,
     })),
   }
 }
 
 function defaultJudge(): JudgeData {
   return {
-    name: '',
-    date: new Date().toISOString().slice(0, 10),
-    domain: 'Domain 1 · Digital fluency',
+    name: JUDGE_NAME,
+    date: todayInTimezone('Asia/Kuala_Lumpur'),
+    domain: DOMAIN,
     generalNotes: '',
     warningsAcknowledged: false,
   }
 }
 
-function defaultFeature(): FeatureReview {
-  return { proposal: 'unverified', demo: 'unverified', note: '' }
+function todayInTimezone(timeZone: string) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
 }
 
-function defaultReview(): ReviewData {
-  return {
-    scores: [null, null, null, null],
-    repoCheck: '',
-    notes: '',
-    reviewedAt: null,
-    features: Array.from({ length: 6 }, defaultFeature),
-    warningsAcknowledged: false,
-  }
+function defaultReview(teamId: string): ReviewData {
+  return emptyReview(teamId) as ReviewData
 }
 
-function normalizeReview(source: any): ReviewData {
+for (const team of canonicalTeams) reviewDrafts[team.id] = defaultReview(team.id)
+
+function normalizeReview(source: any, teamId: string): ReviewData {
   const value = source && typeof source === 'object' ? source : {}
-  const scores = Array.isArray(value.scores) ? value.scores.slice(0, 4).map((score: any) => {
-    if (score === null || score === undefined || score === '') return null
-    const number = Number(score)
-    return Number.isFinite(number) ? Math.max(0, Math.min(10, number)) : null
-  }) : []
-  while (scores.length < 4) scores.push(null)
-  const sourceFeatures = Array.isArray(value.features) ? value.features : []
-  const normalizedFeatures = Array.from({ length: 6 }, (_, index) => {
-    const feature = sourceFeatures[index] ?? {}
-    return {
-      proposal: normalizeFeatureStatus(feature.proposal),
-      demo: normalizeFeatureStatus(feature.demo),
-      note: String(feature.note ?? ''),
-    }
-  })
-  return {
-    scores,
-    repoCheck: normalizeRepoCheck(value.repoCheck),
-    notes: String(value.notes ?? ''),
-    reviewedAt: value.reviewedAt ? String(value.reviewedAt) : null,
-    features: normalizedFeatures,
-    warningsAcknowledged: Boolean(value.warningsAcknowledged),
-  }
+  return normalizeReviewFromModel({ ...value, teamId }, teamId, { allowDefaults: true }) as ReviewData
 }
 
 function normalizeFeatureStatus(value: any): FeatureStatus {
@@ -373,20 +364,41 @@ function normalizeRepoCheck(value: any): RepoCheck {
   return ''
 }
 
+function normalizeSuggestedScores(source: any): Array<number | null> | undefined {
+  const candidates = [source?.suggestedScores, source?.scores, source?.result?.suggestedScores, source?.result?.scores]
+  const rawScores = candidates.find(value => Array.isArray(value))
+  if (!Array.isArray(rawScores) || rawScores.length !== criteria.value.length) return undefined
+  return rawScores.map((score: any) => score === null || score === undefined || score === '' ? null : clampScore(Number(score)))
+}
+
+function normalizeAssessmentJob(source: any): AssessmentJob {
+  const value = source && typeof source === 'object' ? source : {}
+  return {
+    id: String(value.id ?? value.jobId ?? randomId()),
+    teamId: String(value.teamId ?? ''),
+    status: String(value.status ?? 'queued'),
+    progress: Number.isFinite(Number(value.progress)) ? Number(value.progress) : undefined,
+    message: value.message ? String(value.message) : undefined,
+    suggestedScores: normalizeSuggestedScores(value),
+    updatedAt: value.updatedAt ? String(value.updatedAt) : undefined,
+  }
+}
+
 function normalizeEvidence(source: any): EvidenceItem {
   const value = source && typeof source === 'object' ? source : {}
   return {
     id: String(value.id ?? value.uuid ?? value.evidenceId ?? ''),
     teamId: String(value.teamId ?? ''),
     title: String(value.title ?? value.name ?? value.path ?? 'Evidence item'),
-    kind: value.kind === 'source' || value.kind === 'document' || value.kind === 'transcript' || value.kind === 'link' || value.kind === 'video' ? value.kind : 'other',
+    kind: value.kind === 'source' || value.kind === 'document' || value.kind === 'transcript' || value.kind === 'link' ? value.kind : 'link',
     path: value.path ? String(value.path) : undefined,
     url: value.url ? String(value.url) : undefined,
     text: value.text ? String(value.text) : '',
-    lines: Array.isArray(value.lines) ? value.lines : undefined,
+    lines: Number.isFinite(Number(value.lines)) ? Number(value.lines) : undefined,
     pages: Array.isArray(value.pages) ? value.pages : undefined,
-    hash: value.hash ? String(value.hash) : (value.sha256 ? String(value.sha256) : (value.snapshotSha ? String(value.snapshotSha) : undefined)),
-    observed: Boolean(value.observed),
+    snapshotSha: value.snapshotSha ? String(value.snapshotSha) : undefined,
+    sha256: value.sha256 ? String(value.sha256) : (value.hash ? String(value.hash) : undefined),
+    observed: value.kind === 'link' ? false : Boolean(value.observed),
   }
 }
 
@@ -398,6 +410,13 @@ function normalizeRecord(record: any): RecordEnvelope | null {
     data: record.data && typeof record.data === 'object' ? record.data : {},
     updatedAt: record.updatedAt ? String(record.updatedAt) : undefined,
   }
+}
+
+function normalizeSyncStatus(value: any): SyncStatus | null {
+  return value === 'unpaired' || value === 'pending' || value === 'syncing' || value === 'synced'
+    || value === 'offline' || value === 'expired' || value === 'conflict'
+    ? value
+    : null
 }
 
 function normalizeConflicts(source: any): ConflictState[] {
@@ -424,15 +443,15 @@ function applyRecord(record: RecordEnvelope) {
   versions[record.key] = record.version
   if (record.key === 'judge') {
     const value = record.data ?? {}
-    judgeDraft.name = String(value.name ?? '')
+    judgeDraft.name = String(value.name ?? JUDGE_NAME)
     judgeDraft.date = String(value.date ?? value.dateYYYYMMDD ?? judgeDraft.date)
-    judgeDraft.domain = String(value.domain ?? judgeDraft.domain)
+    judgeDraft.domain = DOMAIN
     judgeDraft.generalNotes = String(value.generalNotes ?? '')
     judgeDraft.warningsAcknowledged = Boolean(value.warningsAcknowledged)
     return
   }
   if (record.key.startsWith('review:') && !dirtyKeys.has(record.key)) {
-    reviewDrafts[record.key.slice('review:'.length)] = normalizeReview(record.data)
+    reviewDrafts[record.key.slice('review:'.length)] = normalizeReview(record.data, record.key.slice('review:'.length))
   }
 }
 
@@ -459,12 +478,11 @@ function applyState(payload: any) {
     applyRecord(record)
   }
   for (const team of teams.value) {
-    if (!reviewDrafts[team.id]) reviewDrafts[team.id] = defaultReview()
+    if (!reviewDrafts[team.id]) reviewDrafts[team.id] = defaultReview(team.id)
   }
   hydrating.value = false
-  initialLoadDone.value = true
   lastSyncAt.value = new Date().toISOString()
-  syncState.value = syncConflicts.value.length ? 'conflict' : (dirtyKeys.size ? 'pending' : 'idle')
+  syncState.value = syncConflicts.value.length ? 'conflict' : (dirtyKeys.size ? 'pending' : 'synced')
 }
 
 async function fetchState(options: { silent?: boolean } = {}) {
@@ -481,7 +499,7 @@ async function fetchState(options: { silent?: boolean } = {}) {
     await fetchSyncStatus()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'The judging state could not be loaded.'
-    syncState.value = isOnline.value ? 'error' : 'offline'
+    syncState.value = isOnline.value ? 'pending' : 'offline'
   } finally {
     loading.value = false
   }
@@ -507,8 +525,10 @@ async function fetchSyncStatus() {
       conflict.value = null
     }
     if (payload?.lastSuccessfulAt) lastSyncAt.value = String(payload.lastSuccessfulAt)
-    if (payload?.status === 'offline') syncState.value = 'offline'
-    else if (payload?.status === 'conflict' || Number(payload?.conflicts ?? 0) > 0) syncState.value = 'conflict'
+    const remoteStatus = normalizeSyncStatus(payload?.status)
+    if (incomingConflicts.length || remoteStatus === 'conflict' || Number(payload?.conflicts ?? 0) > 0) syncState.value = 'conflict'
+    else if (dirtyKeys.size) syncState.value = 'pending'
+    else if (remoteStatus) syncState.value = remoteStatus
   } catch {
     // The local bridge may start before its sync endpoint; state remains usable.
   }
@@ -533,7 +553,7 @@ function markJudgeDirty() {
 
 function recordDataForKey(key: string) {
   if (key === 'judge') return { ...judgeDraft }
-  if (key.startsWith('review:')) return normalizeReview(reviewDrafts[key.slice('review:'.length)])
+  if (key.startsWith('review:')) return normalizeReview(reviewDrafts[key.slice('review:'.length)], key.slice('review:'.length))
   return records[key]?.data ?? {}
 }
 
@@ -552,7 +572,6 @@ async function saveRecord(key: string) {
     syncState.value = 'conflict'
     return
   }
-  saving.value = true
   syncState.value = 'pending'
   try {
     const validation = validateRecord(key, recordDataForKey(key))
@@ -592,17 +611,15 @@ async function saveRecord(key: string) {
     const saved = normalizeRecord(payload)
     if (saved) applyRecord(saved)
     dirtyKeys.delete(key)
-    syncState.value = dirtyKeys.size ? 'pending' : 'idle'
+    syncState.value = dirtyKeys.size ? 'pending' : 'synced'
     lastSyncAt.value = new Date().toISOString()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'The change could not be saved.'
-    syncState.value = isOnline.value ? 'error' : 'offline'
-  } finally {
-    saving.value = false
+    syncState.value = isOnline.value ? 'pending' : 'offline'
   }
 }
 
-async function resolveConflict(choice: 'local' | 'server') {
+async function resolveConflict(choice: 'local' | 'remote') {
   const currentConflict = conflict.value
   if (!currentConflict) return
   const { key, local, current } = currentConflict
@@ -616,7 +633,7 @@ async function resolveConflict(choice: 'local' | 'server') {
       })
       if (!response.ok) throw new Error(`Conflict resolution failed (${response.status})`)
       syncConflicts.value = syncConflicts.value.filter(item => item.key !== key)
-      syncState.value = syncConflicts.value.length ? 'conflict' : (dirtyKeys.size ? 'pending' : 'idle')
+      syncState.value = syncConflicts.value.length ? 'conflict' : (dirtyKeys.size ? 'pending' : 'synced')
       await fetchState({ silent: true })
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : 'Conflict could not be resolved.'
@@ -624,10 +641,10 @@ async function resolveConflict(choice: 'local' | 'server') {
     }
     return
   }
-  if (choice === 'server') {
+  if (choice === 'remote') {
     applyRecord(current)
     dirtyKeys.delete(key)
-    syncState.value = dirtyKeys.size ? 'pending' : 'idle'
+    syncState.value = dirtyKeys.size ? 'pending' : 'synced'
     return
   }
   versions[key] = current.version
@@ -640,34 +657,38 @@ async function resolveConflict(choice: 'local' | 'server') {
 
 function selectTeam(teamId: string) {
   selectedTeamId.value = teamId
-  if (!reviewDrafts[teamId]) reviewDrafts[teamId] = defaultReview()
+  if (!reviewDrafts[teamId]) reviewDrafts[teamId] = defaultReview(teamId)
   if (activeTab.value === 'evidence') selectedEvidenceId.value = ''
 }
 
 function setScore(index: number, event: Event) {
   const input = event.target as HTMLInputElement
   const raw = input.value.trim()
+  invalidateReviewApproval()
   selectedReview.value.scores[index] = raw === '' ? null : clampScore(Number(raw))
   markReviewDirty(selectedTeamId.value)
 }
 
 function clampScore(value: number) {
   if (!Number.isFinite(value)) return null
-  return Math.max(0, Math.min(10, Math.round(value * 10) / 10))
+  return Math.max(0, Math.min(100, Math.round(value * 10) / 10))
 }
 
 function setFeatureStatus(index: number, field: 'proposal' | 'demo', event: Event) {
   const input = event.target as HTMLSelectElement
+  invalidateReviewApproval()
   selectedReview.value.features[index][field] = normalizeFeatureStatus(input.value)
   markReviewDirty(selectedTeamId.value)
 }
 
 function updateFeatureNote(index: number, event: Event) {
+  invalidateReviewApproval()
   selectedReview.value.features[index].note = (event.target as HTMLInputElement).value
   markReviewDirty(selectedTeamId.value)
 }
 
 function updateReviewField(field: 'repoCheck' | 'notes' | 'warningsAcknowledged', value: string | boolean) {
+  if (field !== 'notes') invalidateReviewApproval()
   if (field === 'repoCheck') selectedReview.value.repoCheck = normalizeRepoCheck(value)
   if (field === 'notes') selectedReview.value.notes = String(value)
   if (field === 'warningsAcknowledged') selectedReview.value.warningsAcknowledged = Boolean(value)
@@ -692,6 +713,19 @@ function approveReview() {
   markReviewDirty(selectedTeamId.value)
 }
 
+function invalidateReviewApproval() {
+  if (selectedReview.value.reviewedAt !== null) selectedReview.value.reviewedAt = null
+}
+
+function acceptAssessmentScores() {
+  const suggestedScores = selectedAssessment.value?.suggestedScores
+  if (!suggestedScores) return
+  selectedReview.value.scores = suggestedScores.map(score => score === null ? null : clampScore(score))
+  invalidateReviewApproval()
+  markReviewDirty(selectedTeamId.value)
+  assessmentMessage.value = 'AI scores copied as a draft. Check evidence, then approve reviewed explicitly.'
+}
+
 function appendTimestampedNote() {
   const note = newNote.value.trim()
   if (!note) return
@@ -710,51 +744,21 @@ function sortBy(key: SortKey) {
   }
 }
 
-function scoreFor(review: ReviewData | undefined) {
-  if (!review) return 0
-  const scoreValues = review.scores.map(value => typeof value === 'number' ? value : 0)
-  const hasModelValue = safeModelScore(review)
-  if (hasModelValue !== null) return hasModelValue
-  return scoreValues.reduce((total, score, index) => total + (score / 10) * Number(weights.value[index]?.weight ?? 0), 0)
+function rowFor(review: ReviewData | undefined) {
+  return review ? reviewRows.value.find(row => row.id === review.teamId) : undefined
 }
 
-function safeModelScore(review: ReviewData | undefined): number | null {
-  if (!review) return 0
-  try {
-    const value = calculateReviewsFromModel(review)
-    return typeof value === 'number' && Number.isFinite(value) ? value : null
-  } catch {
-    return null
-  }
+function scoreFor(review: ReviewData | undefined): number | null {
+  const total = rowFor(review)?.total
+  return typeof total === 'number' ? total : null
 }
 
-function safeReadiness(review: ReviewData | undefined): boolean | null {
-  try {
-    const value = readinessFromModel(review)
-    if (typeof value === 'boolean') return value
-    if (value && typeof value === 'object' && 'ready' in value) return Boolean(value.ready)
-    return null
-  } catch {
-    return null
-  }
-}
-
-function isReady(review: ReviewData | undefined) {
-  if (!review) return false
-  const modelValue = safeReadiness(review)
-  if (modelValue !== null) return modelValue
-  return Boolean(review.reviewedAt)
-    && review.repoCheck !== ''
-    && review.scores.every(value => typeof value === 'number')
-    && review.features.every(feature => feature.proposal !== 'unverified' && feature.demo !== 'unverified')
+function canApproveReview(review: ReviewData | undefined) {
+  return rowFor(review)?.status === 'Complete'
 }
 
 function isIncomplete(review: ReviewData | undefined) {
-  if (!review) return true
-  return review.scores.some(value => value === null)
-    || review.repoCheck === ''
-    || review.features.some(feature => feature.proposal === 'unverified' || feature.demo === 'unverified')
-    || !review.reviewedAt
+  return !review || rowFor(review)?.status !== 'Complete' || !review.reviewedAt
 }
 
 function hasIssues(review: ReviewData | undefined) {
@@ -766,14 +770,14 @@ function hasIssues(review: ReviewData | undefined) {
 
 function statusLabel(review: ReviewData | undefined) {
   if (!review?.reviewedAt) return 'Unreviewed'
+  if (rowFor(review)?.status !== 'Complete') return `Reviewed · ${rowFor(review)?.status?.toLowerCase() ?? 'incomplete'}`
   if (hasIssues(review)) return 'Reviewed · issues'
-  if (isIncomplete(review)) return 'Incomplete'
   return 'Reviewed'
 }
 
 function statusClass(review: ReviewData | undefined) {
   if (!review?.reviewedAt) return 'status-neutral'
-  if (hasIssues(review)) return 'status-warning'
+  if (hasIssues(review) || isIncomplete(review)) return 'status-warning'
   return 'status-ready'
 }
 
@@ -807,22 +811,24 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date)
 }
 
-function formatScore(value: number) {
-  return value === 0 ? '0.0' : value.toFixed(1)
+function formatScore(value: number | null) {
+  if (value === null) return '—'
+  return value.toFixed(1)
 }
 
 async function loadEvidence(item: EvidenceItem) {
   selectedEvidenceId.value = item.id
-  evidencePayload.value = null
+  evidencePayload.value = normalizeEvidence(item)
   evidenceError.value = ''
   if (!item.id) return
-  evidenceLoading.value = true
+  evidenceLoading.value = !item.text && !item.pages?.length
   try {
     const response = await fetch(`${props.apiBase}/evidence/${encodeURIComponent(item.id)}`, { credentials: 'include', headers: { Accept: 'application/json' } })
     if (!response.ok) throw new Error(`Evidence request failed (${response.status})`)
     evidencePayload.value = normalizeEvidence(await response.json())
   } catch (error) {
-    evidenceError.value = error instanceof Error ? error.message : 'Evidence could not be loaded.'
+    if (!evidencePayload.value?.text && !evidencePayload.value?.pages?.length)
+      evidenceError.value = error instanceof Error ? error.message : 'Evidence could not be loaded.'
   } finally {
     evidenceLoading.value = false
   }
@@ -837,7 +843,7 @@ function openEvidenceForTeam() {
 function evidenceIcon(kind: EvidenceItem['kind']) {
   if (kind === 'source') return GitBranch
   if (kind === 'document') return FileText
-  if (kind === 'video' || kind === 'transcript') return Video
+  if (kind === 'transcript') return FileText
   if (kind === 'link') return LinkIcon
   return Database
 }
@@ -957,7 +963,8 @@ async function loadAssessmentJobs() {
     const response = await fetch(endpoint, { credentials: 'include', headers: { Accept: 'application/json' } })
     if (!response.ok) return
     const payload = await response.json()
-    assessmentJobs.value = Array.isArray(payload) ? payload : (payload.jobs ?? [])
+    const jobs = Array.isArray(payload) ? payload : (payload.jobs ?? [])
+    assessmentJobs.value = jobs.map(normalizeAssessmentJob)
   } catch {
     // Assessment jobs are supplementary to the judging state; keep the workspace usable.
   }
@@ -1003,7 +1010,7 @@ function teamName(teamId: string) {
 
 function handleOnline() {
   isOnline.value = true
-  syncState.value = dirtyKeys.size ? 'pending' : 'idle'
+  syncState.value = dirtyKeys.size ? 'pending' : 'synced'
   void fetchState({ silent: true })
   for (const key of dirtyKeys) void saveRecord(key)
 }
@@ -1054,6 +1061,28 @@ function openSubmissionLink() {
   }
 }
 
+async function downloadExport(finalExport: boolean) {
+  exportMessage.value = ''
+  if (finalExport && !readinessResult.value.ready) {
+    exportMessage.value = 'Final export is locked until all nine reviews and judge details are ready.'
+    return
+  }
+  const pendingKeys = [...dirtyKeys]
+  if (pendingKeys.length) await Promise.all(pendingKeys.map(key => saveRecord(key)))
+  if (dirtyKeys.size || conflict.value) {
+    exportMessage.value = 'Export is waiting for local edits or a conflict to finish syncing.'
+    return
+  }
+  if (typeof document === 'undefined') return
+  const anchor = document.createElement('a')
+  anchor.href = `${props.apiBase}/exports?final=${finalExport ? '1' : '0'}`
+  anchor.download = ''
+  anchor.rel = 'noreferrer'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
 watch(() => props.apiBase, () => { void fetchState() })
 watch(selectedTeamId, () => {
   evidencePayload.value = null
@@ -1098,7 +1127,7 @@ onBeforeUnmount(() => {
       <div class="header-title">
         <div class="eyebrow"><ClipboardCheck :size="15" aria-hidden="true" /> SDC 2026 · judging desk</div>
         <h1>{{ assignment.title }}</h1>
-        <p>{{ assignment.id }} · {{ assignment.domain }} · {{ assignment.timezone }}</p>
+        <p>{{ assignment.id }} · {{ assignment.judgeId }} · {{ assignment.domain }} · {{ assignment.timezone }}</p>
       </div>
       <div class="header-actions">
         <span class="sync-pill" :class="`sync-${syncTone}`" role="status" aria-live="polite">
@@ -1145,12 +1174,12 @@ onBeforeUnmount(() => {
     <section class="judge-strip" aria-labelledby="judge-profile-heading">
       <div>
         <div class="eyebrow" id="judge-profile-heading">Judge profile</div>
-        <p class="muted-copy">The review is durable only after the judge identity and acknowledgement are saved.</p>
+         <p class="muted-copy">Edits save to the judging record automatically; keep this station synced before leaving.</p>
       </div>
       <div class="judge-fields">
         <label>Judge name<input v-model="judgeDraft.name" autocomplete="name" placeholder="Name" @input="markJudgeDirty" /></label>
         <label>Review date<input v-model="judgeDraft.date" type="date" @change="markJudgeDirty" /></label>
-        <label>Domain<select v-model="judgeDraft.domain" @change="markJudgeDirty"><option>Domain 1 · Digital fluency</option><option>Domain 2 · Future skills</option><option>Domain 3 · Community impact</option></select></label>
+        <label>Assigned domain<output class="field-output">{{ assignment.domain }}</output></label>
         <label class="judge-notes">General notes<textarea v-model="judgeDraft.generalNotes" rows="2" placeholder="Context for the review desk" @input="markJudgeDirty" /></label>
         <label class="check-label"><input v-model="judgeDraft.warningsAcknowledged" type="checkbox" @change="markJudgeDirty" /> I understand evidence is unverified until observed</label>
       </div>
@@ -1160,8 +1189,8 @@ onBeforeUnmount(() => {
       <div class="section-heading">
         <div><div class="eyebrow">Review queue</div><h2 id="review-overview-heading">Nine teams, one source of truth</h2></div>
         <div class="section-actions">
-          <a class="secondary-button" :href="`${apiBase}/exports?final=0`" download><Download :size="15" aria-hidden="true" /> Draft export</a>
-          <a class="primary-button" :href="`${apiBase}/exports?final=1`" download><Download :size="15" aria-hidden="true" /> Final export</a>
+          <button class="secondary-button" type="button" @click="downloadExport(false)"><Download :size="15" aria-hidden="true" /> Draft export</button>
+          <button class="primary-button" type="button" :disabled="!readinessResult.ready" :title="readinessResult.ready ? 'Download the final workbook' : 'Complete all nine reviewed rows first'" @click="downloadExport(true)"><Download :size="15" aria-hidden="true" /> Final export</button>
         </div>
       </div>
       <div class="queue-toolbar">
@@ -1182,8 +1211,8 @@ onBeforeUnmount(() => {
             <tr v-for="team in filteredTeams" :key="team.id" :class="{ selected: selectedTeamId === team.id }" @click="selectTeam(team.id)">
               <th scope="row"><button type="button" class="team-link" @click.stop="selectTeam(team.id)"><span>{{ team.name }}</span><small>{{ team.id }}</small></button></th>
               <td><span class="status-badge" :class="statusClass(reviewDrafts[team.id])">{{ statusLabel(reviewDrafts[team.id]) }}</span></td>
-              <td><div class="score-cell"><strong>{{ formatScore(scoreFor(reviewDrafts[team.id])) }}</strong><span class="weighted-bar"><i :style="{ width: `${Math.min(100, scoreFor(reviewDrafts[team.id]))}%` }" /></span><small>/ 100</small></div></td>
-              <td><div class="heatmap" :aria-label="`${team.name} feature status`"><span v-for="(feature, index) in (reviewDrafts[team.id]?.features ?? defaultReview().features)" :key="index" :class="featureClass(feature.demo)" :title="`${features[index]} · demo ${feature.demo}`" /></div></td>
+              <td><div class="score-cell"><strong>{{ formatScore(scoreFor(reviewDrafts[team.id])) }}</strong><span class="weighted-bar"><i :style="{ width: `${Math.min(100, scoreFor(reviewDrafts[team.id]) ?? 0)}%` }" /></span><small>/ 100</small></div></td>
+              <td><div class="heatmap" :aria-label="`${team.name} feature status`"><span v-for="(feature, index) in (reviewDrafts[team.id]?.features ?? defaultReview(team.id).features)" :key="index" :class="featureClass(feature.demo)" :title="`${features[index]} · demo ${feature.demo}`" /></div></td>
               <td><button type="button" class="evidence-count" @click.stop="selectTeam(team.id); openEvidenceForTeam()"><FileText :size="14" aria-hidden="true" /> {{ evidenceRecords.filter(item => item.teamId === team.id).length }}</button></td>
               <td><ChevronRight :size="17" aria-hidden="true" /></td>
             </tr>
@@ -1214,7 +1243,7 @@ onBeforeUnmount(() => {
           <div class="panel-heading"><div><h3>Evidence</h3><p>Safe text only · source lines and PDF pages</p></div><button v-if="local" class="icon-button" type="button" aria-label="Run local intake" :disabled="intakeLoading" @click="startIntake"><RefreshCw :size="15" aria-hidden="true" /></button></div>
           <p v-if="intakeMessage" class="feedback" role="status">{{ intakeMessage }}</p>
           <p v-if="local && intakeProgress" class="feedback" role="status">Intake {{ intakeProgress.status ?? 'pending' }}<span v-if="intakeProgress.progress !== undefined"> · {{ intakeProgress.progress }}%</span></p>
-          <button v-for="item in selectedTeamEvidence" :key="item.id" type="button" class="evidence-item" :class="{ active: selectedEvidence?.id === item.id }" @click="loadEvidence(item)"><component :is="evidenceIcon(item.kind)" :size="16" aria-hidden="true" /><span><strong>{{ item.title }}</strong><small>{{ item.kind }}<span v-if="item.hash"> · {{ item.hash.slice(0, 8) }}</span></small></span><ChevronRight :size="14" aria-hidden="true" /></button>
+          <button v-for="item in selectedTeamEvidence" :key="item.id" type="button" class="evidence-item" :class="{ active: selectedEvidence?.id === item.id }" @click="loadEvidence(item)"><component :is="evidenceIcon(item.kind)" :size="16" aria-hidden="true" /><span><strong>{{ item.title }}</strong><small>{{ item.kind }}<span v-if="item.sha256 || item.snapshotSha"> · {{ (item.sha256 || item.snapshotSha)?.slice(0, 8) }}</span></small></span><ChevronRight :size="14" aria-hidden="true" /></button>
           <p v-if="!selectedTeamEvidence.length" class="empty-copy">No evidence records for this team yet.</p>
         </aside>
         <article class="evidence-reader" aria-live="polite">
@@ -1222,7 +1251,7 @@ onBeforeUnmount(() => {
           <div v-else-if="evidenceError" class="reader-state reader-error"><AlertTriangle :size="18" aria-hidden="true" /> {{ evidenceError }}</div>
           <template v-else-if="selectedEvidence">
             <header class="reader-header"><div><div class="eyebrow">{{ selectedEvidence.kind }} · {{ selectedEvidence.observed ? 'observed' : 'not observed' }}</div><h3>{{ selectedEvidence.title }}</h3><p v-if="selectedEvidence.path">{{ selectedEvidence.path }}</p></div><a v-if="selectedEvidence.url" class="icon-button" :href="selectedEvidence.url" target="_blank" rel="noreferrer" aria-label="Open evidence link"><ExternalLink :size="16" aria-hidden="true" /></a></header>
-            <div class="reader-meta"><span v-if="selectedEvidence.hash">Hash {{ selectedEvidence.hash }}</span><span>Rendered as text; participant HTML is never executed.</span></div>
+            <div class="reader-meta"><span v-if="selectedEvidence.sha256">SHA-256 {{ selectedEvidence.sha256 }}</span><span v-else-if="selectedEvidence.snapshotSha">Snapshot {{ selectedEvidence.snapshotSha }}</span><span v-if="selectedEvidence.lines !== undefined">{{ selectedEvidence.lines }} source lines</span><span>Rendered as text; participant HTML is never executed.</span></div>
             <div class="source-reader"><div v-for="line in selectedEvidenceLines" :key="line.number" class="source-line"><span>{{ line.number }}</span><code>{{ line.text }}</code></div><p v-if="!selectedEvidenceLines.length" class="empty-copy">This evidence record has no readable text.</p></div>
             <div v-if="selectedEvidence.pages?.length" class="pdf-pages"><h4>PDF pages</h4><div v-for="page in selectedEvidence.pages" :key="page.page"><strong>Page {{ page.page }}</strong><p>{{ page.text }}</p></div></div>
           </template>
@@ -1231,9 +1260,13 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else class="workbench-panel scoring-panel">
-        <div class="score-form">
+          <div class="score-form">
           <div class="panel-heading"><div><h3>Weighted scoring</h3><p>Scores stay decimal precise. Blank is different from zero.</p></div><strong class="large-score">{{ formatScore(selectedScore) }}<small>/100</small></strong></div>
-          <div class="criteria-grid"><label v-for="(weight, index) in weights" :key="weight.id" class="score-field"><span>{{ weight.label }} <small>{{ weight.weight }}%</small></span><input :value="selectedReview.scores[index] === null ? '' : selectedReview.scores[index]" type="number" min="0" max="10" step="0.1" inputmode="decimal" :aria-label="`${weight.label} score out of 10`" placeholder="—" @input="setScore(index, $event)" /><em>/10</em></label></div>
+          <div class="criteria-grid"><label v-for="(criterion, index) in criteria" :key="criterion.id" class="score-field"><span>{{ criterion.label }} <small>{{ Math.round(criterion.weight * 100) }}%</small></span><input :value="selectedReview.scores[index] === null ? '' : selectedReview.scores[index]" type="number" min="0" max="100" step="0.1" inputmode="decimal" :aria-label="`${criterion.label} score out of 100`" placeholder="—" @input="setScore(index, $event)" /><em>/100</em></label></div>
+          <section v-if="selectedAssessment" class="ai-suggestion" aria-labelledby="ai-suggestion-heading">
+            <div class="panel-heading"><div><h4 id="ai-suggestion-heading">AI assessment suggestion</h4><p>Suggestions stay separate from the judge’s scores until explicitly copied as a draft.</p></div><button class="secondary-button" type="button" @click="acceptAssessmentScores">Use as draft</button></div>
+            <div class="ai-score-list"><span v-for="(score, index) in selectedAssessment.suggestedScores" :key="criteria[index].id"><strong>{{ criteria[index].label }}</strong><em>{{ formatScore(score) }}/100</em></span></div>
+          </section>
           <div class="repo-check"><label>Repository check<select :value="selectedReview.repoCheck" @change="handleRepoCheckChange"><option value="">Choose an observation</option><option value="Yes">Yes</option><option value="No – private/broken">No – private/broken</option><option value="No – doesn't match demo">No – doesn't match demo</option></select></label><p class="micro-copy"><Video :size="14" aria-hidden="true" /> Video links remain unobserved until the judge opens them.</p></div>
           <div class="feature-review"><div class="panel-heading"><div><h3>Six feature checks</h3><p>Proposal covers all six; demo check records the main feature observed.</p></div><a class="text-button" href="#evidence-citations" @click.prevent="openEvidenceForTeam">Jump to evidence</a></div><div class="feature-table"><div class="feature-row feature-header"><span>Feature</span><span>Proposal</span><span>Demo</span><span>Note</span></div><div v-for="(feature, index) in selectedReview.features" :key="index" class="feature-row"><strong>{{ features[index] ?? `Feature ${index + 1}` }}</strong><select :value="feature.proposal" :class="featureClass(feature.proposal)" :aria-label="`${features[index]} proposal status`" @change="setFeatureStatus(index, 'proposal', $event)"><option value="unverified">Unverified</option><option value="present">Present</option><option value="missing">Missing</option></select><select :value="feature.demo" :class="featureClass(feature.demo)" :aria-label="`${features[index]} demo status`" @change="setFeatureStatus(index, 'demo', $event)"><option value="unverified">Unverified</option><option value="present">Present</option><option value="missing">Missing</option></select><input :value="feature.note" :aria-label="`${features[index]} note`" placeholder="Evidence note" @input="updateFeatureNote(index, $event)" /></div></div></div>
           <div class="review-approval"><label class="check-label"><input :checked="selectedReview.warningsAcknowledged" type="checkbox" @change="handleWarningsChange" /> I acknowledge the warnings on this review</label><button class="primary-button" type="button" :disabled="!selectedReviewReady" @click="approveReview"><Check :size="15" aria-hidden="true" /> Mark reviewed</button></div>
@@ -1243,12 +1276,12 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="operations-grid" aria-label="Operations">
-      <article class="operations-card"><div class="panel-heading"><div><div class="eyebrow">Local station</div><h3>{{ local ? 'Pair this station' : 'Pair a judging station' }}</h3></div><GitBranch :size="17" aria-hidden="true" /></div><p class="muted-copy">Pairing grants a short-lived code. It never submits a participant link.</p><form class="pair-form" @submit.prevent="local ? pairLocalDevice() : createAdminPairCode()"><label v-if="local">Pairing code<input v-model="pairCode" autocomplete="one-time-code" inputmode="numeric" maxlength="8" placeholder="Enter code" /></label><output v-else-if="pairCode" class="pair-code" aria-label="Pairing code">{{ pairCode }}</output><button class="secondary-button" type="submit" :disabled="pairLoading">{{ local ? 'Pair station' : 'Create 10-minute code' }}</button></form><p v-if="pairMessage" class="feedback" role="status">{{ pairMessage }}</p><ul v-if="!local && pairedDevices.length" class="device-list"><li v-for="device in pairedDevices" :key="device.id ?? device.deviceId"><span><strong>{{ device.name ?? device.label ?? 'Judging station' }}</strong><small>{{ device.lastSeenAt ? `Last seen ${formatDateTime(device.lastSeenAt)}` : 'Pending' }}</small></span><button class="text-button danger-text" type="button" @click="revokeDevice(device)">Revoke</button></li></ul></article>
-      <article class="operations-card"><div class="panel-heading"><div><div class="eyebrow">Export and intake</div><h3>Evidence remains reviewable</h3></div><Download :size="17" aria-hidden="true" /></div><p class="muted-copy">Intake adds selected evidence records; exports stay separate from link submission.</p><div class="operation-buttons"><button v-if="local" class="secondary-button" type="button" :disabled="intakeLoading" @click="startIntake"><RefreshCw :size="15" aria-hidden="true" /> {{ intakeLoading ? 'Intake running…' : 'Run local intake' }}</button><a class="secondary-button" :href="`${apiBase}/exports?final=0`" download><Download :size="15" aria-hidden="true" /> Draft XLSX</a><a class="primary-button" :href="`${apiBase}/exports?final=1`" download><Download :size="15" aria-hidden="true" /> Final XLSX</a></div><p class="micro-copy"><ShieldCheck :size="14" aria-hidden="true" /> Final export should be used only after explicit reviewed approval.</p></article>
+      <article class="operations-card"><div class="panel-heading"><div><div class="eyebrow">Local station</div><h3>{{ local ? 'Pair this station' : 'Pair a judging station' }}</h3></div><GitBranch :size="17" aria-hidden="true" /></div><p class="muted-copy">Pairing connects this station to the seven-day event scope and keeps the credential out of the browser.</p><form class="pair-form" @submit.prevent="local ? pairLocalDevice() : createAdminPairCode()"><label v-if="local">Pairing code<input v-model="pairCode" autocomplete="one-time-code" inputmode="numeric" maxlength="8" placeholder="Enter code" /></label><output v-else-if="pairCode" class="pair-code" aria-label="Pairing code">{{ pairCode }}</output><button class="secondary-button" type="submit" :disabled="pairLoading">{{ local ? 'Pair station' : 'Create 10-minute code' }}</button></form><p v-if="pairMessage" class="feedback" role="status">{{ pairMessage }}</p><ul v-if="!local && pairedDevices.length" class="device-list"><li v-for="device in pairedDevices" :key="device.id ?? device.deviceId"><span><strong>{{ device.name ?? device.label ?? 'Judging station' }}</strong><small>{{ device.lastSeenAt ? `Last seen ${formatDateTime(device.lastSeenAt)}` : 'Pending' }}</small></span><button class="text-button danger-text" type="button" @click="revokeDevice(device)">Revoke</button></li></ul></article>
+      <article class="operations-card"><div class="panel-heading"><div><div class="eyebrow">Export and intake</div><h3>Evidence remains reviewable</h3></div><Download :size="17" aria-hidden="true" /></div><p class="muted-copy">Intake adds selected evidence records; exports stay separate from link submission.</p><div class="operation-buttons"><button v-if="local" class="secondary-button" type="button" :disabled="intakeLoading" @click="startIntake"><RefreshCw :size="15" aria-hidden="true" /> {{ intakeLoading ? 'Intake running…' : 'Run local intake' }}</button><button class="secondary-button" type="button" @click="downloadExport(false)"><Download :size="15" aria-hidden="true" /> Draft XLSX</button><button class="primary-button" type="button" :disabled="!readinessResult.ready" @click="downloadExport(true)"><Download :size="15" aria-hidden="true" /> Final XLSX</button></div><p v-if="exportMessage" class="feedback" role="status">{{ exportMessage }}</p><p class="micro-copy"><ShieldCheck :size="14" aria-hidden="true" /> Final export should be used only after explicit reviewed approval.</p></article>
     </section>
 
     <div v-if="conflict" ref="conflictDialog" class="modal-scrim" role="dialog" aria-modal="true" aria-labelledby="conflict-title" tabindex="-1">
-      <div class="conflict-dialog"><button class="icon-button close-modal" type="button" aria-label="Close conflict dialog" @click="conflict = null"><X :size="17" aria-hidden="true" /></button><div class="eyebrow">Version conflict</div><h2 id="conflict-title">Choose which review to keep</h2><p>The server changed <strong>{{ conflict.key }}</strong> while this station had edits pending. Compare the two snapshots before continuing.</p><div class="conflict-grid"><div><h3>This station</h3><pre>{{ JSON.stringify(conflict.local.data, null, 2) }}</pre></div><div><h3>Server</h3><pre>{{ JSON.stringify(conflict.current.data, null, 2) }}</pre></div></div><div class="dialog-actions"><button class="secondary-button" type="button" @click="resolveConflict('server')">Use server snapshot</button><button class="primary-button" type="button" @click="resolveConflict('local')">Keep my edits and retry</button></div></div>
+      <div class="conflict-dialog"><button class="icon-button close-modal" type="button" aria-label="Close conflict dialog" @click="conflict = null"><X :size="17" aria-hidden="true" /></button><div class="eyebrow">Version conflict</div><h2 id="conflict-title">Choose which review to keep</h2><p>The server changed <strong>{{ conflict.key }}</strong> while this station had edits pending. Compare the two snapshots before continuing.</p><div class="conflict-grid"><div><h3>This station</h3><pre>{{ JSON.stringify(conflict.local.data, null, 2) }}</pre></div><div><h3>Server</h3><pre>{{ JSON.stringify(conflict.current.data, null, 2) }}</pre></div></div><div class="dialog-actions"><button class="secondary-button" type="button" @click="resolveConflict('remote')">Use server snapshot</button><button class="primary-button" type="button" @click="resolveConflict('local')">Keep my edits and retry</button></div></div>
     </div>
   </main>
 </template>
@@ -1376,7 +1409,8 @@ h4 { font-size: 0.78rem; }
 .judge-strip { display: grid; grid-template-columns: minmax(11rem, 0.65fr) minmax(0, 1.35fr); gap: 1rem; padding: 0.9rem; }
 .judge-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 0.65rem; }
 .judge-fields label, .pair-form label, .submission-form label, .repo-check label { display: grid; gap: 0.28rem; color: var(--judge-muted); font-size: 0.69rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
-.judge-fields input, .judge-fields select, .judge-fields textarea, .pair-form input, .submission-form input, .repo-check select, .notes-panel textarea, .note-entry input, .feature-row input, .feature-row select, .score-field input { width: 100%; min-height: 2.35rem; border: 1px solid var(--judge-border); border-radius: 0.35rem; background: var(--judge-surface-raised); color: var(--judge-text); padding: 0.48rem 0.55rem; font-size: 0.78rem; letter-spacing: normal; text-transform: none; }
+.judge-fields input, .judge-fields select, .judge-fields textarea, .field-output, .pair-form input, .submission-form input, .repo-check select, .notes-panel textarea, .note-entry input, .feature-row input, .feature-row select, .score-field input { width: 100%; min-height: 2.35rem; border: 1px solid var(--judge-border); border-radius: 0.35rem; background: var(--judge-surface-raised); color: var(--judge-text); padding: 0.48rem 0.55rem; font-size: 0.78rem; letter-spacing: normal; text-transform: none; }
+.field-output { display: flex; align-items: center; }
 .judge-fields textarea { resize: vertical; grid-column: 1 / -1; }
 .judge-fields .judge-notes { grid-column: 1 / -1; }
 .check-label { display: flex !important; align-items: flex-start; gap: 0.42rem; color: var(--judge-text) !important; font-size: 0.73rem !important; font-weight: 650 !important; letter-spacing: normal !important; text-transform: none !important; }
@@ -1471,6 +1505,12 @@ h4 { font-size: 0.78rem; }
 .score-field > span small { color: var(--judge-text); }
 .score-field em { position: absolute; right: 0.55rem; bottom: 0.62rem; color: var(--judge-muted); font-size: 0.66rem; font-style: normal; }
 .score-field input { padding-right: 2rem; }
+.ai-suggestion { display: grid; gap: 0.6rem; margin-top: 0.8rem; border: 1px dashed var(--judge-yellow); background: color-mix(in srgb, var(--judge-yellow) 8%, var(--judge-surface)); padding: 0.7rem; }
+.ai-suggestion p { margin-top: 0.18rem; color: var(--judge-muted); font-size: 0.68rem; }
+.ai-score-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; }
+.ai-score-list span { display: grid; gap: 0.18rem; border: 1px solid var(--judge-border); background: var(--judge-surface-raised); padding: 0.4rem 0.5rem; }
+.ai-score-list strong { color: var(--judge-muted); font-size: 0.64rem; }
+.ai-score-list em { font-size: 0.82rem; font-style: normal; font-weight: 800; }
 .repo-check { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin-top: 0.75rem; }
 .repo-check label { flex: 1 1 16rem; }
 .micro-copy { display: flex; align-items: center; gap: 0.35rem; color: var(--judge-muted); font-size: 0.68rem; }
@@ -1541,6 +1581,7 @@ h4 { font-size: 0.78rem; }
   .evidence-list { border-right: 0; border-bottom: 1px solid var(--judge-border); padding: 0 0 0.75rem; }
   .criteria-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .repo-check { align-items: stretch; flex-direction: column; }
+  .ai-score-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .operations-grid { grid-template-columns: 1fr; }
 }
 
