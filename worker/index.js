@@ -83,6 +83,7 @@ function mapCategory(row) {
     name: row.name,
     color_class: row.color_class ?? null,
     sort_order: row.sort_order,
+    ...(row.icon_key ? { icon_key: row.icon_key } : {}),
   };
 }
 
@@ -119,7 +120,7 @@ async function handleCategories(request, env) {
 
   const result = await env.DB
     .prepare(`
-      SELECT slug, name, color_class, sort_order
+      SELECT slug, name, color_class, sort_order, icon_key
       FROM blog_categories
       WHERE is_active = 1
       ORDER BY sort_order ASC, name ASC

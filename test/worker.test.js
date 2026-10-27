@@ -271,6 +271,17 @@ function createDatabase(fixtures = null) {
   return { database, d1: new SQLiteD1(database) };
 }
 
+test('public category controls receive the saved pixel icon setting', async (t) => {
+  const { database, d1 } = createDatabase(blogFixtures());
+  t.after(() => database.close());
+  database.prepare('UPDATE blog_categories SET icon_key = ? WHERE slug = ?').run('robotics', 'alpha');
+  const response = await workerFetch(request('/api/blog/categories'), environment(d1));
+  const categories = await response.json();
+  assert.equal(categories.find(category => category.slug === 'alpha').icon_key, 'robotics');
+  assert.equal(categories.some(category => category.slug === 'hidden'), false);
+  assert.equal(categories.find(category => category.slug === 'zeta').icon_key, 'general');
+});
+
 test('blog APIs return only active categories and currently published post fields', async (t) => {
   const { database, d1 } = createDatabase(blogFixtures());
   t.after(() => database.close());
@@ -279,8 +290,8 @@ test('blog APIs return only active categories and currently published post field
   const categories = await workerFetch(request('/api/blog/categories'), env);
   assert.equal(categories.status, 200);
   assert.deepEqual(await categories.json(), [
-    { slug: 'alpha', name: 'Alpha', color_class: null, sort_order: 1 },
-    { slug: 'zeta', name: 'Zeta', color_class: 'blue', sort_order: 1 },
+    { slug: 'alpha', name: 'Alpha', color_class: null, sort_order: 1, icon_key: 'general' },
+    { slug: 'zeta', name: 'Zeta', color_class: 'blue', sort_order: 1, icon_key: 'general' },
   ]);
 
   const posts = await workerFetch(request('/api/blog/posts'), env);
