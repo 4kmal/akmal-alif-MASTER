@@ -210,5 +210,5 @@ export function createIntakeQueue(workspace, assignment, store) {
     })();
     return state;
   }
-  return { start, state: () => ({ ...state }) };
+  return { start, state: () => ({ ...state, status: state.running ? 'running' : state.finishedAt ? (state.errors.length ? 'finished with issues' : 'complete') : 'idle', ...(state.total ? { progress: Math.round(state.completed / state.total * 100) } : {}) }) };
 }
