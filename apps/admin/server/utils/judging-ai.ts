@@ -5,6 +5,7 @@ import { parseAiResponse } from './ai'
 import {
   changes,
   first,
+  getJudgingRecord,
   judgingEnv,
   JUDGING_EVENT_ID,
   parseJudgingRecordRow,
@@ -231,7 +232,8 @@ function integer(value: unknown): value is number {
 }
 
 function evidenceKind(value: EvidenceData): 'participant-claim' | 'code-evidence' | 'transcript' | 'document' | 'link' {
-  if (value.kind === 'source')
+  const path = typeof value.path === 'string' ? value.path.toLowerCase() : ''
+  if (value.kind === 'source' && !/(?:^|[\\/])(?:readme(?:\.md)?|[^\\/]+\.(?:md|txt))$/.test(path))
     return 'code-evidence'
   if (value.kind === 'transcript')
     return 'transcript'
@@ -348,7 +350,7 @@ function normalizeFeatures(value: unknown, rootCitations: Record<string, unknown
       feature: feature.id,
       proposal: typeof proposal === 'string' ? proposal : 'unverified',
       demo: 'unverified',
-      note: object?.note == null ? undefined : textValue(object.note, `features[${index}].note`),
+      note: object?.note == null ? '' : textValue(object.note, `features[${index}].note`),
       citations,
     }
   })
@@ -371,10 +373,14 @@ function normalizeScores(value: unknown, rootCitations: Record<string, unknown>[
       return { criterion: criterion.id, score: item, citations: rootCitations }
     }
     const object = objectValue(item)
-    if (!object || typeof object.score !== 'number' || !Number.isFinite(object.score) || object.score < 0 || object.score > 100)
+    if (!object)
       throw new Error(`AI draft scores[${index}] is invalid`)
     if (object.criterion != null && object.criterion !== criterion.id)
       throw new Error(`AI draft scores[${index}].criterion must be ${criterion.id}`)
+    if (object.score === null)
+      return { criterion: criterion.id, score: null, citations: [] }
+    if (typeof object.score !== 'number' || !Number.isFinite(object.score) || object.score < 0 || object.score > 100)
+      throw new Error(`AI draft scores[${index}] is invalid`)
     return {
       criterion: criterion.id,
       score: object.score,
@@ -412,7 +418,9 @@ export function validateAiDraft(value: unknown, evidence: Record<string, unknown
     if (id)
       evidenceById.set(id, item as PreparedEvidence)
   }
-  const rootCitations = draft.citations == null ? [] : validateCitations(draft.citations, evidenceById)
+  const rootCitations = draft.citations == null || (Array.isArray(draft.citations) && draft.citations.length === 0)
+    ? []
+    : validateCitations(draft.citations, evidenceById)
   const strengths = normalizeTextItems(draft.strengths, 'strengths', evidenceById)
   const concerns = normalizeTextItems(draft.concerns, 'concerns', evidenceById)
   const features = normalizeFeatures(draft.features, rootCitations, evidenceById)

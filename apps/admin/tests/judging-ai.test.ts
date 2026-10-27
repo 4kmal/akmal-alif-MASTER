@@ -48,12 +48,12 @@ describe('judging AI draft validation', () => {
       strengths: [{ text: 'The source contains the requested behavior.', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 2, evidenceKind: 'code-evidence' }] }],
       concerns: [{ text: 'The brief leaves one edge case unclear.', citations: [{ evidenceId: 'brief-1', page: 1, evidenceKind: 'document' }] }],
       features: [
-        { feature: 'profiles', proposal: 'present', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 3, lineEnd: 3, evidenceKind: 'code-evidence' }] },
-        { feature: 'trends', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
-        { feature: 'matching', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
-        { feature: 'reskilling', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
-        { feature: 'sdg', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
-        { feature: 'scenarios', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'profiles', proposal: 'present', demo: 'unverified', note: '', citations: [{ evidenceId: 'source-1', lineStart: 3, lineEnd: 3, evidenceKind: 'code-evidence' }] },
+        { feature: 'trends', proposal: 'unverified', demo: 'unverified', note: '', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'matching', proposal: 'unverified', demo: 'unverified', note: '', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'reskilling', proposal: 'unverified', demo: 'unverified', note: '', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'sdg', proposal: 'unverified', demo: 'unverified', note: '', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'scenarios', proposal: 'unverified', demo: 'unverified', note: '', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
       ],
       scores: [
         { criterion: 'innovation', score: 80, citations: [{ evidenceId: 'source-1', lineStart: 2, lineEnd: 2, evidenceKind: 'code-evidence' }] },
@@ -64,6 +64,43 @@ describe('judging AI draft validation', () => {
       citations: [],
     })
     expect(draft).not.toHaveProperty('automaticReview')
+  })
+
+  it('allows unsupported criterion scores without citations and labels Markdown source as participant claim', () => {
+    const markdownEvidence = {
+      id: 'readme-1',
+      teamId: '01-console',
+      path: 'README.md',
+      kind: 'source',
+      text: 'The proposal describes the feature.',
+      lines: 1,
+      sha256: 'e'.repeat(64),
+      snapshotSha: 'f'.repeat(40),
+      createdAt: '2026-10-28T00:00:00.000Z',
+    }
+    const draft = validateAiDraft({
+      strengths: [{ text: 'The proposal describes the feature.', citations: [{ evidenceId: 'readme-1', line: 1 }] }],
+      features: ['profiles', 'trends', 'matching', 'reskilling', 'sdg', 'scenarios'].map(feature => ({
+        feature,
+        proposal: 'unverified',
+        demo: 'unverified',
+        citations: [{ evidenceId: 'readme-1', line: 1 }],
+      })),
+      scores: [
+        { criterion: 'innovation', score: null },
+        { criterion: 'problemSolutionFit', score: null, citations: [] },
+        { criterion: 'feasibility', score: null },
+        { criterion: 'clarity', score: null },
+      ],
+    }, [markdownEvidence])
+
+    expect(draft.scores).toEqual([
+      { criterion: 'innovation', score: null, citations: [] },
+      { criterion: 'problemSolutionFit', score: null, citations: [] },
+      { criterion: 'feasibility', score: null, citations: [] },
+      { criterion: 'clarity', score: null, citations: [] },
+    ])
+    expect(draft.strengths).toEqual([{ text: 'The proposal describes the feature.', citations: [{ evidenceId: 'readme-1', lineStart: 1, lineEnd: 1, evidenceKind: 'participant-claim' }] }])
   })
 
   it('rejects fabricated evidence locations and absent citations', () => {
