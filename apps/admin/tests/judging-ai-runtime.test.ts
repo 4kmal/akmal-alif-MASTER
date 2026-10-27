@@ -311,7 +311,12 @@ describe('judging AI runtime contract', () => {
         cloudflare: {
           env: {
             DB: database,
-            AI: { run: async (_model: string, payload: Record<string, unknown>) => { calls.push(payload); return { status: 'running', request_id: 'batch-1' } } },
+            AI: {
+              run: async (_model: string, payload: Record<string, unknown>) => {
+                calls.push(payload)
+                return { status: 'running', request_id: 'batch-1' }
+              },
+            },
           },
           context: { waitUntil: (promise: Promise<unknown>) => { waiters.push(promise) } },
         },
@@ -369,7 +374,12 @@ describe('judging AI runtime contract', () => {
         cloudflare: {
           env: {
             DB: database,
-            AI: { run: async (_model: string, payload: Record<string, unknown>) => { calls.push(payload); return { status: 'completed', responses: [{ success: false, error: { message: 'provider exploded' } }] } } },
+            AI: {
+              run: async (_model: string, payload: Record<string, unknown>) => {
+                calls.push(payload)
+                return { status: 'completed', responses: [{ success: false, error: { message: 'provider exploded' } }] }
+              },
+            },
           },
         },
       },
@@ -382,6 +392,67 @@ describe('judging AI runtime contract', () => {
     expect(row.error).toContain('provider exploded')
     expect(row.draft_json).toBeNull()
     expect(calls).toEqual([{ request_id: 'batch-1' }])
+  })
+
+  it('reports bounded batch response shape when a completed response has no responses', async () => {
+    const evidenceId = 'a'.repeat(32)
+    insertAssessmentFixture(database, evidenceId)
+    const input = await buildAssessmentInput(database as never, '01-console')
+    const jobId = '77777777-7777-4777-8777-777777777777'
+    insertJob(database, jobId, '01-console', input.inputHash)
+    setPendingJob(database, jobId, input.inputHash)
+    const event = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: { run: async () => ({ status: 'completed', unexpected: true }) },
+          },
+        },
+      },
+    } as unknown as H3Event
+
+    await runJudgingJob(event, jobId)
+
+    const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string }
+    expect(row.status).toBe('failed')
+    expect(row.error).toContain('Workers AI batch returned no responses')
+    expect(row.error).toContain('keys=status,unexpected')
+    expect(row.error).toContain('status=completed')
+    expect(row.error).toContain('responses=undefined')
+  })
+
+  it('reports bounded response shape when model output is not a JSON object', async () => {
+    const evidenceId = 'a'.repeat(32)
+    insertAssessmentFixture(database, evidenceId)
+    const input = await buildAssessmentInput(database as never, '01-console')
+    const jobId = '88888888-8888-4888-8888-888888888888'
+    insertJob(database, jobId, '01-console', input.inputHash)
+    setPendingJob(database, jobId, input.inputHash)
+    const event = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: {
+              run: async () => ({
+                status: 'completed',
+                responses: [{ success: true, result: { response: '<think>private reasoning</think>\\n{"features":[]}' } }],
+              }),
+            },
+          },
+        },
+      },
+    } as unknown as H3Event
+
+    await runJudgingJob(event, jobId)
+
+    const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string }
+    expect(row.status).toBe('failed')
+    expect(row.error).toContain('AI draft response yielded an empty JSON object')
+    expect(row.error).toContain('responseKeys=response')
+    expect(row.error).toContain(':think')
+    expect(row.error).not.toContain('private reasoning')
   })
 
   it('does not poll a batch after input evidence changes', async () => {
@@ -436,7 +507,12 @@ describe('judging AI runtime contract', () => {
         cloudflare: {
           env: {
             DB: database,
-            AI: { run: async (_model: string, payload: unknown) => { calls.push(payload); return { status: 'running', request_id: 'batch-1' } } },
+            AI: {
+              run: async (_model: string, payload: unknown) => {
+                calls.push(payload)
+                return { status: 'running', request_id: 'batch-1' }
+              },
+            },
           },
         },
       },
@@ -490,7 +566,12 @@ describe('judging AI runtime contract', () => {
         cloudflare: {
           env: {
             DB: database,
-            AI: { run: async (_model: string, payload: unknown) => { calls.push(payload); return { status: 'queued', request_id: 'batch-1' } } },
+            AI: {
+              run: async (_model: string, payload: unknown) => {
+                calls.push(payload)
+                return { status: 'queued', request_id: 'batch-1' }
+              },
+            },
           },
         },
       },

@@ -139,6 +139,43 @@ function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
+function valueShape(value: unknown): string {
+  if (value === null)
+    return 'null'
+  if (Array.isArray(value))
+    return `array:${value.length}`
+  return typeof value
+}
+
+function objectKeysShape(value: Record<string, unknown> | null): string {
+  if (!value)
+    return 'non-object'
+  const keys = Object.keys(value).sort()
+  const shown = keys.slice(0, 12).join(',')
+  return keys.length > 12 ? `${shown},...` : (shown || 'none')
+}
+
+function batchResponseShape(value: Record<string, unknown>): string {
+  const status = typeof value.status === 'string' ? value.status.slice(0, 32) : valueShape(value.status)
+  return `keys=${objectKeysShape(value)} status=${status} responses=${valueShape(value.responses)}`
+}
+
+function aiResponseShape(value: unknown): string {
+  const response = objectValue(value)
+  if (!response)
+    return `response=${valueShape(value)}`
+  const content = response.response
+  const choices = response.choices
+  const firstChoice = Array.isArray(choices) ? objectValue(choices[0]) : null
+  const message = objectValue(firstChoice?.message)
+  const choiceContent = message?.content
+  const selectedContent = content ?? choiceContent
+  const contentSummary = typeof selectedContent === 'string'
+    ? `string:${selectedContent.length}${selectedContent.includes('<think>') ? ':think' : ''}${selectedContent.trimStart().startsWith('```') ? ':fence' : ''}`
+    : valueShape(selectedContent)
+  return `responseKeys=${objectKeysShape(response)} content=${contentSummary} choices=${valueShape(choices)}`
+}
+
 function parseDraft(value: string | null): Record<string, unknown> | null {
   if (!value)
     return null
@@ -601,8 +638,11 @@ function batchPollResult(value: unknown): BatchPollResult {
   if (object.status === 'queued' || object.status === 'running')
     return { pending: true }
   const responses = object.responses
-  if (!Array.isArray(responses) || responses.length === 0)
-    throw new Error(typeof object.error === 'string' ? `Workers AI batch failed: ${object.error}` : 'Workers AI batch returned no responses')
+  if (!Array.isArray(responses) || responses.length === 0) {
+    throw new Error(typeof object.error === 'string'
+      ? `Workers AI batch failed: ${object.error.slice(0, 512)} (${batchResponseShape(object)})`
+      : `Workers AI batch returned no responses (${batchResponseShape(object)})`)
+  }
   const firstResponse = objectValue(responses[0])
   if (!firstResponse)
     throw new Error('Workers AI batch returned an invalid response entry')
@@ -617,6 +657,19 @@ function batchPollResult(value: unknown): BatchPollResult {
   if (!resultObject)
     throw new Error('Workers AI batch returned an invalid result')
   return { pending: false, response: resultObject as AiChatResponse }
+}
+
+function parseJudgingAiResponse(response: AiChatResponse): Record<string, unknown> {
+  let draft: Record<string, unknown>
+  try {
+    draft = parseAiResponse(response)
+  }
+  catch {
+    throw new Error(`AI draft response could not be parsed (${aiResponseShape(response)})`)
+  }
+  if (!Object.keys(draft).length)
+    throw new Error(`AI draft response yielded an empty JSON object (${aiResponseShape(response)})`)
+  return draft
 }
 
 async function updateJob(db: D1Database, id: string, values: Record<string, unknown>): Promise<void> {
@@ -821,7 +874,7 @@ export async function runJudgingJob(event: H3Event, jobId: string): Promise<void
       WHERE event_id = ? AND id = ? AND status = 'running' AND cancel_requested = 0 AND updated_at = ?`).bind(progressAt, 'sdc-2026', job.id, job.updated_at).run()
     if (changes(progress) !== 1)
       return
-    const draft = validateAiDraft(parseAiResponse(response), prepared.evidence, new Map(prepared.evidence.map(evidence => [String(evidence.id), evidence])))
+    const draft = validateAiDraft(parseJudgingAiResponse(response), prepared.evidence, new Map(prepared.evidence.map(evidence => [String(evidence.id), evidence])))
     const finishedAt = new Date().toISOString()
     const completed = await db.prepare(`UPDATE judging_jobs
       SET status = 'completed', progress = 100, draft_json = ?, error = NULL, updated_at = ?, finished_at = ?
