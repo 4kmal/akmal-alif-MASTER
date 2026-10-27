@@ -95,4 +95,17 @@ describe('judging state cursor', () => {
     const initial = await judgingState(database as never)
     await expect(judgingState(database as never, cursorEvent(initial.cursor + 1))).rejects.toMatchObject({ statusCode: 400 })
   })
+
+  it('chunks changed record keys below D1 variable limits', async () => {
+    const count = 125
+    for (let index = 0; index < count; index++) {
+      const id = index.toString(16).padStart(32, '0')
+      await saveJudgingRecord(database as never, `evidence:${id}`, 0, { index }, `bulk-${index}`, 'owner')
+    }
+
+    const delta = await judgingState(database as never, cursorEvent(0))
+    expect(delta.records).toHaveLength(count)
+    expect(delta.records[0]?.key).toBe(`evidence:${'0'.repeat(32)}`)
+    expect(delta.records.at(-1)?.key).toBe(`evidence:${(count - 1).toString(16).padStart(32, '0')}`)
+  })
 })

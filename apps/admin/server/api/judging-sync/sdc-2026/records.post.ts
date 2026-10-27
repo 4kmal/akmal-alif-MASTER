@@ -5,6 +5,6 @@ export default eventHandler(async (event) => {
   const body = await readJudgingJson(event)
   const key = await validateRecordKey(body.key)
   const data = await validateJudgingRecord(key, body.data)
-  const result = await saveJudgingRecord(requireJudgingDb(event), key, body.baseVersion as number, data, body.mutationId as string, `device:${device.id}`, device.id)
+  const result = await saveJudgingRecord(requireJudgingDb(event), key, body.baseVersion as number, data, body.mutationId as string, `device:${device.id}`, device.id, event)
   return result.record
 })

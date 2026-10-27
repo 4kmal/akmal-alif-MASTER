@@ -13,11 +13,11 @@ export default eventHandler(async (event) => {
       ...current.data,
       ...meta,
     })
-    record = await saveJudgingRecord(db, `evidence:${id}`, current.version, data, `upload-${id}-${meta.sha256.slice(0, 32)}`, actor)
+    record = await saveJudgingRecord(db, `evidence:${id}`, current.version, data, `upload-${id}-${meta.sha256.slice(0, 32)}`, actor, undefined, event)
   }
   else {
     const data = await validateJudgingRecord(`evidence:${id}`, meta)
-    record = await saveJudgingRecord(db, `evidence:${id}`, 0, data, `upload-${id}-${meta.sha256.slice(0, 32)}`, actor)
+    record = await saveJudgingRecord(db, `evidence:${id}`, 0, data, `upload-${id}-${meta.sha256.slice(0, 32)}`, actor, undefined, event)
   }
   await recordJudgingEvent(db, 'evidence.upload', actor, { id, size: bytes.byteLength, sha256: meta.sha256, version: record.record.version }, `evidence:${id}`)
   return {

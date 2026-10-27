@@ -60,6 +60,8 @@ export interface JudgingEvidenceMeta {
   contentType?: string
   size?: number
   objectKey?: string
+  jsonSha256?: string
+  jsonObjectKey?: string
   filename?: string
 }
 
@@ -183,6 +185,15 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value)
 }
 
+function mutationHashData(key: string, data: Record<string, unknown>): Record<string, unknown> {
+  if (!key.startsWith('evidence:'))
+    return data
+  const value = { ...data }
+  delete value.jsonSha256
+  delete value.jsonObjectKey
+  return value
+}
+
 export async function sha256Text(value: string): Promise<string> {
   return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))))
 }
@@ -205,12 +216,13 @@ export async function saveJudgingRecord(
   mutationId: string,
   actor: string,
   deviceId?: string,
+  event?: H3Event,
 ): Promise<JudgingMutationResult> {
   if (!Number.isInteger(baseVersion) || baseVersion < 0 || baseVersion > Number.MAX_SAFE_INTEGER)
     throw createError({ statusCode: 400, statusMessage: 'baseVersion is invalid' })
   if (!/^[A-Z0-9][\w-]{0,159}$/i.test(mutationId))
     throw createError({ statusCode: 400, statusMessage: 'mutationId is invalid' })
-  const requestHash = await sha256Text(canonicalJson({ key, baseVersion, data }))
+  let requestHash = await sha256Text(canonicalJson({ key, baseVersion, data: mutationHashData(key, data) }))
   const existingMutation = first<{ request_hash: string, response_json: string }>(await db.prepare('SELECT request_hash, response_json FROM judging_mutations WHERE event_id = ? AND mutation_id = ? LIMIT 1').bind(JUDGING_EVENT_ID, mutationId).all())
   if (existingMutation) {
     if (existingMutation.request_hash !== requestHash)
@@ -221,6 +233,20 @@ export async function saveJudgingRecord(
     catch {
       throw createError({ statusCode: 500, statusMessage: 'Stored judging mutation is invalid' })
     }
+  }
+  if (key.startsWith('evidence:')) {
+    const current = baseVersion > 0 ? await getJudgingRecord(db, key) : null
+    const currentHash = current?.data.sha256
+    const nextHash = data.sha256
+    if (baseVersion > 0 && typeof currentHash === 'string' && typeof nextHash === 'string' && currentHash !== nextHash)
+      throw createError({ statusCode: 409, statusMessage: 'Evidence source sha256 is immutable', data: { current } })
+    if (typeof current?.data.objectKey === 'string' && data.objectKey == null)
+      data = { ...current.data, ...data, objectKey: current.data.objectKey }
+    if (event) {
+      data = validateJudgingRecord(key, data)
+      data = await mirrorJudgingEvidenceRecord(event, key.slice('evidence:'.length), data, actor, deviceId)
+    }
+    requestHash = await sha256Text(canonicalJson({ key, baseVersion, data: mutationHashData(key, data) }))
   }
 
   const now = new Date().toISOString()
@@ -613,20 +639,48 @@ export async function putJudgingEvidence(event: H3Event, id: string, bytes: Uint
     createdAt: now,
     contentType,
     size: bytes.byteLength,
-    filename: getHeader(event, 'x-judging-filename') || undefined,
   }
+  const filename = getHeader(event, 'x-judging-filename')?.trim()
+  if (filename)
+    meta.filename = filename
   const url = getHeader(event, 'x-judging-url')?.trim()
   if (url)
     meta.url = url
   const objectKey = `${JUDGING_R2_PREFIX}/evidence/${id}/${sha256}`
   meta.objectKey = objectKey
-  validateJudgingRecord(`evidence:${id}`, meta as unknown as Record<string, unknown>)
+  await validateJudgingRecord(`evidence:${id}`, meta as unknown as Record<string, unknown>)
   const bucket = requireJudgingR2(event)
   await bucket.put(objectKey, bytes, {
     httpMetadata: { contentType },
     customMetadata: { sha256, eventId: JUDGING_EVENT_ID, actor, deviceId: deviceId ?? '', evidenceId: id },
   })
   return meta
+}
+
+export async function mirrorJudgingEvidenceRecord(event: H3Event, id: string, data: Record<string, unknown>, actor: string, deviceId?: string): Promise<Record<string, unknown>> {
+  const bucket = environment(event).R2
+  if (!bucket)
+    return data
+  const mirrorData = { ...data }
+  delete mirrorData.jsonSha256
+  delete mirrorData.jsonObjectKey
+  const serialized = canonicalJson(mirrorData)
+  const jsonSha256 = await sha256Text(serialized)
+  const objectKey = `${JUDGING_R2_PREFIX}/evidence/${id}/json/${jsonSha256}`
+  if (!await bucket.head(objectKey)) {
+    await bucket.put(objectKey, new TextEncoder().encode(serialized), {
+      httpMetadata: { contentType: 'application/json; charset=utf-8' },
+      customMetadata: {
+        eventId: JUDGING_EVENT_ID,
+        evidenceId: id,
+        jsonSha256,
+        sourceSha256: typeof data.sha256 === 'string' ? data.sha256 : '',
+        actor,
+        deviceId: deviceId ?? '',
+      },
+    })
+  }
+  return { ...data, jsonSha256, jsonObjectKey: objectKey }
 }
 
 export async function getJudgingEvidenceObject(event: H3Event, id: string): Promise<{ object: R2ObjectBody | null, meta: JudgingEvidenceMeta | null }> {
@@ -687,15 +741,18 @@ export async function judgingState(db: DbLike, event?: H3Event): Promise<{ assig
     .bind(JUDGING_EVENT_ID, requestedCursor, cursor)
     .all()
   const keys = rows<{ record_key: string }>(events).map(row => row.record_key).filter(key => typeof key === 'string' && key.length > 0)
-  let records: JudgingRecord[] = []
-  if (keys.length) {
-    const placeholders = keys.map(() => '?').join(', ')
+  const records: JudgingRecord[] = []
+  const maxKeysPerQuery = 90
+  for (let offset = 0; offset < keys.length; offset += maxKeysPerQuery) {
+    const chunk = keys.slice(offset, offset + maxKeysPerQuery)
+    const placeholders = chunk.map(() => '?').join(', ')
     const result = await db.prepare(`SELECT event_id, record_key, version, data_json, updated_at, updated_by
         FROM judging_records WHERE event_id = ? AND record_key IN (${placeholders}) ORDER BY record_key ASC`)
-      .bind(JUDGING_EVENT_ID, ...keys)
+      .bind(JUDGING_EVENT_ID, ...chunk)
       .all()
-    records = rows<JudgingRecordRow>(result).map(parseRecord)
+    records.push(...rows<JudgingRecordRow>(result).map(parseRecord))
   }
+  records.sort((left, right) => left.key.localeCompare(right.key))
   return { assignment: ASSIGNMENT, records, serverTime: new Date().toISOString(), cursor }
 }
 

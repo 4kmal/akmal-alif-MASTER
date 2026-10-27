@@ -1,3 +1,4 @@
+import type { H3Event } from 'h3'
 import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -105,5 +106,86 @@ describe('judging record CAS and idempotency', () => {
     expect(failing.db.prepare('SELECT id FROM judging_events').all()).toHaveLength(0)
     const recovered = await saveJudgingRecord(createDatabase() as never, 'judge', 0, data, 'mutation-rollback', 'owner@example.test')
     expect(recovered.record.version).toBe(1)
+  })
+
+  it('keeps the original evidence hash and private object key when extracted text is mirrored', async () => {
+    const key = `evidence:${'a'.repeat(32)}`
+    const sourceHash = 'b'.repeat(64)
+    const first = await saveJudgingRecord(database as never, key, 0, {
+      id: 'a'.repeat(32),
+      sha256: sourceHash,
+      objectKey: `judging/sdc-2026/evidence/${'a'.repeat(32)}/${sourceHash}`,
+      text: '',
+    }, 'evidence-source', 'owner@example.test')
+    const mirrored = await saveJudgingRecord(database as never, key, first.record.version, {
+      id: 'a'.repeat(32),
+      sha256: sourceHash,
+      text: 'extracted README text',
+    }, 'evidence-text', 'sync-device')
+
+    expect(mirrored.record.data.objectKey).toBe(first.record.data.objectKey)
+    expect(mirrored.record.data.sha256).toBe(sourceHash)
+    await expect(saveJudgingRecord(database as never, key, mirrored.record.version, {
+      id: 'a'.repeat(32),
+      sha256: 'c'.repeat(64),
+      text: 'wrong text hash in source slot',
+    }, 'evidence-wrong-hash', 'sync-device')).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('mirrors a valid JSON evidence snapshot without replacing its source hash', async () => {
+    const id = 'd'.repeat(32)
+    const sourceHash = 'e'.repeat(64)
+    const data = {
+      id,
+      teamId: '01-console',
+      snapshotSha: 'f'.repeat(40),
+      path: 'README.md',
+      kind: 'source',
+      sha256: sourceHash,
+      text: 'extracted README text',
+      lines: 1,
+      coverage: 'README',
+      createdAt: '2026-10-28T00:00:00.000Z',
+    }
+    const writes: { key: string, body: Uint8Array }[] = []
+    const bucket = {
+      head: async () => null,
+      put: async (key: string, body: Uint8Array) => { writes.push({ key, body }) },
+    }
+    const event = { context: { cloudflare: { env: { R2: bucket } } } } as unknown as H3Event
+
+    const result = await saveJudgingRecord(database as never, `evidence:${id}`, 0, data, 'evidence-json-mirror', 'sync-device', undefined, event)
+    expect(result.record.data.sha256).toBe(sourceHash)
+    expect(result.record.data.jsonSha256).toEqual(expect.any(String))
+    expect(result.record.data.jsonObjectKey).toBe(writes[0]?.key)
+    expect(JSON.parse(new TextDecoder().decode(writes[0]!.body)).sha256).toBe(sourceHash)
+  })
+
+  it('rejects invalid evidence before the JSON mirror or database write', async () => {
+    const id = '1'.repeat(32)
+    let writes = 0
+    const bucket = {
+      head: async () => null,
+      put: async () => {
+        writes += 1
+      },
+    }
+    const event = { context: { cloudflare: { env: { R2: bucket } } } } as unknown as H3Event
+    const invalid = {
+      id,
+      teamId: '01-console',
+      snapshotSha: 'invalid',
+      path: 'README.md',
+      kind: 'source',
+      sha256: '2'.repeat(64),
+      text: 'text',
+      lines: 1,
+      coverage: 'README',
+      createdAt: '2026-10-28T00:00:00.000Z',
+    }
+
+    await expect(saveJudgingRecord(database as never, `evidence:${id}`, 0, invalid, 'evidence-invalid', 'sync-device', undefined, event)).rejects.toMatchObject({ statusCode: 400 })
+    expect(writes).toBe(0)
+    await expect(getJudgingRecord(database as never, `evidence:${id}`)).resolves.toBeNull()
   })
 })
