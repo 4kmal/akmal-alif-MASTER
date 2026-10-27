@@ -320,6 +320,23 @@ describe('judgingWorkspace save behavior', () => {
     expect(host.querySelector('.source-reader')?.textContent).not.toContain('first remote text')
   })
 
+  it('persists a captured evidence link in timestamped notes without approving marks', async () => {
+    delayedFirstSave = false
+    mountLocal()
+    await settle()
+    const input = host.querySelector<HTMLInputElement>('.submission-form input')!
+    setInput(input, 'https://example.org/demo')
+    await nextTick()
+    host.querySelector('form.submission-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+    const reviewSave = fetchCalls.find(call => call.body?.key === 'review:01-console')
+    expect(reviewSave?.body?.data.notes).toMatch(/\[.+\] Evidence: https:\/\/example\.org\/demo/)
+    expect(reviewSave?.body?.data.reviewedAt).toBeNull()
+    expect(reviewSave?.body?.data.scores).toEqual([null, null, null, null])
+    expect(input.value).toBe('')
+  })
+
   it('exposes workbench tabs with roving focus and Home/End keyboard navigation', async () => {
     mountLocal()
     await settle()

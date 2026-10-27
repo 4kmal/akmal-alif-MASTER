@@ -288,8 +288,8 @@ const pairedDevices = ref<Array<Record<string, any>>>([])
 const intakeLoading = ref(false)
 const intakeMessage = ref('')
 const intakeProgress = ref<Record<string, any> | null>(null)
-const submissionUrl = ref('')
-const submissionMessage = ref('')
+const evidenceLink = ref('')
+const evidenceLinkMessage = ref('')
 const newNote = ref('')
 const assessmentJobs = ref<AssessmentJob[]>([])
 const assessmentMessage = ref('')
@@ -1350,10 +1350,14 @@ function appendTimestampedNote() {
   const note = newNote.value.trim()
   if (!note)
     return
-  const stamp = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())
+  appendReviewNote(note)
+  newNote.value = ''
+}
+
+function appendReviewNote(note: string) {
+  const stamp = formatDateTime(new Date().toISOString())
   const current = selectedReview.value.notes.trim()
   selectedReview.value.notes = `${current ? `${current}\n` : ''}[${stamp}] ${note}`
-  newNote.value = ''
   invalidateReviewApproval()
   markReviewDirty(selectedTeamId.value)
 }
@@ -1735,7 +1739,9 @@ async function queueAllAssessments() {
 
 async function cancelAssessment(job: AssessmentJob) {
   try {
-    await fetch(`${props.apiBase}/assessments/${encodeURIComponent(job.id)}/cancel`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json' } })
+    const response = await fetch(`${props.apiBase}/assessments/${encodeURIComponent(job.id)}/cancel`, { method: 'POST', credentials: 'include', headers: { Accept: 'application/json' } })
+    if (!response.ok)
+      throw new Error(`Cancellation failed (${response.status})`)
     await loadAssessmentJobs()
   }
   catch {
@@ -1789,20 +1795,22 @@ function setTheme(mode: 'system' | 'light' | 'dark') {
     localStorage.setItem('sdc-judging-theme', mode)
 }
 
-function openSubmissionLink() {
-  const value = submissionUrl.value.trim()
+function captureEvidenceLink() {
+  const value = evidenceLink.value.trim()
   if (!value) {
-    submissionMessage.value = 'Paste a repository or demo link first.'
+    evidenceLinkMessage.value = 'Paste a repository or demo link first.'
     return
   }
   try {
     const url = new URL(value)
     if (!['http:', 'https:'].includes(url.protocol))
       throw new Error('unsupported')
-    submissionMessage.value = 'Link captured for review. Nothing was submitted automatically.'
+    appendReviewNote(`Evidence: ${url.href}`)
+    evidenceLink.value = ''
+    evidenceLinkMessage.value = 'Link added to the review notes.'
   }
   catch {
-    submissionMessage.value = 'Use a full https:// link.'
+    evidenceLinkMessage.value = 'Use a full https:// link.'
   }
 }
 
@@ -2472,16 +2480,16 @@ onBeforeUnmount(() => {
                   <Send :size="15" aria-hidden="true" />
                 </button>
               </div><form
-                class="submission-form" @submit.prevent="openSubmissionLink"
+                class="submission-form" @submit.prevent="captureEvidenceLink"
               >
-                <label>Evidence link<input v-model="submissionUrl" type="url" placeholder="https://…"></label><button
+                <label>Evidence link<input v-model="evidenceLink" type="url" placeholder="https://…"></label><button
                   class="secondary-button" type="submit"
                 >
                   <LinkIcon :size="14" aria-hidden="true" /> Capture evidence link
                 </button><p
-                  v-if="submissionMessage" class="feedback" role="status"
+                  v-if="evidenceLinkMessage" class="feedback" role="status"
                 >
-                  {{ submissionMessage }}
+                  {{ evidenceLinkMessage }}
                 </p>
               </form><div
                 id="evidence-citations" class="citation-list"
