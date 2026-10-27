@@ -1,18 +1,18 @@
 import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  createBlogGalleryController,
+  disposeBlogGalleries,
+  GALLERY_PAGE_SIZE,
+  initBlogGalleries,
+  normaliseGalleryManifest,
+} from '../../../js/blog-gallery.js'
+import {
   createPublicCalendarController,
   eventOverlapsRange,
   normaliseCalendarEvent,
   parseCalendarDateOnly,
 } from '../../../js/public-calendar.js'
-import {
-  GALLERY_PAGE_SIZE,
-  createBlogGalleryController,
-  disposeBlogGalleries,
-  initBlogGalleries,
-  normaliseGalleryManifest,
-} from '../../../js/blog-gallery.js'
 
 const NOW = Date.parse('2026-10-28T12:00:00+08:00')
 
@@ -133,7 +133,7 @@ describe('public calendar DOM contract', () => {
     expect(agendaText).toContain('Public briefing')
     expect(agendaText).toContain('Public details')
     expect(agendaText).toContain('Civic hall')
-    expect(agendaText).toContain("Akmal's participation: planning")
+    expect(agendaText).toContain('Akmal\'s participation: planning')
     expect(agendaText).toContain('Nonblocking')
     expect(agendaText).not.toContain('Private appointment')
     expect(agendaText).not.toContain('Secret room')
@@ -147,7 +147,7 @@ describe('public calendar DOM contract', () => {
 
   it('fetches the new month when keyboard navigation crosses its boundary', async () => {
     const documentRef = calendarDocument()
-    const fetchRef = vi.fn(async (url: string) => response({ timezone: 'Asia/Kuala_Lumpur', events: [], upcoming: [{ visibility: 'public', all_day: true, start_date: '2026-11-04', end_date: '2026-11-05', title: 'Next month' }] }))
+    const fetchRef = vi.fn(async (_url: string) => response({ timezone: 'Asia/Kuala_Lumpur', events: [], upcoming: [{ visibility: 'public', all_day: true, start_date: '2026-11-04', end_date: '2026-11-05', title: 'Next month' }] }))
     const controller = createPublicCalendarController({
       root: documentRef.querySelector('#calendar-rail')!,
       documentRef,
@@ -171,7 +171,9 @@ describe('public calendar DOM contract', () => {
   it('queues only the newest month and never paints an older response as current', async () => {
     const documentRef = calendarDocument()
     const requests: Array<{ url: string, resolve: (value: unknown) => void }> = []
-    const fetchRef = vi.fn((url: string) => new Promise((resolve) => { requests.push({ url, resolve }) }))
+    const fetchRef = vi.fn((url: string) => new Promise((resolve) => {
+      requests.push({ url, resolve })
+    }))
     const controller = createPublicCalendarController({
       root: documentRef.querySelector('#calendar-rail')!,
       documentRef,
@@ -190,7 +192,7 @@ describe('public calendar DOM contract', () => {
       upcoming: [],
     }))
     await firstRequest
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(fetchRef).toHaveBeenCalledTimes(2)
     expect(requests[1]!.url).toContain('start=2026-11-30')
     requests[1]!.resolve(response({
@@ -200,7 +202,7 @@ describe('public calendar DOM contract', () => {
     }))
     await controller.request
     expect(controller.getState().monthKey).toBe('2026-12')
-    expect(controller.getState().events.map((event) => event.title)).toEqual(['Newest month'])
+    expect(controller.getState().events.map(event => event.title)).toEqual(['Newest month'])
     controller.dispose()
   })
 
@@ -251,12 +253,14 @@ describe('public gallery DOM contract', () => {
     const dom = new JSDOM('<!doctype html><article data-blog-content><div class="blog-gallery" data-gallery-manifest-id="manifest-1" data-gallery-load="click" aria-label="Anthem"><noscript>Anthem</noscript></div></article>')
     const root = dom.window.document.querySelector('[data-blog-content]')!
     let resolveFetch!: (value: unknown) => void
-    const fetchRef = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve }))
+    const fetchRef = vi.fn(() => new Promise((resolve) => {
+      resolveFetch = resolve
+    }))
     initBlogGalleries(root, { fetchRef })
     initBlogGalleries(root, { fetchRef })
     expect(fetchRef).toHaveBeenCalledTimes(1)
     resolveFetch(response(galleryPayload()))
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(root.querySelectorAll('.blog-gallery-renderer')).toHaveLength(1)
     expect(root.querySelectorAll('.blog-gallery-thumb')).toHaveLength(GALLERY_PAGE_SIZE)
@@ -292,17 +296,19 @@ describe('public gallery DOM contract', () => {
     const dom = new JSDOM('<!doctype html><article data-blog-content><div class="blog-gallery" data-gallery-manifest-id="manifest-1"></div></article>')
     const root = dom.window.document.querySelector('[data-blog-content]')!
     let resolveFetch!: (value: unknown) => void
-    const fetchRef = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve }))
+    const fetchRef = vi.fn(() => new Promise((resolve) => {
+      resolveFetch = resolve
+    }))
     initBlogGalleries(root, { fetchRef })
     disposeBlogGalleries(root)
     resolveFetch(response(galleryPayload(1)))
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(root.querySelector('.blog-gallery-renderer')).toBeNull()
     expect(dom.window.document.querySelector('.blog-gallery-viewer')).toBeNull()
 
     const secondFetch = vi.fn(async () => response(galleryPayload(1)))
     initBlogGalleries(root, { fetchRef: secondFetch })
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(secondFetch).toHaveBeenCalledTimes(1)
     expect(root.querySelector('.blog-gallery-renderer')).not.toBeNull()
     disposeBlogGalleries(root)
@@ -312,13 +318,15 @@ describe('public gallery DOM contract', () => {
   it('does not retry a failed manifest when unrelated article DOM changes', async () => {
     const dom = new JSDOM('<!doctype html><article data-blog-content><div class="blog-gallery" data-gallery-manifest-id="missing"></div></article>')
     const root = dom.window.document.querySelector('[data-blog-content]')!
-    const fetchRef = vi.fn(async () => { throw new Error('offline') })
+    const fetchRef = vi.fn(async () => {
+      throw new Error('offline')
+    })
     initBlogGalleries(root, { fetchRef })
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(fetchRef).toHaveBeenCalledTimes(1)
     expect(root.querySelector('.blog-gallery')?.getAttribute('data-gallery-state')).toBe('error')
     root.appendChild(dom.window.document.createElement('p'))
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(fetchRef).toHaveBeenCalledTimes(1)
     disposeBlogGalleries(root)
     dom.window.close()

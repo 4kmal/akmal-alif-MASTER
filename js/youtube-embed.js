@@ -73,7 +73,7 @@ export function renderYoutubePlaceholder(marker, videoId, documentRef = marker?.
   const playGlyph = createElement(documentRef, 'span', 'youtube-preview-glyph', '▶');
   const previewLabel = createElement(documentRef, 'span', 'youtube-preview-label', 'YouTube video');
   preview.append(playGlyph, previewLabel);
-  const videoTitle = marker.getAttribute('data-youtube-title') || marker.querySelector('a')?.textContent?.trim() || 'Watch this video';
+  const videoTitle = marker.getAttribute('data-youtube-title') || marker.getAttribute('aria-label') || marker.querySelector('a')?.textContent?.trim() || 'Watch this video';
   const title = createElement(documentRef, 'h3', 'youtube-title', videoTitle);
   title.id = `youtube-title-${id}`;
   const loadButton = createElement(documentRef, 'button', 'youtube-load-button', 'Load video');

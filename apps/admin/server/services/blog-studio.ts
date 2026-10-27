@@ -1957,6 +1957,64 @@ export async function getBlogGallery(event: H3Event, id: string) {
   return galleryDetail(requireDb(event), actor, id)
 }
 
+export async function listBlogGalleryRevisions(event: H3Event, id: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  await galleryRow(db, actor, id)
+  const result = await db.prepare(`
+    SELECT m.id, m.revision, m.title, m.created_at, COUNT(p.page_id) AS page_count
+    FROM blog_gallery_manifests AS m
+    LEFT JOIN blog_gallery_manifest_pages AS p ON p.manifest_id = m.id
+    WHERE m.gallery_id = ?
+    GROUP BY m.id ORDER BY m.revision DESC
+  `).bind(id).all()
+  return {
+    revisions: rows<Record<string, unknown>>(result).map(row => ({
+      id: String(row.id),
+      revision: Number(row.revision),
+      title: String(row.title),
+      status: 'finalized',
+      page_count: Number(row.page_count),
+      created_at: String(row.created_at),
+      finalized_at: String(row.created_at),
+    })),
+  }
+}
+
+export function galleryRevisionFromEvent(event: H3Event): string {
+  return idField(getRouterParam(event, 'revision'), 'gallery revision')
+}
+
+export async function getBlogGalleryRevision(event: H3Event, id: string, revision: string) {
+  const actor = blogActor(event)
+  const db = requireDb(event)
+  const detail = await galleryDetail(db, actor, id)
+  const byNumber = /^[1-9]\d{0,8}$/.test(revision)
+  const row = first<Record<string, unknown>>(await db.prepare(`
+    SELECT id, revision, title, created_at FROM blog_gallery_manifests
+    WHERE gallery_id = ? AND ${byNumber ? 'revision' : 'id'} = ? LIMIT 1
+  `).bind(id, byNumber ? Number(revision) : revision).all())
+  if (!row)
+    throw createError({ statusCode: 404, statusMessage: 'Gallery revision not found' })
+  const pageRows = rows<Record<string, unknown>>(await db.prepare(`
+    SELECT page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id
+    FROM blog_gallery_manifest_pages WHERE manifest_id = ? ORDER BY sort_order, original_page
+  `).bind(row.id).all())
+  const manifest = galleryManifestResponse(row, pageRows)
+  return {
+    gallery: {
+      ...detail.gallery,
+      status: 'finalized',
+      title: manifest.title,
+      manifest_id: manifest.id,
+      finalized_at: manifest.created_at,
+      page_count: manifest.pages.length,
+    },
+    pages: manifest.pages.map(page => ({ ...page, status: 'ready' })),
+    manifest,
+  }
+}
+
 export async function createBlogGallery(event: H3Event) {
   const actor = blogActor(event)
   const db = requireDb(event)

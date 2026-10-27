@@ -8,6 +8,12 @@ afterEach(() => {
 })
 
 describe('public YouTube lifecycle', () => {
+  it('uses the owner-supplied title from the server marker', () => {
+    document.body.innerHTML = '<div class="blog-youtube" data-youtube-id="M0n6kiUxZgA" aria-label="Project Coda: Launch Bay"><button>Project Coda: Launch Bay</button></div>'
+    initYouTubeEmbeds(document.body)
+    expect(document.querySelector('.youtube-title')?.textContent).toBe('Project Coda: Launch Bay')
+  })
+
   it('mounts one placeholder after repeated initialization and loads only on click', async () => {
     document.body.innerHTML = '<section data-youtube-id="hez2yR4GyTA"><a href="https://www.youtube.com/watch?v=hez2yR4GyTA">Watch enRAGE</a></section>'
     initYouTubeEmbeds(document.body)

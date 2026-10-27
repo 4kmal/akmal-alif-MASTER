@@ -6,7 +6,9 @@ import {
   addBlogGalleryPage,
   createBlogGallery,
   finalizeBlogGallery,
+  getBlogGalleryRevision,
   initBlogGallerySource,
+  listBlogGalleryRevisions,
   publishBlogPost,
   reopenBlogGalleryDraft,
   reorderBlogGalleryPages,
@@ -221,6 +223,13 @@ describe('gallery publication contract', () => {
       expect(secondFinalized.gallery.manifest_id).not.toBe(firstManifestId)
       expect(secondFinalized.manifest?.revision).toBe(2)
       expect(database.prepare('SELECT revision FROM blog_gallery_manifests WHERE id = ?').get(firstManifestId).revision).toBe(1)
+      const revisions = await listBlogGalleryRevisions(eventFor(d1, bucket, 'GET', '/galleries/id/revisions'), gallery.gallery.id)
+      expect(revisions.revisions.map(revision => revision.revision)).toEqual([2, 1])
+      const original = await getBlogGalleryRevision(eventFor(d1, bucket, 'GET', '/galleries/id/revisions/1'), gallery.gallery.id, '1')
+      expect(original.manifest.id).toBe(firstManifestId)
+      expect(original.gallery.manifest_id).toBe(firstManifestId)
+      expect(original.gallery.status).toBe('finalized')
+      await expect(getBlogGalleryRevision(eventFor(d1, bucket, 'GET', '/galleries/id/revisions/missing'), gallery.gallery.id, 'missing')).rejects.toMatchObject({ statusCode: 404 })
 
       const updated = await updateBlogDraft(eventFor(d1, bucket, 'PUT', '/posts/post-one/draft', {
         version: 1,
