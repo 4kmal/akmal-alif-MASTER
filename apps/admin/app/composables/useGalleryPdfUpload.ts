@@ -108,7 +108,14 @@ function readRecoveryEntries(): GalleryPdfRecoveryEntry[] {
 }
 
 function fileMatches(file: File, entry: GalleryPdfRecoveryEntry) {
-  return file.name === entry.filename
+  let sameFilename = false
+  try {
+    sameFilename = normalizeGalleryPdfFilename(file.name) === normalizeGalleryPdfFilename(entry.filename)
+  }
+  catch {
+    return false
+  }
+  return sameFilename
     && file.size === entry.size
     && file.lastModified === entry.lastModified
     // Older recovery records may have captured an empty or octet-stream MIME
@@ -119,6 +126,19 @@ function fileMatches(file: File, entry: GalleryPdfRecoveryEntry) {
 
 export function normalizeGalleryPdfMimeType(_file: File) {
   return GALLERY_PDF_MIME_TYPE
+}
+
+/** Match the server's bounded source filename normalization before comparing a reloaded file. */
+export function normalizeGalleryPdfFilename(value: string) {
+  const name = value.trim()
+  if (!name)
+    throw new Error('filename is required')
+  if (name.length > 240)
+    throw new Error('filename is too long')
+  const basename = name.replace(/.*[\\/]/g, '').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '')
+  if (!basename || basename === '.' || basename === '..')
+    throw new Error('filename is invalid')
+  return basename
 }
 
 export function validateGalleryPdf(file: File) {
@@ -142,6 +162,11 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
   const recoverable = computed(() => recoverableEntries.value.filter(entry => entry.galleryId === galleryId.value))
   const progress = computed(() => task.value ? Math.round((task.value.uploadedBytes / task.value.size) * 100) : 0)
   const operations = new Map<string, AbortController>()
+  const runPromises = new Map<string, Promise<void>>()
+  const queuedRetries = new Map<string, Promise<void>>()
+  let disposed = false
+  let selectionGeneration = 0
+  let selectionController: AbortController | null = null
 
   function writeRecoveryEntries() {
     if (typeof localStorage === 'undefined')
@@ -185,33 +210,51 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
     writeRecoveryEntries()
   }
 
-  async function createUpload(file: File, pageCount: number) {
+  function ensureSelectionActive(generation: number, signal: AbortSignal) {
+    if (disposed || generation !== selectionGeneration || signal.aborted)
+      throw abortError()
+  }
+
+  async function createUpload(file: File, pageCount: number, generation: number, signal: AbortSignal) {
     // A reload can lose the in-memory task while the server still owns an
     // active or completed source. Reuse that source instead of starting a
     // second multipart object; matching name and size keeps a different file
     // from being attached to the immutable source metadata.
     const existingGallery = await api.getGallery(galleryId.value)
+    ensureSelectionActive(generation, signal)
     const existingSource = existingGallery.source
     if (existingSource && existingSource.status !== 'aborted') {
-      if (existingSource.filename !== file.name || existingSource.size !== file.size)
+      const existingFilename = typeof existingSource.filename === 'string' ? normalizeGalleryPdfFilename(existingSource.filename) : ''
+      if (existingFilename !== normalizeGalleryPdfFilename(file.name) || existingSource.size !== file.size)
         throw new Error('This gallery already has a different source PDF. Select that file to resume its upload.')
-      return (await api.getGallerySourceUpload(galleryId.value, existingSource.id)).upload
+      const existingUpload = await api.getGallerySourceUpload(galleryId.value, existingSource.id)
+      ensureSelectionActive(generation, signal)
+      return existingUpload.upload
     }
     const response = await api.startGallerySourceUpload(galleryId.value, { version: galleryVersion.value, filename: file.name, mime_type: normalizeGalleryPdfMimeType(file), size: file.size, page_count: pageCount })
+    ensureSelectionActive(generation, signal)
     if (response.upload?.id)
       return response.upload
-    if (response.source?.id)
-      return (await api.getGallerySourceUpload(galleryId.value, response.source.id)).upload
+    if (response.source?.id) {
+      const startedUpload = await api.getGallerySourceUpload(galleryId.value, response.source.id)
+      ensureSelectionActive(generation, signal)
+      return startedUpload.upload
+    }
     throw new Error('The server did not return a gallery source upload.')
   }
 
-  async function run(current: GalleryPdfUploadTask, recordedParts: GalleryUploadPart[] = []) {
+  async function run(current: GalleryPdfUploadTask, recordedParts: GalleryUploadPart[] = [], generation = selectionGeneration) {
     const controller = new AbortController()
     operations.set(current.uploadId, controller)
     current.status = 'uploading'
     current.error = ''
+    const ensureRunActive = () => {
+      if (disposed || generation !== selectionGeneration || task.value !== current || controller.signal.aborted)
+        throw abortError()
+    }
     try {
       const state = await api.getGallerySourceUpload(current.galleryId, current.uploadId)
+      ensureRunActive()
       current.parts = mergeParts(recordedParts, state.upload.parts)
       current.uploadedBytes = getRecordedGalleryPdfBytes(current.size, current.parts)
       persistRecovery(current)
@@ -234,21 +277,23 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
         }
       }
       await Promise.all(Array.from({ length: Math.min(GALLERY_MAX_CONCURRENT_PARTS, Math.max(1, pending.length)) }, () => worker()))
-      if (controller.signal.aborted)
-        throw abortError()
+      ensureRunActive()
       if (state.upload.status !== 'completed' && state.source.status !== 'completed')
         await api.completeGallerySourceUpload(current.galleryId, current.uploadId, current.parts, controller.signal)
+      ensureRunActive()
       const updated = await api.getGallery(current.galleryId)
+      ensureRunActive()
       const pageCount = validateGalleryPageCount(updated.page_count)
       current.gallery = updated
       current.pageCount = pageCount
       current.uploadedBytes = current.size
       current.status = 'complete'
       removeRecovery(current.uploadId)
-      onComplete?.(updated)
+      if (!disposed && generation === selectionGeneration && task.value === current)
+        onComplete?.(updated)
     }
     catch (reason: unknown) {
-      if (isAbortError(reason)) {
+      if (isAbortError(reason) || controller.signal.aborted) {
         current.status = 'paused'
         persistRecovery(current)
       }
@@ -265,63 +310,110 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
     }
   }
 
+  function scheduleRun(current: GalleryPdfUploadTask, recordedParts: GalleryUploadPart[] = [], generation = selectionGeneration) {
+    const previous = runPromises.get(current.uploadId)
+    if (!previous) {
+      const next = run(current, recordedParts, generation)
+      runPromises.set(current.uploadId, next)
+      next.finally(() => {
+        if (runPromises.get(current.uploadId) === next)
+          runPromises.delete(current.uploadId)
+      }).catch(() => undefined)
+      return next
+    }
+    const queued = queuedRetries.get(current.uploadId)
+    if (queued)
+      return queued
+    const next = previous.catch(() => undefined).then(() => {
+      if (disposed || generation !== selectionGeneration || task.value !== current)
+        throw abortError()
+      return run(current, current.parts, generation)
+    })
+    queuedRetries.set(current.uploadId, next)
+    runPromises.set(current.uploadId, next)
+    next.finally(() => {
+      if (runPromises.get(current.uploadId) === next)
+        runPromises.delete(current.uploadId)
+      if (queuedRetries.get(current.uploadId) === next)
+        queuedRetries.delete(current.uploadId)
+    }).catch(() => undefined)
+    return next
+  }
+
   async function selectFile(file: File) {
     validateGalleryPdf(file)
-    const header = new Uint8Array(await file.slice(0, 5).arrayBuffer())
-    if (!isPdfHeader(header))
-      throw new Error('The selected file does not have a valid PDF header.')
-    if (galleryId.value === '')
-      throw new Error('Create the gallery before uploading its PDF.')
-    if (task.value?.status === 'uploading')
-      cancel()
-    void task.value?.document?.destroy()
-    const document = await openGalleryPdfDocument(file)
-    let pageCount: number
+    if (disposed)
+      throw abortError()
+    selectionController?.abort()
+    const initController = new AbortController()
+    selectionController = initController
+    const generation = ++selectionGeneration
     try {
-      pageCount = validateGalleryPageCount(document.pageCount)
+      const header = new Uint8Array(await file.slice(0, 5).arrayBuffer())
+      ensureSelectionActive(generation, initController.signal)
+      if (!isPdfHeader(header))
+        throw new Error('The selected file does not have a valid PDF header.')
+      if (galleryId.value === '')
+        throw new Error('Create the gallery before uploading its PDF.')
+      if (task.value?.status === 'uploading')
+        cancel()
+      await task.value?.document?.destroy()
+      ensureSelectionActive(generation, initController.signal)
+      const document = await openGalleryPdfDocument(file, initController.signal)
+      let pageCount: number
+      try {
+        ensureSelectionActive(generation, initController.signal)
+        pageCount = validateGalleryPageCount(document.pageCount)
+      }
+      catch (reason) {
+        await document.destroy()
+        throw reason
+      }
+      const recovery = recoverable.value.find(entry => fileMatches(file, entry))
+      let upload: { id: string, parts: GalleryUploadPart[] }
+      try {
+        upload = recovery
+          ? { id: recovery.uploadId, parts: recovery.parts }
+          : await createUpload(file, pageCount, generation, initController.signal)
+        ensureSelectionActive(generation, initController.signal)
+      }
+      catch (reason) {
+        await document.destroy()
+        throw reason
+      }
+      const current: GalleryPdfUploadTask = {
+        galleryId: galleryId.value,
+        uploadId: upload.id,
+        file,
+        filename: file.name,
+        size: file.size,
+        uploadedBytes: getRecordedGalleryPdfBytes(file.size, upload.parts),
+        status: 'idle',
+        error: '',
+        parts: upload.parts,
+        pageCount,
+        gallery: null,
+        document,
+      }
+      ensureSelectionActive(generation, initController.signal)
+      task.value = current
+      try {
+        await scheduleRun(task.value, upload.parts, generation)
+      }
+      catch {
+        // The task exposes its failure state to the form; callers can retry.
+      }
     }
-    catch (reason) {
-      await document.destroy()
-      throw reason
-    }
-    const recovery = recoverable.value.find(entry => fileMatches(file, entry))
-    let upload: { id: string, parts: GalleryUploadPart[] }
-    try {
-      upload = recovery
-        ? { id: recovery.uploadId, parts: recovery.parts }
-        : await createUpload(file, pageCount)
-    }
-    catch (reason) {
-      await document.destroy()
-      throw reason
-    }
-    const current: GalleryPdfUploadTask = {
-      galleryId: galleryId.value,
-      uploadId: upload.id,
-      file,
-      filename: file.name,
-      size: file.size,
-      uploadedBytes: getRecordedGalleryPdfBytes(file.size, upload.parts),
-      status: 'idle',
-      error: '',
-      parts: upload.parts,
-      pageCount,
-      gallery: null,
-      document,
-    }
-    task.value = current
-    try {
-      await run(task.value, upload.parts)
-    }
-    catch {
-      // The task exposes its failure state to the form; callers can retry.
+    finally {
+      if (selectionController === initController)
+        selectionController = null
     }
   }
 
   async function retry() {
     if (!task.value || task.value.status === 'uploading')
       return
-    await run(task.value, task.value.parts).catch(() => undefined)
+    await scheduleRun(task.value, task.value.parts, selectionGeneration).catch(() => undefined)
   }
 
   function cancel() {
@@ -334,6 +426,9 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
   }
 
   function clear() {
+    selectionGeneration += 1
+    selectionController?.abort()
+    selectionController = null
     if (task.value?.status === 'uploading')
       cancel()
     void task.value?.document?.destroy()
@@ -341,6 +436,13 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
   }
 
   onBeforeUnmount(() => {
+    disposed = true
+    selectionGeneration += 1
+    selectionController?.abort()
+    if (task.value?.status === 'uploading') {
+      task.value.status = 'paused'
+      persistRecovery(task.value)
+    }
     for (const controller of operations.values())
       controller.abort()
     void task.value?.document?.destroy()

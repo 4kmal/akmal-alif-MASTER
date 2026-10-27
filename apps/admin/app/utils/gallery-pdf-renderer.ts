@@ -82,23 +82,43 @@ async function renderProxyPage(page: any, pageNumber: number, thumbnail: boolean
 }
 
 /** Open one PDF.js document for an import and render pages from that session. */
-export async function openGalleryPdfDocument(source: Blob | ArrayBuffer): Promise<GalleryPdfDocumentSession> {
+export async function openGalleryPdfDocument(source: Blob | ArrayBuffer, signal?: AbortSignal): Promise<GalleryPdfDocumentSession> {
   const pdfjs = await import('pdfjs-dist/build/pdf.mjs')
+  if (isCancelled(signal))
+    throw cancelledError()
   pdfjs.GlobalWorkerOptions.workerSrc = '/admin/pdfjs/pdf.worker.mjs'
   const data = source instanceof Blob ? await source.arrayBuffer() : source
+  if (isCancelled(signal))
+    throw cancelledError()
   const loadingTask = pdfjs.getDocument({ data })
+  let loadingTaskDestroyPromise: Promise<void> | null = null
+  const destroyLoadingTask = async () => {
+    if (loadingTaskDestroyPromise) {
+      await loadingTaskDestroyPromise
+      return
+    }
+    loadingTaskDestroyPromise = Promise.resolve().then(() => loadingTask.destroy?.()).then(() => undefined).catch(() => undefined)
+    await loadingTaskDestroyPromise
+  }
+  const cancelLoadingTask = () => {
+    void destroyLoadingTask()
+  }
+  signal?.addEventListener('abort', cancelLoadingTask, { once: true })
   let pdfDocument: Awaited<typeof loadingTask.promise>
   try {
     pdfDocument = await loadingTask.promise
   }
   catch (reason) {
-    try {
-      await loadingTask.destroy?.()
-    }
-    catch {
-      // Keep the PDF parse error as the primary failure.
-    }
+    signal?.removeEventListener('abort', cancelLoadingTask)
+    await destroyLoadingTask()
+    if (isCancelled(signal))
+      throw cancelledError()
     throw reason
+  }
+  signal?.removeEventListener('abort', cancelLoadingTask)
+  if (isCancelled(signal)) {
+    await destroyLoadingTask()
+    throw cancelledError()
   }
   let destroyed = false
 
@@ -144,7 +164,7 @@ export async function openGalleryPdfDocument(source: Blob | ArrayBuffer): Promis
       }
       try {
         if (typeof loadingTask.destroy === 'function')
-          await loadingTask.destroy()
+          await destroyLoadingTask()
         else
           await (pdfDocument as { destroy?: () => Promise<void> | void }).destroy?.()
       }

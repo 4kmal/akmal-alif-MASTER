@@ -29,6 +29,12 @@ const pageMetadataDirty = ref(false)
 const draftConflict = ref(false)
 const renderAbortController = ref<AbortController | null>(null)
 
+// Register before the upload composable so page rendering is aborted before
+// the PDF session is torn down during route changes.
+onBeforeUnmount(() => {
+  renderAbortController.value?.abort()
+})
+
 const form = reactive({
   title: '',
 })
@@ -427,10 +433,6 @@ function cancelRendering() {
   renderAbortController.value?.abort()
 }
 
-onBeforeUnmount(() => {
-  renderAbortController.value?.abort()
-})
-
 async function openRevision() {
   if (!selectedRevision.value)
     return
@@ -448,6 +450,12 @@ function imageUrl(page: GalleryPage, thumbnail = false) {
   const asset = thumbnail ? page.thumbnail : page.image
   const assetId = thumbnail ? page.thumbnail_asset_id : page.image_asset_id
   return asset?.source_url || (assetId ? `/api/admin/blog/media/${encodeURIComponent(assetId)}/source` : '')
+}
+
+function pageDimensionsLabel(page: GalleryPage) {
+  if (page.width && page.height)
+    return `${page.width} × ${page.height}px`
+  return page.status === 'complete' ? 'Rendered' : 'Waiting for render'
 }
 
 onMounted(load)
@@ -600,7 +608,7 @@ onMounted(load)
               <img v-if="imageUrl(page, true)" :src="imageUrl(page, true)" :alt="`Page ${page.page_number} thumbnail`"><span v-else>{{ page.page_number }}</span>
             </button>
             <div class="gallery-page-copy">
-              <strong>Page {{ page.page_number }}</strong><span>{{ page.width && page.height ? `${page.width} × ${page.height}px` : 'Waiting for render' }} · {{ page.status }}</span>
+              <strong>Page {{ page.page_number }}</strong><span>{{ pageDimensionsLabel(page) }} · {{ page.status }}</span>
               <label class="gallery-page-field"><span>Title</span><input v-model="page.title" maxlength="180" :disabled="gallery.status === 'finalized' || processingPages" @input="pageMetadataDirty = true"></label>
               <label class="gallery-page-field"><span>Caption</span><textarea v-model="page.caption" rows="2" maxlength="2000" :disabled="gallery.status === 'finalized' || processingPages" @input="pageMetadataDirty = true" /></label>
               <label class="gallery-page-visibility"><input v-model="page.visible" type="checkbox" :disabled="gallery.status === 'finalized' || processingPages" @change="pageMetadataDirty = true"> Visible in the manifest</label>
