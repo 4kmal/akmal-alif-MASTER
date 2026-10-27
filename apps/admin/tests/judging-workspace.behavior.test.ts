@@ -5,6 +5,7 @@ import JudgingWorkspace from '../app/components/judging/JudgingWorkspace.vue'
 import { ASSIGNMENT, FEATURES } from '../shared/judging/model.mjs'
 
 interface FetchCall { url: string, body?: Record<string, any> }
+interface DeferredEvidence { id: string, resolve: (response: Response) => void }
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -44,6 +45,9 @@ describe('judgingWorkspace save behavior', () => {
   let delayedFirstSave: boolean
   let stateRecords: any[]
   let jobsPayload: any[]
+  let cloudEvidenceEnvelope: boolean
+  let deferredEvidence: boolean
+  let evidenceResolvers: DeferredEvidence[]
   let originalFetch: typeof fetch
   let originalOnline: boolean
 
@@ -57,6 +61,9 @@ describe('judgingWorkspace save behavior', () => {
     delayedFirstSave = true
     stateRecords = []
     jobsPayload = []
+    cloudEvidenceEnvelope = false
+    deferredEvidence = false
+    evidenceResolvers = []
     originalFetch = globalThis.fetch
     originalOnline = navigator.onLine
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
@@ -73,6 +80,12 @@ describe('judgingWorkspace save behavior', () => {
       if (url.includes('/evidence/')) {
         const evidenceId = decodeURIComponent(url.slice(url.lastIndexOf('/evidence/') + '/evidence/'.length))
         const record = stateRecords.find(item => item.data?.id === evidenceId)
+        if (deferredEvidence)
+          return new Promise<Response>(resolve => evidenceResolvers.push({ id: evidenceId, resolve }))
+        if (cloudEvidenceEnvelope && record) {
+          const metadata = Object.fromEntries(Object.entries(record.data).filter(([key]) => key !== 'text' && key !== 'pages'))
+          return jsonResponse({ evidence: metadata, text: record.data.text ?? '', pages: record.data.pages })
+        }
         return jsonResponse(record?.data ?? {}, record ? 200 : 404)
       }
       if (url.endsWith('/records')) {
@@ -99,6 +112,11 @@ describe('judgingWorkspace save behavior', () => {
 
   function mountLocal() {
     app = createApp(JudgingWorkspace, { apiBase: '/api/local', local: true })
+    app.mount(host)
+  }
+
+  function mountAdmin() {
+    app = createApp(JudgingWorkspace, { apiBase: '/api/admin/judging/sdc-2026', local: false })
     app.mount(host)
   }
 
@@ -243,5 +261,93 @@ describe('judgingWorkspace save behavior', () => {
     clear?.click()
     await nextTick()
     expect(evidenceButtons().map(button => button.querySelector('strong')?.textContent)).toEqual(['README.md', 'Pitch deck.pdf', 'src/app.ts'])
+  })
+
+  it('unwraps cloud evidence envelopes while preserving metadata, text, and pages', async () => {
+    cloudEvidenceEnvelope = true
+    stateRecords = [{
+      key: 'evidence:cloud-readme',
+      version: 1,
+      data: {
+        id: 'cloud-readme',
+        teamId: '01-console',
+        title: 'README.md',
+        kind: 'document',
+        path: 'README.md',
+        text: 'cloud README text',
+        pages: [{ page: 3, text: 'Cloud page three' }],
+      },
+    }]
+    mountAdmin()
+    await settle()
+
+    host.querySelector<HTMLButtonElement>('.evidence-item')?.click()
+    await settle()
+    expect(host.querySelector('.reader-header h3')?.textContent).toContain('README.md')
+    expect(host.querySelector('.reader-header p')?.textContent).toContain('README.md')
+    expect(host.querySelector('.source-reader')?.textContent).toContain('cloud README text')
+    expect(host.querySelector('.pdf-pages')?.textContent).toContain('Page 3')
+  })
+
+  it('ignores a late evidence response after selecting a newer record', async () => {
+    deferredEvidence = true
+    stateRecords = [
+      { key: 'evidence:first', version: 1, data: { id: 'first', teamId: '01-console', title: 'first.ts', path: 'first.ts', kind: 'source', text: '' } },
+      { key: 'evidence:second', version: 1, data: { id: 'second', teamId: '01-console', title: 'second.ts', path: 'second.ts', kind: 'source', text: '' } },
+    ]
+    mountLocal()
+    await settle()
+
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('.evidence-item')]
+    const first = buttons.find(button => button.textContent?.includes('first.ts'))
+    const second = buttons.find(button => button.textContent?.includes('second.ts'))
+    expect(first).toBeTruthy()
+    expect(second).toBeTruthy()
+    first?.click()
+    second?.click()
+
+    const secondRequest = evidenceResolvers.find(request => request.id === 'second')
+    const firstRequest = evidenceResolvers.find(request => request.id === 'first')
+    expect(secondRequest).toBeTruthy()
+    expect(firstRequest).toBeTruthy()
+    secondRequest?.resolve(jsonResponse({ evidence: { id: 'second', teamId: '01-console', title: 'second.ts', kind: 'source', path: 'second.ts' }, text: 'second remote text' }))
+    await settle()
+    firstRequest?.resolve(jsonResponse({ evidence: { id: 'first', teamId: '01-console', title: 'first.ts', kind: 'source', path: 'first.ts' }, text: 'first remote text' }))
+    await settle()
+
+    expect(host.querySelector('.reader-header h3')?.textContent).toContain('second.ts')
+    expect(host.querySelector('.source-reader')?.textContent).toContain('second remote text')
+    expect(host.querySelector('.source-reader')?.textContent).not.toContain('first remote text')
+  })
+
+  it('exposes workbench tabs with roving focus and Home/End keyboard navigation', async () => {
+    mountLocal()
+    await settle()
+
+    const tabList = host.querySelector('[role="tablist"]')
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+    expect(tabList).toBeTruthy()
+    expect(tabs).toHaveLength(3)
+    expect(tabs[0]?.getAttribute('aria-selected')).toBe('true')
+    expect(tabs[0]?.tabIndex).toBe(0)
+    expect(tabs[1]?.tabIndex).toBe(-1)
+    expect(host.querySelector('#workbench-panel-queue[role="tabpanel"]')).toBeTruthy()
+    expect(tabs[0]?.getAttribute('aria-controls')).toBe('workbench-panel-queue')
+
+    tabs[0]?.focus()
+    tabs[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    await nextTick()
+    expect(tabs[1]?.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(tabs[1])
+
+    tabs[1]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+    await nextTick()
+    expect(tabs[2]?.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(tabs[2])
+
+    tabs[2]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+    await nextTick()
+    expect(tabs[0]?.getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(tabs[0])
   })
 })

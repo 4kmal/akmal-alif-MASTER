@@ -63,6 +63,7 @@ const props = withDefaults(defineProps<JudgingWorkspaceProps>(), {
 type FeatureStatus = 'unverified' | 'present' | 'missing'
 type RepoCheck = '' | 'Yes' | 'No – private/broken' | 'No – doesn\'t match demo'
 type WorkspaceTab = 'queue' | 'evidence' | 'scoring'
+const WORKSPACE_TAB_ORDER: WorkspaceTab[] = ['queue', 'evidence', 'scoring']
 type ReviewFilter = 'all' | 'unreviewed' | 'incomplete' | 'issues'
 type SortKey = 'rank' | 'team' | 'score' | 'status' | 'updated'
 
@@ -648,19 +649,22 @@ function normalizeAssessmentJob(source: any): AssessmentJob {
 
 function normalizeEvidence(source: any): EvidenceItem {
   const value = source && typeof source === 'object' ? source : {}
+  const nested = value.evidence && typeof value.evidence === 'object' && !Array.isArray(value.evidence) ? value.evidence : value
+  const text = value.text ?? nested.text
+  const pages = value.pages ?? nested.pages
   return {
-    id: String(value.id ?? value.uuid ?? value.evidenceId ?? ''),
-    teamId: String(value.teamId ?? ''),
-    title: String(value.title ?? value.name ?? value.path ?? 'Evidence item'),
-    kind: value.kind === 'source' || value.kind === 'document' || value.kind === 'transcript' || value.kind === 'link' ? value.kind : 'link',
-    path: value.path ? String(value.path) : undefined,
-    url: value.url ? String(value.url) : undefined,
-    text: value.text ? String(value.text) : '',
-    lines: Number.isFinite(Number(value.lines)) ? Number(value.lines) : undefined,
-    pages: Array.isArray(value.pages) ? value.pages : undefined,
-    snapshotSha: value.snapshotSha ? String(value.snapshotSha) : undefined,
-    sha256: value.sha256 ? String(value.sha256) : (value.hash ? String(value.hash) : undefined),
-    observed: value.kind === 'link' ? false : Boolean(value.observed),
+    id: String(nested.id ?? nested.uuid ?? nested.evidenceId ?? value.id ?? value.uuid ?? value.evidenceId ?? ''),
+    teamId: String(nested.teamId ?? value.teamId ?? ''),
+    title: String(nested.title ?? nested.name ?? nested.path ?? value.title ?? value.name ?? value.path ?? 'Evidence item'),
+    kind: nested.kind === 'source' || nested.kind === 'document' || nested.kind === 'transcript' || nested.kind === 'link' ? nested.kind : 'link',
+    path: nested.path ? String(nested.path) : undefined,
+    url: nested.url ? String(nested.url) : undefined,
+    text: text ? String(text) : '',
+    lines: Number.isFinite(Number(value.lines ?? nested.lines)) ? Number(value.lines ?? nested.lines) : undefined,
+    pages: Array.isArray(pages) ? pages : undefined,
+    snapshotSha: nested.snapshotSha ? String(nested.snapshotSha) : undefined,
+    sha256: nested.sha256 ? String(nested.sha256) : (nested.hash ? String(nested.hash) : undefined),
+    observed: nested.kind === 'link' ? false : Boolean(nested.observed),
   }
 }
 
@@ -1236,6 +1240,30 @@ function selectTeam(teamId: string) {
     selectedEvidenceId.value = ''
 }
 
+function handleTabKeydown(event: KeyboardEvent, currentTab: WorkspaceTab) {
+  const currentIndex = WORKSPACE_TAB_ORDER.indexOf(currentTab)
+  if (currentIndex < 0)
+    return
+  let nextIndex = currentIndex
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
+    nextIndex = (currentIndex + 1) % WORKSPACE_TAB_ORDER.length
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
+    nextIndex = (currentIndex - 1 + WORKSPACE_TAB_ORDER.length) % WORKSPACE_TAB_ORDER.length
+  else if (event.key === 'Home')
+    nextIndex = 0
+  else if (event.key === 'End')
+    nextIndex = WORKSPACE_TAB_ORDER.length - 1
+  else
+    return
+  const nextTab = WORKSPACE_TAB_ORDER[nextIndex]
+  if (!nextTab)
+    return
+  event.preventDefault()
+  activeTab.value = nextTab
+  const tabList = event.currentTarget instanceof HTMLElement ? event.currentTarget.closest('[role="tablist"]') : null
+  void nextTick(() => tabList?.querySelector<HTMLElement>(`[data-workbench-tab="${nextTab}"]`)?.focus())
+}
+
 function setScore(index: number, event: Event) {
   const input = event.target as HTMLInputElement
   const raw = input.value.trim()
@@ -1457,8 +1485,24 @@ function formatScore(value: number | null) {
   return value.toFixed(1)
 }
 
+function weightedChartLabel(team: Team, review: ReviewData | undefined) {
+  const values = criteria.value.map((criterion, index) => `${criterion.label} ${formatScore(review?.scores[index] ?? null)}/100 (${Math.round(criterion.weight * 100)}%)`)
+  return `${team.name} weighted criteria: ${values.join('; ')}`
+}
+
+function rubricChartLabel(team: Team, review: ReviewData | undefined) {
+  const values = criteria.value.map((criterion, index) => `${criterion.label} ${formatScore(review?.scores[index] ?? null)}/100`)
+  return `${team.name} rubric criteria: ${values.join('; ')}`
+}
+
+function featureChartLabel(team: Team, review: ReviewData | undefined) {
+  const values = features.value.map((feature, index) => `${feature} demo ${review?.features[index]?.demo ?? 'unverified'}`)
+  return `${team.name} feature checks: ${values.join('; ')}`
+}
+
 async function loadEvidence(item: EvidenceItem) {
-  selectedEvidenceId.value = item.id
+  const requestEvidenceId = item.id
+  selectedEvidenceId.value = requestEvidenceId
   evidencePayload.value = normalizeEvidence(item)
   evidenceError.value = ''
   if (!item.id)
@@ -1468,14 +1512,20 @@ async function loadEvidence(item: EvidenceItem) {
     const response = await fetch(`${props.apiBase}/evidence/${encodeURIComponent(item.id)}`, { credentials: 'include', headers: { Accept: 'application/json' } })
     if (!response.ok)
       throw new Error(`Evidence request failed (${response.status})`)
-    evidencePayload.value = normalizeEvidence(await response.json())
+    const payload = await response.json()
+    if (selectedEvidenceId.value !== requestEvidenceId)
+      return
+    evidencePayload.value = normalizeEvidence(payload)
   }
   catch (error) {
+    if (selectedEvidenceId.value !== requestEvidenceId)
+      return
     if (!evidencePayload.value?.text && !evidencePayload.value?.pages?.length)
       evidenceError.value = error instanceof Error ? error.message : 'Evidence could not be loaded.'
   }
   finally {
-    evidenceLoading.value = false
+    if (selectedEvidenceId.value === requestEvidenceId)
+      evidenceLoading.value = false
   }
 }
 
@@ -1950,7 +2000,7 @@ onBeforeUnmount(() => {
           class="sr-only"
         >Search teams</span><input v-model="searchTerm" type="search" placeholder="Search teams or IDs"></label>
         <div class="filter-buttons" role="group" aria-label="Review filter">
-          <button v-for="item in filterOptions" :key="item[0]" type="button" :class="{ active: filter === item[0] }" @click="filter = item[0]">
+          <button v-for="item in filterOptions" :key="item[0]" type="button" :class="{ active: filter === item[0] }" :aria-pressed="filter === item[0]" @click="filter = item[0]">
             {{ item[1] }}
           </button>
         </div>
@@ -1997,17 +2047,17 @@ onBeforeUnmount(() => {
               <td>
                 <div class="score-cell">
                   <strong>{{ formatScore(scoreFor(reviewDrafts[team.id])) }}</strong><span
-                    class="weighted-stack" :aria-label="`${team.name} weighted criterion segments`"
+                    class="weighted-stack" role="img" :aria-label="weightedChartLabel(team, reviewDrafts[team.id])"
                   ><i v-for="(criterion, index) in criteria" :key="criterion.id" :style="weightedSegmentStyle(reviewDrafts[team.id], index)" :title="`${criterion.label}: ${formatScore(reviewDrafts[team.id]?.scores[index] ?? null)}/100 · ${formatScore(contributionFor(reviewDrafts[team.id], index))} weighted points`" /></span><small>/ 100</small>
                 </div>
               </td>
               <td>
-                <div class="rubric-heatmap" :aria-label="`${team.name} rubric heatmap`">
+                <div class="rubric-heatmap" role="img" :aria-label="rubricChartLabel(team, reviewDrafts[team.id])">
                   <span v-for="(criterion, index) in criteria" :key="criterion.id" :class="rubricHeatmapClass(reviewDrafts[team.id], index)" :title="`${criterion.label} · ${formatScore(reviewDrafts[team.id]?.scores[index] ?? null)}/100`" />
                 </div>
               </td>
               <td>
-                <div class="feature-heatmap" :aria-label="`${team.name} six feature status`">
+                <div class="feature-heatmap" role="img" :aria-label="featureChartLabel(team, reviewDrafts[team.id])">
                   <span v-for="(feature, index) in (reviewDrafts[team.id]?.features ?? defaultReview(team.id).features)" :key="index" :class="featureClass(feature.demo)" :title="`${features[index]} · demo ${feature.demo}`" />
                 </div>
               </td>
@@ -2051,20 +2101,20 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-      <nav class="workbench-tabs" aria-label="Workbench sections">
-        <button type="button" :class="{ active: activeTab === 'queue' }" @click="activeTab = 'queue'">
+      <nav class="workbench-tabs" role="tablist" aria-label="Workbench sections">
+        <button id="workbench-tab-queue" type="button" role="tab" data-workbench-tab="queue" :aria-selected="activeTab === 'queue'" aria-controls="workbench-panel-queue" :tabindex="activeTab === 'queue' ? 0 : -1" :class="{ active: activeTab === 'queue' }" @click="activeTab = 'queue'" @keydown="handleTabKeydown($event, 'queue')">
           Queue
         </button>
-        <button type="button" :class="{ active: activeTab === 'evidence' }" @click="activeTab = 'evidence'">
+        <button id="workbench-tab-evidence" type="button" role="tab" data-workbench-tab="evidence" :aria-selected="activeTab === 'evidence'" aria-controls="workbench-panel-evidence" :tabindex="activeTab === 'evidence' ? 0 : -1" :class="{ active: activeTab === 'evidence' }" @click="activeTab = 'evidence'" @keydown="handleTabKeydown($event, 'evidence')">
           Evidence <span>{{ selectedTeamEvidence.length }}</span>
         </button>
-        <button type="button" :class="{ active: activeTab === 'scoring' }" @click="activeTab = 'scoring'">
+        <button id="workbench-tab-scoring" type="button" role="tab" data-workbench-tab="scoring" :aria-selected="activeTab === 'scoring'" aria-controls="workbench-panel-scoring" :tabindex="activeTab === 'scoring' ? 0 : -1" :class="{ active: activeTab === 'scoring' }" @click="activeTab = 'scoring'" @keydown="handleTabKeydown($event, 'scoring')">
           Scoring
         </button>
       </nav>
 
       <div class="workbench-layout">
-        <div class="workbench-pane" :class="{ 'pane-active': activeTab === 'queue' }">
+        <div id="workbench-panel-queue" class="workbench-pane" role="tabpanel" aria-labelledby="workbench-tab-queue" aria-label="Team queue panel" tabindex="0" :class="{ 'pane-active': activeTab === 'queue' }">
           <div class="workbench-panel queue-panel">
             <section class="team-queue-mini" aria-labelledby="team-queue-mini-heading">
               <div class="panel-heading">
@@ -2139,7 +2189,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="workbench-pane" :class="{ 'pane-active': activeTab === 'evidence' }">
+        <div id="workbench-panel-evidence" class="workbench-pane" role="tabpanel" aria-labelledby="workbench-tab-evidence" aria-label="Evidence panel" tabindex="0" :class="{ 'pane-active': activeTab === 'evidence' }">
           <div class="workbench-panel evidence-panel">
             <aside class="evidence-list" aria-label="Evidence list">
               <div class="panel-heading">
@@ -2273,7 +2323,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="workbench-pane" :class="{ 'pane-active': activeTab === 'scoring' }">
+        <div id="workbench-panel-scoring" class="workbench-pane" role="tabpanel" aria-labelledby="workbench-tab-scoring" aria-label="Scoring panel" tabindex="0" :class="{ 'pane-active': activeTab === 'scoring' }">
           <div class="workbench-panel scoring-panel">
             <div class="score-form">
               <div class="panel-heading">
