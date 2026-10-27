@@ -1,7 +1,9 @@
 import type { H3Event } from 'h3'
-import { getHeader, getRequestURL, getRequestWebStream, getRouterParam, readBody, readRawBody } from 'h3'
-import { JUDGING_EVENT_ID, JUDGING_REPO_CHECKS, judgingAssignment, judgingTeamIds, loadJudgingModel } from './judging-model'
-import { getRuntimeBoolean } from './runtime-config'
+import { getHeader, getQuery, getRequestURL, getRequestWebStream, getRouterParam, readBody, readRawBody } from 'h3'
+import { assertRecord, ASSIGNMENT, TEAM_IDS } from '../../shared/judging/model.mjs'
+import { getRuntimeBoolean, getRuntimeString } from './runtime-config'
+
+export const JUDGING_EVENT_ID = ASSIGNMENT.id
 
 export const JUDGING_OWNER_EMAIL = 'iamaleep@gmail.com'
 export const JUDGING_R2_PREFIX = `judging/${JUDGING_EVENT_ID}`
@@ -53,7 +55,7 @@ export interface JudgingEvidenceMeta {
   lines: number
   pages?: { page: number, text: string }[]
   url?: string
-  coverage?: string
+  coverage: string
   createdAt: string
   contentType?: string
   size?: number
@@ -121,244 +123,14 @@ function stringValue(value: unknown, field: string, max: number, required = true
     throw createError({ statusCode: 400, statusMessage: `${field} is too long` })
   return result
 }
-
-function integerValue(value: unknown, field: string, min: number, max: number): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max)
-    throw createError({ statusCode: 400, statusMessage: `${field} is invalid` })
-  return value
-}
-
-function booleanValue(value: unknown, field: string, required = false): boolean | undefined {
-  if (value == null && !required)
-    return undefined
-  if (typeof value !== 'boolean')
-    throw createError({ statusCode: 400, statusMessage: `${field} must be a boolean` })
-  return value
-}
-
-function stringArray(value: unknown, field: string, maxItems: number, maxLength: number): string[] {
-  if (!Array.isArray(value) || value.length > maxItems)
-    throw createError({ statusCode: 400, statusMessage: `${field} must be an array` })
-  return value.map((item, index) => stringValue(item, `${field}[${index}]`, maxLength))
-}
-
-function validateReview(data: Record<string, unknown>): Record<string, unknown> {
-  if (!Array.isArray(data.scores) || data.scores.length !== 4)
-    throw createError({ statusCode: 400, statusMessage: 'review.scores must contain four entries' })
-  const scores = data.scores.map((score, index) => {
-    if (score === null)
-      return null
-    if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 100)
-      throw createError({ statusCode: 400, statusMessage: `review.scores[${index}] is invalid` })
-    return score
-  })
-  const repoCheck = stringValue(data.repoCheck ?? '', 'review.repoCheck', 80, false)
-  if (repoCheck && !(JUDGING_REPO_CHECKS as readonly string[]).includes(repoCheck))
-    throw createError({ statusCode: 400, statusMessage: 'review.repoCheck is invalid' })
-  const notes = stringValue(data.notes ?? '', 'review.notes', 20_000, false)
-  const reviewedAt = data.reviewedAt == null ? '' : stringValue(data.reviewedAt, 'review.reviewedAt', 80, false)
-  if (reviewedAt && Number.isNaN(Date.parse(reviewedAt)))
-    throw createError({ statusCode: 400, statusMessage: 'review.reviewedAt is invalid' })
-  const featureSource = Array.isArray(data.features)
-    ? data.features.map((value, index) => [String(index), value] as const)
-    : data.features6 && typeof data.features6 === 'object' && !Array.isArray(data.features6)
-      ? Object.entries(data.features6 as Record<string, unknown>)
-      : []
-  if (featureSource.length !== 6)
-    throw createError({ statusCode: 400, statusMessage: 'review.features must contain six entries' })
-  const features: Record<string, unknown>[] = []
-  const features6: Record<string, unknown> = {}
-  for (const [key, value] of featureSource) {
-    const feature = jsonValue(value)
-    const proposal = stringValue(feature.proposal, `review.features6.${key}.proposal`, 20)
-    const demo = stringValue(feature.demo, `review.features6.${key}.demo`, 20)
-    if (!['unverified', 'present', 'missing'].includes(proposal) || !['unverified', 'present', 'missing'].includes(demo))
-      throw createError({ statusCode: 400, statusMessage: `review.features6.${key} has invalid status` })
-    const normalizedFeature = { proposal, demo, note: stringValue(feature.note ?? '', `review.features6.${key}.note`, 2_000, false) }
-    features.push(normalizedFeature)
-    features6[key] = normalizedFeature
-  }
-  return {
-    ...data,
-    scores,
-    repoCheck,
-    notes,
-    reviewedAt: reviewedAt || null,
-    features,
-    features6,
-    warningsAcknowledged: booleanValue(data.warningsAcknowledged, 'review.warningsAcknowledged') ?? false,
-  }
-}
-
-function validateJudge(data: Record<string, unknown>): Record<string, unknown> {
-  const name = stringValue(data.name ?? '', 'judge.name', 200, false)
-  const date = stringValue(data.date ?? data.dateYYYYMMDD ?? '', 'judge.date', 10, false)
-  if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))))
-    throw createError({ statusCode: 400, statusMessage: 'judge.date must be YYYY-MM-DD' })
-  const domain = stringValue(data.domain ?? '', 'judge.domain', 200, false)
-  const generalNotes = stringValue(data.generalNotes ?? '', 'judge.generalNotes', 20_000, false)
-  return {
-    ...data,
-    name,
-    date,
-    domain,
-    generalNotes,
-    warningsAcknowledged: booleanValue(data.warningsAcknowledged, 'judge.warningsAcknowledged') ?? false,
-  }
-}
-
-function validateIntake(data: Record<string, unknown>): Record<string, unknown> {
-  const teamId = stringValue(data.teamId, 'intake.teamId', 80)
-  const repoUrl = stringValue(data.repoUrl, 'intake.repoUrl', 2_048)
-  if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/i.test(repoUrl))
-    throw createError({ statusCode: 400, statusMessage: 'intake.repoUrl must be a GitHub repository URL' })
-  const branch = stringValue(data.branch ?? '', 'intake.branch', 200, false)
-  const sha = stringValue(data.sha ?? '', 'intake.sha', 128, false)
-  const retrievedAt = stringValue(data.retrievedAt, 'intake.retrievedAt', 80)
-  if (Number.isNaN(Date.parse(retrievedAt)))
-    throw createError({ statusCode: 400, statusMessage: 'intake.retrievedAt is invalid' })
-  const snapshotPath = stringValue(data.snapshotPath, 'intake.snapshotPath', 2_048)
-  const verified = booleanValue(data.verified, 'intake.verified', true)
-  const evidenceIds = stringArray(data.evidenceIds ?? [], 'intake.evidenceIds', 128, 160)
-  const artifacts = Array.isArray(data.artifacts)
-    ? data.artifacts.slice(0, 256).map((item, index) => {
-        const value = jsonValue(item)
-        return {
-          path: stringValue(value.path, `intake.artifacts[${index}].path`, 2_048),
-          sha256: stringValue(value.sha256, `intake.artifacts[${index}].sha256`, 128),
-          size: integerValue(value.size, `intake.artifacts[${index}].size`, 0, JUDGING_MAX_EVIDENCE_BYTES * 100),
-        }
-      })
-    : []
-  const links = Array.isArray(data.links)
-    ? data.links.slice(0, 256).map((item, index) => {
-        const value = jsonValue(item)
-        return {
-          url: stringValue(value.url, `intake.links[${index}].url`, 2_048),
-          kind: stringValue(value.kind, `intake.links[${index}].kind`, 80),
-          status: integerValue(value.status, `intake.links[${index}].status`, 100, 599),
-          checkedAt: stringValue(value.checkedAt, `intake.links[${index}].checkedAt`, 80),
-        }
-      })
-    : []
-  const demoParity = stringValue(data.demoParity ?? 'unverified', 'intake.demoParity', 30)
-  if (!['unverified', 'verified', 'mismatch'].includes(demoParity))
-    throw createError({ statusCode: 400, statusMessage: 'intake.demoParity is invalid' })
-  return {
-    ...data,
-    teamId,
-    repoUrl,
-    branch,
-    sha,
-    retrievedAt,
-    snapshotPath,
-    verified,
-    evidenceIds,
-    artifacts,
-    links,
-    demoParity,
-    issues: stringArray(data.issues ?? [], 'intake.issues', 128, 2_000),
-    declaredDemoCommits: stringArray(data.declaredDemoCommits ?? [], 'intake.declaredDemoCommits', 64, 128),
-  }
-}
-
-function validateEvidence(data: Record<string, unknown>): Record<string, unknown> {
-  const id = stringValue(data.id, 'evidence.id', 160)
-  const teamId = stringValue(data.teamId, 'evidence.teamId', 80)
-  const snapshotSha = stringValue(data.snapshotSha, 'evidence.snapshotSha', 128)
-  const path = stringValue(data.path, 'evidence.path', 2_048)
-  const kind = stringValue(data.kind, 'evidence.kind', 30)
-  if (!['source', 'document', 'transcript', 'link'].includes(kind))
-    throw createError({ statusCode: 400, statusMessage: 'evidence.kind is invalid' })
-  const sha256 = stringValue(data.sha256, 'evidence.sha256', 128)
-  if (!/^[a-f0-9]{32,128}$/i.test(sha256))
-    throw createError({ statusCode: 400, statusMessage: 'evidence.sha256 is invalid' })
-  const text = data.text ?? ''
-  if (typeof text !== 'string' || text.length > 256 * 1024)
-    throw createError({ statusCode: 400, statusMessage: 'evidence.text is invalid' })
-  const expectedLines = text ? text.split('\n').length : 0
-  const lines = integerValue(data.lines ?? expectedLines, 'evidence.lines', 0, 1_000_000)
-  if (lines !== expectedLines)
-    throw createError({ statusCode: 400, statusMessage: 'evidence.lines does not match evidence.text' })
-  const pages = Array.isArray(data.pages)
-    ? data.pages.slice(0, 10_000).map((item, index) => {
-        const value = jsonValue(item)
-        return {
-          page: integerValue(value.page, `evidence.pages[${index}].page`, 1, 100_000),
-          text: value.text ?? '',
-        }
-      })
-    : undefined
-  const createdAt = stringValue(data.createdAt, 'evidence.createdAt', 80)
-  if (Number.isNaN(Date.parse(createdAt)))
-    throw createError({ statusCode: 400, statusMessage: 'evidence.createdAt is invalid' })
-  if (pages?.some(page => typeof page.text !== 'string' || page.text.length > 256 * 1024))
-    throw createError({ statusCode: 400, statusMessage: 'evidence.pages text is invalid' })
-  return {
-    ...data,
-    id,
-    teamId,
-    snapshotSha,
-    path,
-    kind,
-    sha256,
-    text,
-    lines,
-    pages,
-    url: data.url == null ? undefined : stringValue(data.url, 'evidence.url', 2_048),
-    coverage: data.coverage == null ? undefined : stringValue(data.coverage, 'evidence.coverage', 2_000),
-    createdAt,
-  }
-}
-
-function validateAssessment(data: Record<string, unknown>): Record<string, unknown> {
-  const teamId = stringValue(data.teamId, 'assessment.teamId', 80)
-  const inputHash = stringValue(data.inputHash, 'assessment.inputHash', 128)
-  const status = stringValue(data.status ?? 'draft', 'assessment.status', 30)
-  if (!['draft', 'queued', 'running', 'completed', 'failed', 'cancelled'].includes(status))
-    throw createError({ statusCode: 400, statusMessage: 'assessment.status is invalid' })
-  return {
-    ...data,
-    teamId,
-    inputHash,
-    status,
-  }
-}
-
-export async function validateJudgingRecord(key: string, data: unknown): Promise<Record<string, unknown>> {
+export function validateJudgingRecord(key: string, data: unknown): Record<string, unknown> {
   const value = jsonValue(data)
-  let normalized: Record<string, unknown>
-  if (key === 'judge')
-    normalized = validateJudge(value)
-  else if (key.startsWith('review:'))
-    normalized = validateReview(value)
-  else if (key.startsWith('intake:'))
-    normalized = validateIntake(value)
-  else if (key.startsWith('evidence:'))
-    normalized = validateEvidence(value)
-  else if (key.startsWith('assessment:'))
-    normalized = validateAssessment(value)
-  else
-    normalized = value
-
-  const keyedId = /^(?:evidence|assessment):(.+)$/.exec(key)?.[1]
-  if (keyedId && normalized.id !== undefined && normalized.id !== keyedId)
-    throw createError({ statusCode: 400, statusMessage: 'Record id does not match its key' })
-
-  const model = await loadJudgingModel()
-  if (typeof model.validateRecord !== 'function')
-    return normalized
-  const result = await model.validateRecord(key, normalized)
-  if (result === false || result == null)
-    throw createError({ statusCode: 400, statusMessage: 'Record data failed judging validation' })
-  if (typeof result === 'object' && !Array.isArray(result)) {
-    const validation = result as { valid?: unknown, ok?: unknown, data?: unknown, error?: unknown }
-    if (validation.valid === false || validation.ok === false)
-      throw createError({ statusCode: 400, statusMessage: typeof validation.error === 'string' ? validation.error : 'Record data failed judging validation' })
-    if (validation.data && typeof validation.data === 'object' && !Array.isArray(validation.data))
-      return validation.data as Record<string, unknown>
+  try {
+    return jsonValue(assertRecord(key, value))
   }
-  return normalized
+  catch (error) {
+    throw createError({ statusCode: 400, statusMessage: error instanceof Error ? error.message : 'Record data failed judging validation' })
+  }
 }
 
 export async function validateRecordKey(key: unknown): Promise<string> {
@@ -367,11 +139,11 @@ export async function validateRecordKey(key: unknown): Promise<string> {
   const value = key.trim()
   if (value === 'judge')
     return value
-  const teamIds = await judgingTeamIds()
+  const teamIds = TEAM_IDS as readonly string[]
   const teamId = /^(?:review|intake):([A-Za-z0-9][\w-]{0,79})$/.exec(value)?.[1]
   if (teamId && teamIds.includes(teamId))
     return value
-  if (/^(?:evidence|assessment):[\da-f]{8}-[\da-f]{4}-[1-5][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(value))
+  if (/^(?:evidence|assessment):(?:[\da-f]{32}|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})$/i.test(value))
     return value
   throw createError({ statusCode: 400, statusMessage: 'Record key is not part of this judging event' })
 }
@@ -452,27 +224,54 @@ export async function saveJudgingRecord(
   }
 
   const now = new Date().toISOString()
-  let result: unknown
-  if (baseVersion === 0) {
-    result = await db.prepare('INSERT INTO judging_records (event_id, record_key, version, data_json, updated_at, updated_by) VALUES (?, ?, 1, ?, ?, ?) ON CONFLICT(event_id, record_key) DO NOTHING').bind(JUDGING_EVENT_ID, key, JSON.stringify(data), now, actor).run()
+  const claimId = crypto.randomUUID()
+  const record: JudgingRecord = {
+    key,
+    version: baseVersion + 1,
+    data,
+    updatedAt: now,
   }
-  else {
-    result = await db.prepare('UPDATE judging_records SET version = ?, data_json = ?, updated_at = ?, updated_by = ? WHERE event_id = ? AND record_key = ? AND version = ?').bind(baseVersion + 1, JSON.stringify(data), now, actor, JUDGING_EVENT_ID, key, baseVersion).run()
-  }
-  if (changes(result) !== 1) {
-    const current = await getJudgingRecord(db, key)
-    throw createError({ statusCode: 409, statusMessage: 'Record version conflict', data: { current } })
-  }
-
-  const record = await getJudgingRecord(db, key)
-  if (!record)
-    throw createError({ statusCode: 500, statusMessage: 'Judging record was not persisted' })
   const responseJson = JSON.stringify(record)
   try {
-    await db.batch([
-      db.prepare('INSERT INTO judging_mutations (event_id, mutation_id, record_key, base_version, request_hash, response_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(JUDGING_EVENT_ID, mutationId, key, baseVersion, requestHash, responseJson, now),
-      db.prepare('INSERT INTO judging_events (id, event_id, event_type, record_key, mutation_id, actor, device_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), JUDGING_EVENT_ID, 'record.write', key, mutationId, actor, deviceId ?? null, responseJson, now),
-    ])
+    const claim = baseVersion === 0
+      ? db.prepare(`INSERT INTO judging_mutations
+          (event_id, mutation_id, claim_id, record_key, base_version, request_hash, response_json, created_at)
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE NOT EXISTS (SELECT 1 FROM judging_records WHERE event_id = ? AND record_key = ?)`)
+          .bind(JUDGING_EVENT_ID, mutationId, claimId, key, baseVersion, requestHash, responseJson, now, JUDGING_EVENT_ID, key)
+      : db.prepare(`INSERT INTO judging_mutations
+          (event_id, mutation_id, claim_id, record_key, base_version, request_hash, response_json, created_at)
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM judging_records WHERE event_id = ? AND record_key = ? AND version = ?)`)
+          .bind(JUDGING_EVENT_ID, mutationId, claimId, key, baseVersion, requestHash, responseJson, now, JUDGING_EVENT_ID, key, baseVersion)
+    const write = baseVersion === 0
+      ? db.prepare(`INSERT INTO judging_records
+          (event_id, record_key, version, data_json, updated_at, updated_by)
+          SELECT ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM judging_mutations WHERE event_id = ? AND mutation_id = ? AND claim_id = ?)`)
+          .bind(JUDGING_EVENT_ID, key, record.version, JSON.stringify(data), now, actor, JUDGING_EVENT_ID, mutationId, claimId)
+      : db.prepare(`UPDATE judging_records
+          SET version = ?, data_json = ?, updated_at = ?, updated_by = ?
+          WHERE event_id = ? AND record_key = ? AND version = ?
+            AND EXISTS (SELECT 1 FROM judging_mutations WHERE event_id = ? AND mutation_id = ? AND claim_id = ?)`)
+          .bind(record.version, JSON.stringify(data), now, actor, JUDGING_EVENT_ID, key, baseVersion, JUDGING_EVENT_ID, mutationId, claimId)
+    const audit = db.prepare(`INSERT INTO judging_events
+        (id, event_id, event_type, record_key, mutation_id, actor, device_id, payload_json, created_at)
+        SELECT ?, ?, ?, ?, ?, ?, ?, response_json, ?
+        FROM judging_mutations
+        WHERE event_id = ? AND mutation_id = ? AND claim_id = ?`)
+      .bind(crypto.randomUUID(), JUDGING_EVENT_ID, 'record.write', key, mutationId, actor, deviceId ?? null, now, JUDGING_EVENT_ID, mutationId, claimId)
+    const result = await db.batch([claim, write, audit])
+    if (changes(result?.[0]) !== 1) {
+      const retry = first<{ request_hash: string, response_json: string }>(await db.prepare('SELECT request_hash, response_json FROM judging_mutations WHERE event_id = ? AND mutation_id = ? LIMIT 1').bind(JUDGING_EVENT_ID, mutationId).all())
+      if (retry) {
+        if (retry.request_hash !== requestHash)
+          throw createError({ statusCode: 409, statusMessage: 'mutationId was already used for another record' })
+        return { record: JSON.parse(retry.response_json) as JudgingRecord, idempotent: true }
+      }
+      const current = await getJudgingRecord(db, key)
+      throw createError({ statusCode: 409, statusMessage: 'Record version conflict', data: { current } })
+    }
   }
   catch (error) {
     const retry = first<{ request_hash: string, response_json: string }>(await db.prepare('SELECT request_hash, response_json FROM judging_mutations WHERE event_id = ? AND mutation_id = ? LIMIT 1').bind(JUDGING_EVENT_ID, mutationId).all())
@@ -480,6 +279,12 @@ export async function saveJudgingRecord(
       throw error
     if (retry.request_hash !== requestHash)
       throw createError({ statusCode: 409, statusMessage: 'mutationId was already used for another record' })
+    try {
+      return { record: JSON.parse(retry.response_json) as JudgingRecord, idempotent: true }
+    }
+    catch {
+      throw createError({ statusCode: 500, statusMessage: 'Stored judging mutation is invalid' })
+    }
   }
   return { record }
 }
@@ -658,8 +463,32 @@ export async function createPairCode(db: DbLike, actor: string): Promise<{ code:
   return { code, expiresAt }
 }
 
+export function requireJudgingPairRequest(event: H3Event): void {
+  const gatewaySecret = getRuntimeString(event, 'portfolioGatewayToken', 'PORTFOLIO_GATEWAY_TOKEN').trim()
+  const gatewayToken = getHeader(event, 'x-portfolio-gateway')?.trim() || ''
+  const trustedGateway = !!gatewaySecret && gatewayToken === gatewaySecret
+  let canonicalOrigin = false
+  const configuredOrigin = getRuntimeString(event, 'portfolioAdminOrigin', 'PORTFOLIO_ADMIN_ORIGIN').trim()
+  const requestOrigin = getHeader(event, 'origin')?.trim() || ''
+  if (configuredOrigin && requestOrigin && getHeader(event, 'sec-fetch-site') !== 'cross-site') {
+    try {
+      canonicalOrigin = new URL(configuredOrigin).origin === getRequestURL(event).origin
+        && new URL(configuredOrigin).origin === requestOrigin
+    }
+    catch {
+      canonicalOrigin = false
+    }
+  }
+  if (!trustedGateway && !canonicalOrigin)
+    throw createError({ statusCode: 401, statusMessage: 'Pairing requires the trusted judging gateway or canonical admin origin' })
+  const context = event.context as unknown as Record<string, unknown>
+  context.judgingPairGateway = trustedGateway
+}
+
 async function pairRateLimit(db: DbLike, event: H3Event): Promise<void> {
-  const ip = getHeader(event, 'x-judging-pair-ip') || getHeader(event, 'cf-connecting-ip') || getHeader(event, 'x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
+  const context = event.context as unknown as Record<string, unknown>
+  const forwardedIp = context.judgingPairGateway === true ? getHeader(event, 'x-judging-pair-ip') : undefined
+  const ip = forwardedIp?.trim() || getHeader(event, 'cf-connecting-ip')?.trim() || 'unknown'
   const clientHash = await sha256Text(ip)
   const now = Date.now()
   const windowStart = Math.floor(now / 60_000) * 60_000
@@ -679,7 +508,7 @@ export async function redeemPairCode(db: DbLike, event: H3Event, codeValue: unkn
   const name = stringValue(nameValue, 'name', 120)
   const codeHash = await sha256Text(code)
   const now = new Date().toISOString()
-  const row = first<{ code_hash: string, expires_at: string, used_at: string | null }>(await db.prepare('SELECT code_hash, expires_at, used_at FROM judging_pair_codes WHERE event_id = ? AND code_hash = ? LIMIT 1').bind(JUDGING_EVENT_ID, codeHash).all())
+  const row = first<{ code_hash: string, expires_at: string, used_at: string | null, claimed_device_id: string | null }>(await db.prepare('SELECT code_hash, expires_at, used_at, claimed_device_id FROM judging_pair_codes WHERE event_id = ? AND code_hash = ? LIMIT 1').bind(JUDGING_EVENT_ID, codeHash).all())
   if (!row)
     throw createError({ statusCode: 400, statusMessage: 'Pair code is invalid' })
   if (row.used_at || row.expires_at <= now)
@@ -688,13 +517,24 @@ export async function redeemPairCode(db: DbLike, event: H3Event, codeValue: unkn
   const id = crypto.randomUUID()
   const expiresAt = new Date(Date.now() + JUDGING_DEVICE_TTL_MS).toISOString()
   const tokenHash = await sha256Text(token)
-  const updated = await db.prepare('UPDATE judging_pair_codes SET used_at = ? WHERE event_id = ? AND code_hash = ? AND used_at IS NULL AND expires_at > ?').bind(now, JUDGING_EVENT_ID, codeHash, now).run()
-  if (changes(updated) !== 1)
+  const claim = db.prepare(`UPDATE judging_pair_codes
+      SET used_at = ?, claimed_device_id = ?
+      WHERE event_id = ? AND code_hash = ? AND used_at IS NULL AND claimed_device_id IS NULL AND expires_at > ?`)
+    .bind(now, id, JUDGING_EVENT_ID, codeHash, now)
+  const device = db.prepare(`INSERT INTO judging_devices
+      (id, event_id, name, token_hash, created_at, expires_at, last_seen_at, revoked_at, paired_by)
+      SELECT ?, ?, ?, ?, ?, ?, NULL, NULL, ?
+      WHERE EXISTS (SELECT 1 FROM judging_pair_codes WHERE event_id = ? AND code_hash = ? AND claimed_device_id = ?)`)
+    .bind(id, JUDGING_EVENT_ID, name, tokenHash, now, expiresAt, 'pair-code', JUDGING_EVENT_ID, codeHash, id)
+  const audit = db.prepare(`INSERT INTO judging_events
+      (id, event_id, event_type, record_key, mutation_id, actor, device_id, payload_json, created_at)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (SELECT 1 FROM judging_devices WHERE event_id = ? AND id = ?)
+        AND EXISTS (SELECT 1 FROM judging_pair_codes WHERE event_id = ? AND code_hash = ? AND claimed_device_id = ?)`)
+    .bind(crypto.randomUUID(), JUDGING_EVENT_ID, 'device.paired', `device:${id}`, id, 'pair-code', id, JSON.stringify({ name }), now, JUDGING_EVENT_ID, id, JUDGING_EVENT_ID, codeHash, id)
+  const result = await db.batch([claim, device, audit])
+  if (changes(result?.[0]) !== 1)
     throw createError({ statusCode: 410, statusMessage: 'Pair code has expired or already been used' })
-  await db.batch([
-    db.prepare('INSERT INTO judging_devices (id, event_id, name, token_hash, created_at, expires_at, last_seen_at, revoked_at, paired_by) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)').bind(id, JUDGING_EVENT_ID, name, tokenHash, now, expiresAt, 'pair-code'),
-    db.prepare('INSERT INTO judging_events (id, event_id, event_type, record_key, mutation_id, actor, device_id, payload_json, created_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?)').bind(crypto.randomUUID(), JUDGING_EVENT_ID, 'device.paired', `device:${id}`, id, JSON.stringify({ name }), now),
-  ])
   return { token, device: { id, name, expiresAt } }
 }
 
@@ -721,6 +561,17 @@ export async function revokeJudgingDevice(db: DbLike, id: string, actor: string)
 export async function putJudgingTemplate(event: H3Event, bytes: Uint8Array, actor: string, deviceId?: string): Promise<{ size: number, sha256: string, updatedAt: string }> {
   const bucket = requireJudgingR2(event)
   const sha256 = await sha256Bytes(bytes)
+  const existing = await bucket.head(JUDGING_TEMPLATE_KEY)
+  if (existing) {
+    const existingHash = existing.customMetadata?.sha256
+    if (existingHash !== sha256)
+      throw createError({ statusCode: 409, statusMessage: 'The judging workbook template is immutable after first upload' })
+    return {
+      size: existing.size,
+      sha256,
+      updatedAt: existing.customMetadata?.updatedAt || new Date().toISOString(),
+    }
+  }
   const updatedAt = new Date().toISOString()
   await bucket.put(JUDGING_TEMPLATE_KEY, bytes, {
     httpMetadata: { contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
@@ -747,40 +598,46 @@ export async function putJudgingEvidence(event: H3Event, id: string, bytes: Uint
   const kind = String(getHeader(event, 'x-judging-kind') || 'source')
   if (!['source', 'document', 'transcript', 'link'].includes(kind))
     throw createError({ statusCode: 400, statusMessage: 'Evidence kind is invalid' })
-  const bucket = requireJudgingR2(event)
   const sha256 = await sha256Bytes(bytes)
-  const objectKey = `${JUDGING_R2_PREFIX}/evidence/${id}`
-  await bucket.put(objectKey, bytes, {
-    httpMetadata: { contentType },
-    customMetadata: { sha256, eventId: JUDGING_EVENT_ID, actor, deviceId: deviceId ?? '' },
-  })
   const now = new Date().toISOString()
   const meta: JudgingEvidenceMeta = {
     id,
-    teamId: String(getHeader(event, 'x-judging-team-id') || ''),
-    snapshotSha: String(getHeader(event, 'x-judging-snapshot-sha') || ''),
-    path: String(getHeader(event, 'x-judging-path') || id),
+    teamId: String(getHeader(event, 'x-judging-team-id') || '').trim(),
+    snapshotSha: String(getHeader(event, 'x-judging-snapshot-sha') || '').trim(),
+    path: String(getHeader(event, 'x-judging-path') || '').trim(),
     kind: kind as JudgingEvidenceMeta['kind'],
     sha256,
     text: '',
     lines: 0,
+    coverage: '',
     createdAt: now,
     contentType,
     size: bytes.byteLength,
-    objectKey,
     filename: getHeader(event, 'x-judging-filename') || undefined,
   }
+  const url = getHeader(event, 'x-judging-url')?.trim()
+  if (url)
+    meta.url = url
+  const objectKey = `${JUDGING_R2_PREFIX}/evidence/${id}/${sha256}`
+  meta.objectKey = objectKey
+  validateJudgingRecord(`evidence:${id}`, meta as unknown as Record<string, unknown>)
+  const bucket = requireJudgingR2(event)
+  await bucket.put(objectKey, bytes, {
+    httpMetadata: { contentType },
+    customMetadata: { sha256, eventId: JUDGING_EVENT_ID, actor, deviceId: deviceId ?? '', evidenceId: id },
+  })
   return meta
 }
 
-export async function getJudgingEvidenceObject(event: H3Event, id: string): Promise<{ object: R2ObjectBody, meta: JudgingEvidenceMeta | null }> {
-  const bucket = requireJudgingR2(event)
-  const object = await bucket.get(`${JUDGING_R2_PREFIX}/evidence/${id}`)
-  if (!object)
-    throw createError({ statusCode: 404, statusMessage: 'Judging evidence not found' })
+export async function getJudgingEvidenceObject(event: H3Event, id: string): Promise<{ object: R2ObjectBody | null, meta: JudgingEvidenceMeta | null }> {
   const db = requireJudgingDb(event)
   const row = await getJudgingRecord(db, `evidence:${id}`)
-  return { object, meta: row?.data as unknown as JudgingEvidenceMeta | null }
+  const meta = row?.data as unknown as JudgingEvidenceMeta | null
+  const bucket = environment(event).R2
+  const object = bucket ? await bucket.get(meta?.objectKey || `${JUDGING_R2_PREFIX}/evidence/${id}`) : null
+  if (!object && !row)
+    throw createError({ statusCode: 404, statusMessage: 'Judging evidence not found' })
+  return { object, meta }
 }
 
 export function randomToken(): string {
@@ -796,12 +653,50 @@ export function recordResponseBody(record: JudgingRecord): JudgingRecord {
   return record
 }
 
-export async function judgingState(db: DbLike): Promise<{ assignment: unknown, records: JudgingRecord[], serverTime: string }> {
-  return {
-    assignment: await judgingAssignment(),
-    records: await listJudgingRecords(db),
-    serverTime: new Date().toISOString(),
+function stateCursor(event: H3Event): number | undefined {
+  const raw = getQuery(event).cursor
+  if (raw == null || raw === '')
+    return undefined
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value !== 'string' || !/^\d{1,16}$/.test(value))
+    throw createError({ statusCode: 400, statusMessage: 'Judging state cursor is invalid' })
+  const cursor = Number(value)
+  if (!Number.isSafeInteger(cursor) || cursor < 0)
+    throw createError({ statusCode: 400, statusMessage: 'Judging state cursor is invalid' })
+  return cursor
+}
+
+export async function judgingState(db: DbLike, event?: H3Event): Promise<{ assignment: unknown, records: JudgingRecord[], serverTime: string, cursor: number }> {
+  const requestedCursor = event ? stateCursor(event) : undefined
+  const latest = first<{ cursor: number }>(await db.prepare('SELECT COALESCE(MAX(rowid), 0) AS cursor FROM judging_events WHERE event_id = ?').bind(JUDGING_EVENT_ID).all())
+  const cursor = Number(latest?.cursor ?? 0)
+  if (requestedCursor === undefined) {
+    return {
+      assignment: ASSIGNMENT,
+      records: await listJudgingRecords(db),
+      serverTime: new Date().toISOString(),
+      cursor,
+    }
   }
+  if (requestedCursor > cursor) {
+    throw createError({ statusCode: 400, statusMessage: 'Judging state cursor is ahead of the server' })
+  }
+  const events = await db.prepare(`SELECT DISTINCT record_key
+      FROM judging_events
+      WHERE event_id = ? AND event_type = 'record.write' AND rowid > ? AND rowid <= ? AND record_key IS NOT NULL`)
+    .bind(JUDGING_EVENT_ID, requestedCursor, cursor)
+    .all()
+  const keys = rows<{ record_key: string }>(events).map(row => row.record_key).filter(key => typeof key === 'string' && key.length > 0)
+  let records: JudgingRecord[] = []
+  if (keys.length) {
+    const placeholders = keys.map(() => '?').join(', ')
+    const result = await db.prepare(`SELECT event_id, record_key, version, data_json, updated_at, updated_by
+        FROM judging_records WHERE event_id = ? AND record_key IN (${placeholders}) ORDER BY record_key ASC`)
+      .bind(JUDGING_EVENT_ID, ...keys)
+      .all()
+    records = rows<JudgingRecordRow>(result).map(parseRecord)
+  }
+  return { assignment: ASSIGNMENT, records, serverTime: new Date().toISOString(), cursor }
 }
 
 export function modelReadiness(input: unknown): boolean {

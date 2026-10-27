@@ -4,6 +4,11 @@ import { getJudgingEvidenceObject, pathId, requireJudgingDevice } from '../../..
 export default eventHandler(async (event) => {
   await requireJudgingDevice(event)
   const { object, meta } = await getJudgingEvidenceObject(event, pathId(event))
+  if (!object) {
+    setHeader(event, 'Content-Type', 'application/json; charset=utf-8')
+    setHeader(event, 'Cache-Control', 'no-store')
+    return { evidence: meta, text: meta?.text || '' }
+  }
   const contentType = object.httpMetadata?.contentType || meta?.contentType || 'application/octet-stream'
   if (/^(?:application\/json|text\/|application\/xml)/i.test(contentType)) {
     const text = new TextDecoder().decode(new Uint8Array(await object.arrayBuffer()))

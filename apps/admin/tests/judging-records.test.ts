@@ -33,7 +33,7 @@ class SqliteStatement implements StatementLike {
 }
 
 class SqliteD1 {
-  constructor(readonly db: DatabaseSync) {}
+  constructor(readonly db: DatabaseSync, private readonly failBatch = false) {}
 
   prepare(sql: string): StatementLike {
     return new SqliteStatement(this.db, sql)
@@ -43,8 +43,11 @@ class SqliteD1 {
     this.db.exec('BEGIN')
     try {
       const results: unknown[] = []
-      for (const statement of statements)
+      for (const [index, statement] of statements.entries()) {
         results.push(await statement.run())
+        if (this.failBatch && index === 1)
+          throw new Error('simulated D1 batch failure')
+      }
       this.db.exec('COMMIT')
       return results
     }
@@ -55,12 +58,12 @@ class SqliteD1 {
   }
 }
 
-function createDatabase(): SqliteD1 {
+function createDatabase(failBatch = false): SqliteD1 {
   const db = new DatabaseSync(':memory:')
   const migration = fs.readFileSync(new URL('../drizzle/0007_judging.sql', import.meta.url), 'utf8')
   for (const statement of migration.split(/--> statement-breakpoint/))
     db.exec(statement)
-  return new SqliteD1(db)
+  return new SqliteD1(db, failBatch)
 }
 
 describe('judging record CAS and idempotency', () => {
@@ -91,5 +94,16 @@ describe('judging record CAS and idempotency', () => {
     const rejected = results.find(result => result.status === 'rejected')
     expect(rejected).toMatchObject({ status: 'rejected', reason: { statusCode: 409, data: { current: { version: 2 } } } })
     await expect(getJudgingRecord(database as never, 'judge')).resolves.toMatchObject({ version: 2 })
+  })
+
+  it('rolls back the record, mutation claim, and audit event as one transaction', async () => {
+    const failing = createDatabase(true)
+    const data = { name: 'Judge', date: '2026-10-28', domain: 'Domain 1', generalNotes: '', warningsAcknowledged: false }
+    await expect(saveJudgingRecord(failing as never, 'judge', 0, data, 'mutation-rollback', 'owner@example.test')).rejects.toThrow('simulated D1 batch failure')
+    expect(failing.db.prepare('SELECT record_key FROM judging_records').all()).toHaveLength(0)
+    expect(failing.db.prepare('SELECT mutation_id FROM judging_mutations').all()).toHaveLength(0)
+    expect(failing.db.prepare('SELECT id FROM judging_events').all()).toHaveLength(0)
+    const recovered = await saveJudgingRecord(createDatabase() as never, 'judge', 0, data, 'mutation-rollback', 'owner@example.test')
+    expect(recovered.record.version).toBe(1)
   })
 })

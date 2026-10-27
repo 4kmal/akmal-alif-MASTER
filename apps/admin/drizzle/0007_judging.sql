@@ -13,6 +13,7 @@ CREATE INDEX `idx_judging_records_event` ON `judging_records` (`event_id`, `upda
 CREATE TABLE `judging_mutations` (
 	`event_id` text NOT NULL,
 	`mutation_id` text NOT NULL,
+	`claim_id` text NOT NULL UNIQUE,
 	`record_key` text NOT NULL,
 	`base_version` integer NOT NULL,
 	`request_hash` text NOT NULL,
@@ -41,6 +42,7 @@ CREATE TABLE `judging_pair_codes` (
 	`created_at` text NOT NULL,
 	`expires_at` text NOT NULL,
 	`used_at` text,
+	`claimed_device_id` text,
 	`created_by` text NOT NULL,
 	PRIMARY KEY (`event_id`, `code_hash`)
 );
@@ -91,3 +93,5 @@ CREATE TABLE `judging_jobs` (
 CREATE INDEX `idx_judging_jobs_queue` ON `judging_jobs` (`event_id`, `status`, `created_at`);
 --> statement-breakpoint
 CREATE INDEX `idx_judging_jobs_team` ON `judging_jobs` (`event_id`, `team_id`, `created_at`);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_judging_jobs_active_team` ON `judging_jobs` (`event_id`, `team_id`) WHERE `status` IN ('queued', 'running');

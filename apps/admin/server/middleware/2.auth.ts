@@ -64,6 +64,8 @@ export default eventHandler(async (event) => {
     || event.path === '/api/internal'
     || event.path.startsWith('/api/internal/')
     || isRuntimeRequest
+  const isJudgingOwnerRoute = event.path === '/api/admin/judging'
+    || event.path.startsWith('/api/admin/judging/')
 
   // Local browser QA uses an explicit opt-in and never reaches a production
   // origin. Keep the local path useful without putting a bearer token in the
@@ -104,7 +106,7 @@ export default eventHandler(async (event) => {
       const mappedIdentity = mapCloudflareAccessIdentity(accessIdentity, requestUrl.hostname)
       Object.assign(
         event.context,
-        gatewayAuthorized ? { ...mappedIdentity, authMethod: 'portfolio-gateway' } : mappedIdentity,
+        gatewayAuthorized && !isJudgingOwnerRoute ? { ...mappedIdentity, authMethod: 'portfolio-gateway' } : mappedIdentity,
       )
       return
     }

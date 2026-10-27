@@ -2,5 +2,5 @@ import { judgingState, requireJudgingDb, requireJudgingOwner } from '../../../..
 
 export default eventHandler(async (event) => {
   requireJudgingOwner(event)
-  return await judgingState(requireJudgingDb(event))
+  return await judgingState(requireJudgingDb(event), event)
 })

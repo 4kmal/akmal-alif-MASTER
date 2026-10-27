@@ -30,18 +30,37 @@ const evidence = [
 describe('judging AI draft validation', () => {
   it('keeps only evidence-linked draft fields and validates line/page locators', () => {
     const draft = validateAiDraft({
-      strengths: [{ text: 'The source contains the requested behavior.', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 2 }] }],
-      concerns: [{ text: 'The brief leaves one edge case unclear.', citations: [{ evidenceId: 'brief-1', page: 1 }] }],
-      features: [{ feature: 'Feature 1', status: 'present', citations: [{ evidenceId: 'source-1', line: 3 }] }],
-      proposedScores: [{ criterion: 'implementation', score: 80, citations: [{ evidenceId: 'source-1', line: 2 }] }],
+      strengths: [{ text: 'The source contains the requested behavior.', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 2, evidenceKind: 'code-evidence' }] }],
+      concerns: [{ text: 'The brief leaves one edge case unclear.', citations: [{ evidenceId: 'brief-1', page: 1, evidenceKind: 'document' }] }],
+      features: [
+        { feature: 'profiles', proposal: 'present', demo: 'unverified', citations: [{ evidenceId: 'source-1', line: 3 }] },
+        { feature: 'trends', proposal: 'unverified', demo: 'unverified', citations: [{ evidenceId: 'source-1', line: 1 }] },
+        { feature: 'matching', proposal: 'unverified', demo: 'unverified', citations: [{ evidenceId: 'source-1', line: 1 }] },
+        { feature: 'reskilling', proposal: 'unverified', demo: 'unverified', citations: [{ evidenceId: 'source-1', line: 1 }] },
+        { feature: 'sdg', proposal: 'unverified', demo: 'unverified', citations: [{ evidenceId: 'source-1', line: 1 }] },
+        { feature: 'scenarios', proposal: 'unverified', demo: 'unverified', citations: [{ evidenceId: 'source-1', line: 1 }] },
+      ],
+      scores: [{ criterion: 'innovation', score: 80, citations: [{ evidenceId: 'source-1', line: 2 }] }],
       automaticReview: 'ignore this field',
     }, evidence)
 
     expect(draft).toEqual({
-      strengths: [{ text: 'The source contains the requested behavior.', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 2 }] }],
-      concerns: [{ text: 'The brief leaves one edge case unclear.', citations: [{ evidenceId: 'brief-1', page: 1 }] }],
-      features: [{ feature: 'Feature 1', status: 'present', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 3, lineEnd: 3 }] }],
-      proposedScores: [{ criterion: 'implementation', score: 80, citations: [{ evidenceId: 'source-1', lineStart: 2, lineEnd: 2 }] }],
+      strengths: [{ text: 'The source contains the requested behavior.', citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 2, evidenceKind: 'code-evidence' }] }],
+      concerns: [{ text: 'The brief leaves one edge case unclear.', citations: [{ evidenceId: 'brief-1', page: 1, evidenceKind: 'document' }] }],
+      features: [
+        { feature: 'profiles', proposal: 'present', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 3, lineEnd: 3, evidenceKind: 'code-evidence' }] },
+        { feature: 'trends', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'matching', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'reskilling', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'sdg', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+        { feature: 'scenarios', proposal: 'unverified', demo: 'unverified', note: undefined, citations: [{ evidenceId: 'source-1', lineStart: 1, lineEnd: 1, evidenceKind: 'code-evidence' }] },
+      ],
+      scores: [
+        { criterion: 'innovation', score: 80, citations: [{ evidenceId: 'source-1', lineStart: 2, lineEnd: 2, evidenceKind: 'code-evidence' }] },
+        { criterion: 'problemSolutionFit', score: null, citations: [] },
+        { criterion: 'feasibility', score: null, citations: [] },
+        { criterion: 'clarity', score: null, citations: [] },
+      ],
       citations: [],
     })
     expect(draft).not.toHaveProperty('automaticReview')
@@ -55,5 +74,12 @@ describe('judging AI draft validation', () => {
 
   it('rejects claims that a video or demo was watched', () => {
     expect(() => validateAiDraft({ strengths: [{ text: 'I watched the demo video.', citations: [{ evidenceId: 'source-1', line: 1 }] }] }, evidence)).toThrow(/must not claim/)
+  })
+
+  it('allows an explicit statement that the demo was not watched', () => {
+    expect(() => validateAiDraft({
+      strengths: [{ text: 'I did not watch the demo video.', citations: [{ evidenceId: 'source-1', line: 1 }] }],
+      features: ['profiles', 'trends', 'matching', 'reskilling', 'sdg', 'scenarios'].map(feature => ({ feature, proposal: 'unverified', demo: 'unverified', citations: [{ evidenceId: 'source-1', line: 1 }] })),
+    }, evidence)).not.toThrow()
   })
 })
