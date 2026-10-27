@@ -111,6 +111,7 @@ const EditorStyle = Extension.create({
 export interface BlogEditorOptions {
   content: JSONContent | string
   onUpdate: (editor: Editor) => void
+  onSelectionUpdate?: (editor: Editor) => void
 }
 
 export const BLOG_EDITOR_COMMANDS = [
@@ -166,7 +167,12 @@ export function useBlogEditor(options: BlogEditorOptions) {
         'aria-multiline': 'true',
       },
     },
-    onUpdate: ({ editor: updatedEditor }) => options.onUpdate(updatedEditor as unknown as Editor),
+    onUpdate: ({ editor: updatedEditor, transaction }) => {
+      if (!transaction.docChanged)
+        return
+      options.onUpdate(updatedEditor as unknown as Editor)
+    },
+    onSelectionUpdate: ({ editor: selectedEditor }) => options.onSelectionUpdate?.(selectedEditor as unknown as Editor),
   })
 
   function insertMedia(attrs: Partial<import('@/utils/blog-studio').BlogMediaAttrs>) {

@@ -83,6 +83,9 @@ const editorState = useBlogEditor({
       staleLocalDraft.value = cloneDraft(draft.value)
     refreshSelectedMedia(editor)
   },
+  onSelectionUpdate(editor) {
+    refreshSelectedMedia(editor)
+  },
 })
 const editor = editorState.editor
 const activeEditor = computed(() => editor.value ?? null)
