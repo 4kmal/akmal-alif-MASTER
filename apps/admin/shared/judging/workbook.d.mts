@@ -1,4 +1,4 @@
-import type { Assignment, Judge, Review, TeamId } from './model.mjs'
+import type { Assignment, IntakeRecord, Judge, Review, TeamId } from './model.mjs'
 
 export type WorkbookBytes = Uint8Array | ArrayBuffer | ArrayBufferView
 
@@ -12,6 +12,7 @@ export interface FormulaOracle {
 export interface WorkbookPayload {
   judge: Partial<Judge>
   reviews: readonly Review[] | Partial<Record<TeamId, Partial<Review> | null>>
+  intakes?: readonly IntakeRecord[] | Partial<Record<TeamId, IntakeRecord | null>>
 }
 
 export const SHEET_PATH: 'xl/worksheets/sheet1.xml'

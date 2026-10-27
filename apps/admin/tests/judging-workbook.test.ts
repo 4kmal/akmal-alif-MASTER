@@ -63,14 +63,15 @@ const evidenceFixture = {
   createdAt: '2026-10-27T19:25:03.957Z',
 }
 
-function intakeFixture(artifactCount = 1) {
+function intakeFixture(artifactCount = 1, teamIndex = 0, overrides = {}) {
+  const team = TEAMS[teamIndex]
   return {
-    teamId: TEAM_IDS[0],
-    repoUrl: TEAMS[0].repoUrl,
+    teamId: team.id,
+    repoUrl: team.repoUrl,
     branch: 'main',
     sha: 'a'.repeat(40),
     retrievedAt: '2026-10-27T19:24:12.507Z',
-    snapshotPath: 'repos/01-console/' + 'a'.repeat(40),
+    snapshotPath: 'repos/' + team.id + '/' + 'a'.repeat(40),
     verified: true,
     evidenceIds: [evidenceFixture.id],
     artifacts: Array.from({ length: artifactCount }, (_, index) => ({
@@ -83,7 +84,12 @@ function intakeFixture(artifactCount = 1) {
     issues: [],
     declaredDemoCommits: [],
     previousSnapshots: [],
+    ...overrides,
   }
+}
+
+function allIntakes(overrides = {}) {
+  return Object.fromEntries(TEAMS.map((team, index) => [team.id, intakeFixture(1, index, overrides)]))
 }
 
 async function sheetXml(bytes) {
@@ -142,6 +148,77 @@ describe('canonical judging model', () => {
     result = readiness({ ...judge, warningsAcknowledged: true }, acknowledged)
     expect(result.ready).toBe(true)
     expect(result.rows[0].total).toBe(80)
+  })
+
+  it('requires every reviewed approval and review warning acknowledgement', () => {
+    let result = readiness(judge, allReviews())
+    expect(result.nineReviewed).toBe(true)
+    expect(result.reviewWarningsAcknowledged).toBe(false)
+    expect(result.ready).toBe(false)
+
+    result = readiness(judge, allReviews('Yes', { warningsAcknowledged: true }))
+    expect(result.reviewWarningsAcknowledged).toBe(true)
+    expect(result.ready).toBe(true)
+  })
+
+  it('gates supplied intake warnings while allowing acknowledged unverified demos', () => {
+    const reviews = allReviews('Yes', { warningsAcknowledged: true })
+    const cleanIntakes = allIntakes({
+      demoParity: 'match',
+      links: [{ url: 'https://example.test/deployment', kind: 'deployment', status: 200, parity: 'match', accessible: true }],
+    })
+    let result = readiness(judge, reviews, cleanIntakes)
+    expect(result.intakesProvided).toBe(true)
+    expect(result.intakeComplete).toBe(true)
+    expect(result.intakeSnapshotsVerified).toBe(true)
+    expect(result.ready).toBe(true)
+
+    const unverifiedSnapshots = allIntakes({
+      verified: false,
+      demoParity: 'match',
+      links: [{ url: 'https://example.test/deployment', kind: 'deployment', status: 200, parity: 'match', accessible: true }],
+    })
+    result = readiness(judge, reviews, unverifiedSnapshots)
+    expect(result.intakeSnapshotsVerified).toBe(false)
+    expect(result.ready).toBe(false)
+    result = readiness({ ...judge, warningsAcknowledged: true }, reviews, unverifiedSnapshots)
+    expect(result.ready).toBe(true)
+
+    const unverifiedDemos = allIntakes()
+    result = readiness(judge, reviews, unverifiedDemos)
+    expect(result.intakeWarningsAcknowledged).toBe(false)
+    expect(result.warningDetails.some(warning => warning.code === 'intake_demo_unverified')).toBe(true)
+    expect(result.ready).toBe(false)
+
+    result = readiness({ ...judge, warningsAcknowledged: true }, reviews, unverifiedDemos)
+    expect(result.intakeWarningsAcknowledged).toBe(true)
+    expect(result.ready).toBe(true)
+
+    const missingIntake = { ...cleanIntakes }
+    delete missingIntake[TEAM_IDS[0]]
+    result = readiness({ ...judge, warningsAcknowledged: true }, reviews, missingIntake)
+    expect(result.intakeComplete).toBe(false)
+    expect(result.intakeSnapshotsVerified).toBe(false)
+    expect(result.warningDetails.some(warning => warning.code === 'intake_missing')).toBe(true)
+    expect(result.ready).toBe(false)
+  })
+
+  it('reports source and demo availability mismatches from intake issues and links', () => {
+    const reviews = allReviews('Yes', { warningsAcknowledged: true })
+    const mismatchedIntakes = allIntakes({
+      demoParity: 'mismatch',
+      issues: ['source unavailable', 'declared demo commit differs from frozen snapshot'],
+      links: [{ url: 'https://example.test/deployment', kind: 'deployment', status: 404, parity: 'mismatch', accessible: false }],
+    })
+    let result = readiness(judge, reviews, mismatchedIntakes)
+    const codes = new Set(result.warningDetails.map(warning => warning.code))
+    expect(codes.has('intake_issue')).toBe(true)
+    expect(codes.has('intake_source_availability_mismatch')).toBe(true)
+    expect(codes.has('intake_demo_availability_mismatch')).toBe(true)
+    expect(result.ready).toBe(false)
+
+    result = readiness({ ...judge, warningsAcknowledged: true }, reviews, mismatchedIntakes)
+    expect(result.ready).toBe(true)
   })
 
   it('validates constrained server record keys and bounded evidence/intake payloads', () => {
@@ -238,10 +315,26 @@ describe('organizer workbook adapter', () => {
     expect(cellXml(await sheetXml(missingRepo), 'M13')).toContain('<v>80</v>')
     expect(cellXml(await sheetXml(missingRepo), 'O13')).toContain('<v>Missing repo check</v>')
 
-    const complete = await exportWorkbook(sourceBytes, { judge: { ...judge, date: '2026-10-28' }, reviews: allReviews() }, { final: true })
+    const complete = await exportWorkbook(sourceBytes, { judge: { ...judge, date: '2026-10-28' }, reviews: allReviews('Yes', { warningsAcknowledged: true }) }, { final: true })
     expect(cellXml(await sheetXml(complete), 'C33')).toContain('YES — upload via the Google Form')
-    await expect(exportWorkbook(sourceBytes, { judge: { ...judge, date: '2026-10-28' }, reviews: { ...allReviews(), [TEAM_IDS[0]]: review(TEAM_IDS[0], [80, 80, 80, 80], 'No – private/broken') } }, { final: true })).rejects.toThrow('not ready')
-  })
+    await expect(exportWorkbook(sourceBytes, { judge: { ...judge, date: '2026-10-28' }, reviews: { ...allReviews('Yes', { warningsAcknowledged: true }), [TEAM_IDS[0]]: review(TEAM_IDS[0], [80, 80, 80, 80], 'No – private/broken') } }, { final: true })).rejects.toThrow('not ready')
+
+    const cleanIntakes = allIntakes({
+      demoParity: 'match',
+      links: [{ url: 'https://example.test/deployment', kind: 'deployment', status: 200, parity: 'match', accessible: true }],
+    })
+    const finalWithIntakes = await exportWorkbook(sourceBytes, {
+      judge: { ...judge, date: '2026-10-28' },
+      reviews: allReviews('Yes', { warningsAcknowledged: true }),
+      intakes: cleanIntakes,
+    }, { final: true })
+    expect(finalWithIntakes).toBeInstanceOf(Uint8Array)
+    await expect(exportWorkbook(sourceBytes, {
+      judge: { ...judge, date: '2026-10-28' },
+      reviews: allReviews('Yes', { warningsAcknowledged: true }),
+      intakes: allIntakes(),
+    }, { final: true })).rejects.toThrow('not ready')
+  }, 15000)
 
   parity('accepts actual intake/evidence fields and exports a local fixture workbook', async () => {
     expect(validateRecord('evidence:' + evidenceFixture.id, evidenceFixture)).toBe(true)

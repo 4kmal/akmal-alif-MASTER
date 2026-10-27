@@ -347,8 +347,8 @@ function summaryCacheValues(rowsById, judge) {
   }
 }
 
-function ensureFinalReadiness(judge, reviews) {
-  const result = readiness(judge, reviews)
+function ensureFinalReadiness(judge, reviews, intakes) {
+  const result = readiness(judge, reviews, intakes)
   if (!result.ready)
     throw new Error('Workbook is not ready to submit: ' + result.warnings.join(' '))
   return result
@@ -376,7 +376,7 @@ export async function exportWorkbook(templateBytes, payload, options = {}) {
   const judge = validateJudge(payload.judge || {}, { allowDefaults: true })
   const reviews = payload.reviews === undefined ? {} : payload.reviews
   if (options.final === true)
-    ensureFinalReadiness(judge, reviews)
+    ensureFinalReadiness(judge, reviews, payload.intakes)
 
   const rowsById = reviewByTeamId(reviews)
   let sheetXml = template.sheetXml

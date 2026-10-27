@@ -74,8 +74,13 @@ export interface ReadinessResult {
   totalTeams: number
   nineReviewed: boolean
   judgeDetailsComplete: boolean
+  reviewWarningsAcknowledged: boolean
   negativeRepoSelections: TeamId[]
   negativeSelectionWarningsAcknowledged: boolean
+  intakesProvided: boolean
+  intakeComplete: boolean
+  intakeSnapshotsVerified: boolean
+  intakeWarningsAcknowledged: boolean
   warningsAcknowledged: boolean
   missingTeamIds: TeamId[]
   warnings: string[]

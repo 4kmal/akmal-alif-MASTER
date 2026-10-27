@@ -318,6 +318,33 @@ function intakeMap(intakes) {
   return map
 }
 
+function intakeIssueStrings(intake) {
+  return intake && Array.isArray(intake.issues)
+    ? intake.issues.filter(issue => typeof issue === 'string' && issue.trim() !== '')
+    : []
+}
+
+function intakeLinks(intake) {
+  return intake && Array.isArray(intake.links) ? intake.links : []
+}
+
+function linkHasAvailabilityMismatch(link) {
+  if (!isPlainObject(link))
+    return false
+  return link.parity === 'mismatch'
+    || link.accessible === false
+    || (typeof link.status === 'number' && Number.isFinite(link.status) && link.status >= 400)
+    || (typeof link.error === 'string' && link.error.trim() !== '')
+}
+
+function issueMentionsDemo(issue) {
+  return /demo|published|commit|parity/i.test(issue)
+}
+
+function issueMentionsSource(issue) {
+  return /source|link|url|deployment|private|broken|unavailable|extract|access/i.test(issue)
+}
+
 export function readiness(judge, reviews, intakes) {
   const normalizedJudge = validateJudge(judge, { allowDefaults: true })
   const rows = calculateReviews(reviews)
@@ -349,20 +376,62 @@ export function readiness(judge, reviews, intakes) {
       negativeRows.push(row)
       pushWarning(warningDetails, 'negative_repo_check', row.name + ' is marked "' + row.repoCheck + '".', row.id)
       if (!row.warningsAcknowledged)
-        pushWarning(warningDetails, 'review_warning_not_acknowledged', row.name + ' requires acknowledgement for the negative repository check.', row.id)
+        pushWarning(warningDetails, 'review_warning_not_acknowledged', row.name + ' requires acknowledgement for the review warnings.', row.id)
     }
+  }
+
+  for (const row of reviewedRows) {
+    if (!row.warningsAcknowledged && !NEGATIVE_REPO_CHECK_SET.has(row.repoCheck))
+      pushWarning(warningDetails, 'review_warning_not_acknowledged', row.name + ' requires acknowledgement for the review warnings.', row.id)
   }
 
   if (negativeRows.length > 0 && !normalizedJudge.warningsAcknowledged)
     pushWarning(warningDetails, 'judge_warning_not_acknowledged', 'Judge-level acknowledgement is required for negative repository selections.')
 
+  const intakesProvided = intakes !== undefined && intakes !== null
   const providedIntakes = intakeMap(intakes)
-  if (intakes !== undefined && intakes !== null) {
+  const missingIntakeIds = []
+  const unverifiedSnapshotIds = []
+  const intakeWarningStart = warningDetails.length
+  if (intakesProvided) {
     for (const team of TEAMS) {
-      if (!providedIntakes.has(team.id))
+      const intake = providedIntakes.get(team.id)
+      if (!intake) {
+        missingIntakeIds.push(team.id)
         pushWarning(warningDetails, 'intake_missing', team.name + ' has no intake record.', team.id)
+        continue
+      }
+
+      if (intake.verified !== true) {
+        unverifiedSnapshotIds.push(team.id)
+        pushWarning(warningDetails, 'intake_snapshot_unverified', team.name + ' has no verified frozen snapshot.', team.id)
+      }
+
+      const issues = intakeIssueStrings(intake)
+      if (issues.length > 0) {
+        pushWarning(warningDetails, 'intake_issue', team.name + ' has ' + issues.length + ' intake issue' + (issues.length === 1 ? '' : 's') + '.', team.id)
+        if (issues.some(issueMentionsSource))
+          pushWarning(warningDetails, 'intake_source_availability_mismatch', team.name + ' has an intake source or link availability issue.', team.id)
+        if (issues.some(issueMentionsDemo))
+          pushWarning(warningDetails, 'intake_demo_availability_mismatch', team.name + ' has a declared demo or published commit parity issue.', team.id)
+      }
+
+      if (intake.demoParity === 'unverified')
+        pushWarning(warningDetails, 'intake_demo_unverified', team.name + ' demo parity remains unverified and requires judge acknowledgement.', team.id)
+      else if (intake.demoParity === 'mismatch')
+        pushWarning(warningDetails, 'intake_demo_availability_mismatch', team.name + ' demo parity does not match the frozen snapshot.', team.id)
+
+      if (intakeLinks(intake).some(linkHasAvailabilityMismatch))
+        pushWarning(warningDetails, 'intake_source_availability_mismatch', team.name + ' has an unavailable or mismatched source link.', team.id)
     }
   }
+
+  const intakeWarningDetails = warningDetails.slice(intakeWarningStart)
+  const intakeComplete = !intakesProvided || missingIntakeIds.length === 0
+  const intakeSnapshotsVerified = !intakesProvided || (missingIntakeIds.length === 0 && unverifiedSnapshotIds.length === 0)
+  const intakeWarningsAcknowledged = !intakesProvided
+    || intakeWarningDetails.length === 0
+    || normalizedJudge.warningsAcknowledged
 
   const nineReviewed = reviewedRows.length === TEAMS.length
   if (!nineReviewed)
@@ -370,7 +439,14 @@ export function readiness(judge, reviews, intakes) {
 
   const negativeSelectionWarningsAcknowledged = negativeRows.every(row => row.warningsAcknowledged)
     && (negativeRows.length === 0 || normalizedJudge.warningsAcknowledged)
-  const ready = nineReviewed && judgeDetailsComplete && negativeSelectionWarningsAcknowledged
+  const reviewWarningsAcknowledged = reviewedRows.every(row => row.warningsAcknowledged)
+  const intakeGatePassed = !intakesProvided
+    || (intakeComplete && (intakeSnapshotsVerified || normalizedJudge.warningsAcknowledged) && intakeWarningsAcknowledged)
+  const ready = nineReviewed
+    && judgeDetailsComplete
+    && reviewWarningsAcknowledged
+    && negativeSelectionWarningsAcknowledged
+    && intakeGatePassed
   const warningMessages = warningDetails.map(warning => warning.message)
 
   return {
@@ -380,8 +456,13 @@ export function readiness(judge, reviews, intakes) {
     totalTeams: TEAMS.length,
     nineReviewed,
     judgeDetailsComplete,
+    reviewWarningsAcknowledged,
     negativeRepoSelections: negativeRows.map(row => row.id),
     negativeSelectionWarningsAcknowledged,
+    intakesProvided,
+    intakeComplete,
+    intakeSnapshotsVerified,
+    intakeWarningsAcknowledged,
     warningsAcknowledged: normalizedJudge.warningsAcknowledged,
     missingTeamIds: rows.filter(row => !reviewedRows.includes(row)).map(row => row.id),
     warnings: warningMessages,
