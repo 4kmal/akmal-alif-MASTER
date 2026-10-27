@@ -803,6 +803,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadHtmlPartial('partials/bento/bento-tracklist.html', 'tracklist-panel-placeholder'),
             loadHtmlPartial('partials/bento/bento-clock.html', 'clock-widget-placeholder', () => {
                 window.SkillFocusRadar?.render(document.getElementById('clock-widget-placeholder'));
+                window.PublicCalendar?.init(document.getElementById('calendar-rail'));
             })
         ]);
         document.dispatchEvent(new CustomEvent('profile-metrics:targets-ready'));
@@ -854,6 +855,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             console.warn("'loadMusicPlayerModules' function is not defined.");
         }
+
+        window.PublicCalendar?.init(document.getElementById('calendar-rail'));
 
         // Initialize mobile tracklist after all partials are loaded
         if (typeof initializeMobileTracklist === 'function') {
@@ -919,7 +922,8 @@ function initBentoAnchoring() {
     debugLog('🔗 Initializing enhanced bento anchoring system...');
     
     const tracklistPanel = document.querySelector('.tracklist-panel');
-    const clockWidget = document.querySelector('.clock-widget-panel');
+    const clockWidget = document.querySelector('.calendar-rail')
+        || document.querySelector('.clock-widget-panel');
     const bentoElements = [tracklistPanel, clockWidget].filter(Boolean);
     
     if (bentoElements.length === 0) {

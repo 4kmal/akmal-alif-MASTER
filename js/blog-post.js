@@ -4,6 +4,8 @@ import {
   getBlogHeadings,
   renderBlogOutline,
 } from './blog-reader.js';
+import { disposeBlogGalleries, initBlogGalleries } from './blog-gallery.js';
+import { disposeYouTubeEmbeds, initYouTubeEmbeds } from './youtube-embed.js';
 
 const pageStates = new WeakMap();
 
@@ -117,6 +119,8 @@ export async function initBlogPost({
   const requestId = state.requestId + 1;
   state.requestId = requestId;
   clearBlogOutline(outline);
+  disposeBlogGalleries(content);
+  disposeYouTubeEmbeds(content);
   content.innerHTML = '<p class="blog-state-message">Loading blog post...</p>';
 
   try {
@@ -138,6 +142,9 @@ export async function initBlogPost({
       ? post.content_html
       : '<p class="blog-state-message">No content available.</p>';
 
+    initBlogGalleries(content);
+    initYouTubeEmbeds(content);
+
     const headings = getBlogHeadings(content);
     renderBlogOutline({ container: outline, headings, documentRef, windowRef });
     resolveInitialHash(documentRef, windowRef, state);
@@ -151,6 +158,8 @@ export async function initBlogPost({
     title.textContent = 'Unable to Load Blog Post';
     meta.textContent = '';
     content.innerHTML = '<p class="blog-state-message">Unable to load this blog post right now.</p>';
+    initBlogGalleries(content);
+    initYouTubeEmbeds(content);
     clearBlogOutline(outline);
   }
 }
