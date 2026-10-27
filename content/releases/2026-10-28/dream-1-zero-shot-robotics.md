@@ -44,4 +44,4 @@ The practical test for zero-shot robotics sits between an action prediction and 
 
 Dream-1 is best understood as a way to lower the first barrier to experimentation within a defined hardware family. Its API can make a bimanual parallel-gripper robot easier to try. Robocurve’s result suggests competitive behaviour under a published benchmark. The model’s own hardware envelope and beta status show why the remaining work matters. The next milestone is evidence that the system can expose uncertainty, enforce physical constraints, recover from bad plans, and remain understandable when the robot meets a body it has never seen.
 
-Source check: 28 October 2026. Dream Labs facts are kept to the hardware envelope, API, price range, action-chunk description, and research-beta status; Robocurve figures were checked on that date; DreamZero is treated as separate research.
+Sources checked 28 October 2026. Robocurve's figures are a dated benchmark snapshot; product prices and research results may change.

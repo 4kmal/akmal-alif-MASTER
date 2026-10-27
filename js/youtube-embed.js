@@ -67,14 +67,14 @@ export function renderYoutubePlaceholder(marker, videoId, documentRef = marker?.
 
   const block = createElement(documentRef, 'section', 'youtube-click-to-load');
   block.dataset.youtubeRendered = 'true';
-  block.dataset.youtubeId = id;
   block.setAttribute('aria-labelledby', `youtube-title-${id}`);
   const preview = createElement(documentRef, 'div', 'youtube-preview');
   preview.setAttribute('aria-hidden', 'true');
   const playGlyph = createElement(documentRef, 'span', 'youtube-preview-glyph', '▶');
   const previewLabel = createElement(documentRef, 'span', 'youtube-preview-label', 'YouTube video');
   preview.append(playGlyph, previewLabel);
-  const title = createElement(documentRef, 'h3', 'youtube-title', 'Watch this video');
+  const videoTitle = marker.getAttribute('data-youtube-title') || marker.querySelector('a')?.textContent?.trim() || 'Watch this video';
+  const title = createElement(documentRef, 'h3', 'youtube-title', videoTitle);
   title.id = `youtube-title-${id}`;
   const loadButton = createElement(documentRef, 'button', 'youtube-load-button', 'Load video');
   loadButton.type = 'button';
@@ -103,11 +103,11 @@ export function renderYoutubePlaceholder(marker, videoId, documentRef = marker?.
   controllers.set(marker, controller);
 
   loadButton.addEventListener('click', () => {
-    if (controller.loaded) return;
+    if (controller.loaded || controller.disposed) return;
     controller.loaded = true;
     controller.iframe = createElement(documentRef, 'iframe', 'youtube-iframe');
     controller.iframe.src = `https://www.youtube-nocookie.com/embed/${id}?rel=0`;
-    controller.iframe.title = `YouTube video ${id}`;
+    controller.iframe.title = videoTitle;
     controller.iframe.loading = 'lazy';
     controller.iframe.referrerPolicy = 'strict-origin-when-cross-origin';
     controller.iframe.allow = 'encrypted-media; picture-in-picture';

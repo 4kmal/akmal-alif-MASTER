@@ -26,7 +26,7 @@ The power is asymmetric in a different way from the one the film dramatises. Pro
 
 The same story that creates solidarity can hide risk. A group can treat disagreement as betrayal, mistake visibility for expertise, or read a loss as evidence that the plan needs more commitment. A platform can turn attention into revenue while leaving users to absorb the consequences of speed and leverage. A broker can advertise a frictionless experience while the market’s actual plumbing remains full of capital, collateral, and settlement requirements.
 
-The SEC staff report’s disclaimer is useful here because it models a discipline that online narratives often lack. It marks the status of the document before asking the reader to rely on it. The report is staff analysis, not a Commission rule or legal conclusion. The same discipline should apply to a film clip, a viral thread, or a chart shared without its data-generating process. Each is a source with a purpose. None becomes neutral simply because it is popular.
+That is why the status of a source matters. A film clip, a viral thread and a chart shared without its underlying data ask for different kinds of trust. Each has a purpose and an audience. Popularity can make a claim easier to encounter without making its explanation more complete.
 
 There is also a subtle difference between collective attention and collective control. Thousands of people can point at the same stock and still have different time horizons, accounts, tax situations, and reasons for acting. A post can make them feel like one crowd while their orders enter the market through separate intermediaries. Shared language creates a social unit. It does not create a single balance sheet or a single risk appetite. That gap is where many retellings become more certain than the evidence allows.
 
@@ -40,4 +40,4 @@ The durable lesson is about interpretation. A shared story can change what peopl
 
 That is also why the story should end with a question rather than a trading instruction. Who benefits when a platform turns collective attention into repeated action? Which risks are made visible, and which are hidden by the language of a team? When a film gives an event a satisfying shape, what evidence did the shape leave outside the frame? Those questions are more useful than a prediction about the next crowd. They treat the shared story as a market force to examine, not a signal to follow.
 
-Source check: 28 October 2026. The film clip is treated as drama and narrative evidence; the SEC material is attributed to staff and its legal status is stated accurately. This essay gives no investment recommendation or price prediction.
+Sources checked 28 October 2026. The film is discussed as drama; market findings are attributed to SEC staff.

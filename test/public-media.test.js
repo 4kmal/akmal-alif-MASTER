@@ -15,10 +15,10 @@ test('gallery manifests preserve page order, PDF numbers, and bounded thumbnail 
   });
 
   assert.equal(GALLERY_PAGE_SIZE, 24);
-  assert.equal(manifest.pageCount, 2_000);
+  assert.equal(manifest.pageCount, 512);
   assert.equal(manifest.pages[0].originalUrl, '/media/original-1.png');
   assert.equal(manifest.pages[23].thumbnailUrl, '/media/thumb-24.png');
-  assert.equal(manifest.pages.at(-1).pdfPageNumber, 2_000);
+  assert.equal(manifest.pages.at(-1).pdfPageNumber, 512);
 });
 
 test('youtube IDs accept exact IDs and supported URLs without weakening validation', () => {

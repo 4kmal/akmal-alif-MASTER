@@ -1,0 +1,86 @@
+{
+  "date": "2026-10-28",
+  "language": "en",
+  "posts": [
+    {
+      "slug": "tuju-local-builders-open-map-data",
+      "category": "civic-tech",
+      "excerpt": "TuJu and local transport projects raise a bigger question: what should a public navigation project leave behind for everyone else to build on?",
+      "tags": ["Malaysia", "Open data", "Public transport", "Product design"],
+      "meta_title": "TuJu, Local Builders and Open Map Data | Akmal Alif",
+      "meta_description": "A source-led look at TuJu, Harith's bus map and the public data infrastructure that could support better Malaysian transport tools."
+    },
+    {
+      "slug": "internet-jenga-tower-php2shell",
+      "category": "cybersecurity",
+      "excerpt": "October's PHP2Shell disclosures put a familiar infrastructure meme into focus: shared dependencies need evidence, maintainers and a maintenance budget.",
+      "tags": ["PHP", "Open source", "Security research", "Infrastructure"],
+      "meta_title": "The Internet's Jenga Tower and PHP2Shell | Akmal Alif",
+      "meta_description": "What October 2026's PHP2Shell evidence says about dependency concentration, AI-assisted security research and sustainable maintenance."
+    },
+    {
+      "slug": "mods-worlds-remember-enrage-nightcoop",
+      "category": "game-development",
+      "excerpt": "enRAGE and NightCoop explore two different ways to make familiar worlds respond: persistent NPC systems and a second player's decisions.",
+      "tags": ["Game systems", "Modding", "Red Dead Redemption 2", "Cyberpunk 2077"],
+      "meta_title": "When Mods Make Worlds Remember | Akmal Alif",
+      "meta_description": "An analysis of enRAGE's RDR2 world systems and NightCoop's Cyberpunk co-op footage, separating demonstrations from broader claims.",
+      "youtube": ["hez2yR4GyTA", "Lk7qlmClqhw"]
+    },
+    {
+      "slug": "dream-1-zero-shot-robotics",
+      "category": "robotics",
+      "excerpt": "Dream-1's cross-robot demonstrations are promising. Its hardware envelope, evaluation contract and control boundaries explain what zero-shot still leaves to engineers.",
+      "tags": ["Robot learning", "World Action Models", "AI evaluation", "Control systems"],
+      "meta_title": "Dream-1 and Zero-Shot Robotics | Akmal Alif",
+      "meta_description": "A grounded analysis of Dream-1's robot-transfer claims, independent evaluation, deployment costs and remaining physical control limits."
+    },
+    {
+      "slug": "anthem-project-coda-world-worth-preserving",
+      "category": "anthem",
+      "excerpt": "After Anthem's official shutdown, Project Coda and the artbook preserve different layers of a world whose visual identity still deserves study.",
+      "tags": ["Anthem", "Game preservation", "Project Coda", "Concept art"],
+      "meta_title": "Anthem, Project Coda and Preserving a World | Akmal Alif",
+      "meta_description": "Project Coda's community footage, Anthem's shutdown and a 211-page artbook gallery, with clear boundaries between preservation and relaunch.",
+      "youtube": ["M0n6kiUxZgA"],
+      "gallery": "the-art-of-anthem"
+    },
+    {
+      "slug": "dumb-money-gamestop-shared-story",
+      "category": "internet-culture",
+      "excerpt": "Dumb Money captures the social force of a shared market story. The SEC staff report helps separate that story from the mechanics of January 2021.",
+      "tags": ["Internet culture", "GameStop", "Media analysis", "Platform incentives"],
+      "meta_title": "Dumb Money and the Power of a Shared Story | Akmal Alif",
+      "meta_description": "How film, online identity and platform incentives frame GameStop, read alongside the SEC staff report rather than as trading advice.",
+      "youtube": ["jCXWIQ74Jlg"]
+    }
+  ],
+  "categories": [
+    { "name": "Civic Tech", "slug": "civic-tech", "description": "Public digital services, open data and the people building useful local tools.", "icon_key": "civic-tech", "sort_order": 30 },
+    { "name": "Cybersecurity", "slug": "cybersecurity", "description": "Security research, shared dependencies and the engineering behind dependable systems.", "icon_key": "cybersecurity", "sort_order": 40 },
+    { "name": "Game Development", "slug": "game-development", "description": "Game systems, modding, world simulation and the craft of interactive experiences.", "icon_key": "game-development", "sort_order": 50 },
+    { "name": "Robotics", "slug": "robotics", "description": "Robot learning, embodiment, control and careful evaluation in the physical world.", "icon_key": "robotics", "sort_order": 60 },
+    { "name": "Anthem", "slug": "anthem", "description": "Anthem's worlds, visual design, community projects and game preservation.", "icon_key": "anthem", "sort_order": 70 },
+    { "name": "Internet Culture", "slug": "internet-culture", "description": "The shared stories and platform incentives that shape life online.", "icon_key": "internet-culture", "sort_order": 80 }
+  ],
+  "gallery": {
+    "key": "the-art-of-anthem",
+    "title": "The Art of Anthem",
+    "page_count": 211,
+    "credit": "Artwork and publication: BioWare, Electronic Arts and Dark Horse Books. Original PDF page order."
+  },
+  "calendar_event": {
+    "title": "2026 Epic AI MegaJam",
+    "kind": "event",
+    "description": "Interested / planning. Epic's announced build window is 12–15 November 2026. Submission deadline: Monday 16 November 2026 at 09:59 MYT (Sunday 15 November, 17:59 PST). Theme-reveal livestream: Thursday 12 November at 03:00 MYT. Planning interest only; participation is not confirmed and this entry does not block availability.",
+    "location": "Online",
+    "url": "https://www.unrealengine.com/news/2026-epic-ai-megajam",
+    "timezone": "Asia/Kuala_Lumpur",
+    "all_day": true,
+    "start_date": "2026-11-12",
+    "end_date": "2026-11-16",
+    "visibility": "public",
+    "participation": "interested",
+    "blocks_availability": false
+  }
+}

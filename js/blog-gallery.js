@@ -1,5 +1,5 @@
 export const GALLERY_PAGE_SIZE = 24;
-const MAX_MANIFEST_PAGES = 2_000;
+const MAX_MANIFEST_PAGES = 512;
 const controllers = new WeakMap();
 const rootObservers = new WeakMap();
 const rootMarkers = new WeakMap();
