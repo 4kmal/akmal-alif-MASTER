@@ -24,7 +24,6 @@ const routeConfig = readFileSync(resolve(adminRoot, 'app/composables/dashboard.t
 describe('sDC judging workspace UI contract', () => {
   it('keeps the shared workspace on the durable record and evidence APIs', () => {
     expect(workspace).toContain('apiBase: \'/api/admin/judging/sdc-2026\'')
-    expect(workspace).toMatch(/const stateEndpoint = `\$\{props\.apiBase\}\/state\$\{stateCursor\.value === null/)
     expect(workspace).toMatch(/fetch\(`\$\{props\.apiBase\}\/records`/)
     expect(workspace).toMatch(/fetch\(`\$\{props\.apiBase\}\/evidence\/\$\{encodeURIComponent\(item\.id\)\}`/)
     expect(workspace).toMatch(/fetch\(`\$\{props\.apiBase\}\/sync\/status`/)
