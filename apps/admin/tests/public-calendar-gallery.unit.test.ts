@@ -133,7 +133,7 @@ describe('public calendar DOM contract', () => {
     expect(agendaText).toContain('Public briefing')
     expect(agendaText).toContain('Public details')
     expect(agendaText).toContain('Civic hall')
-    expect(agendaText).toContain('Your participation: planning')
+    expect(agendaText).toContain("Akmal's participation: planning")
     expect(agendaText).toContain('Nonblocking')
     expect(agendaText).not.toContain('Private appointment')
     expect(agendaText).not.toContain('Secret room')
@@ -334,9 +334,20 @@ describe('public gallery DOM contract', () => {
     const image = viewer.querySelector('.blog-gallery-viewer-image') as HTMLImageElement
     expect(image.src).toContain('/media/original-1')
     expect(marker.querySelectorAll('.blog-gallery-thumb-image')).toHaveLength(2)
+    const viewport = viewer.querySelector('.blog-gallery-viewer-viewport')!
+    const swipe = (type: string, x: number, y: number) => {
+      const event = new dom.window.Event(type, { bubbles: true })
+      Object.defineProperty(event, 'changedTouches', { value: [{ clientX: x, clientY: y }] })
+      viewport.dispatchEvent(event)
+    }
+    swipe('touchstart', 150, 50)
+    swipe('touchend', 20, 50)
+    expect(image.src).toContain('/media/original-2')
     viewer.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.click()
     expect(image.style.transform).toContain('scale(1.5)')
-    const viewport = viewer.querySelector('.blog-gallery-viewer-viewport')!
+    swipe('touchstart', 20, 50)
+    swipe('touchend', 150, 50)
+    expect(image.src).toContain('/media/original-2')
     viewport.dispatchEvent(new dom.window.PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }))
     viewport.dispatchEvent(new dom.window.PointerEvent('pointermove', { bubbles: true, clientX: 30, clientY: 25 }))
     expect(image.style.transform).toContain('translate(20px, 15px)')

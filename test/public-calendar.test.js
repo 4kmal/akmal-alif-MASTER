@@ -32,45 +32,46 @@ function renderElements() {
 }
 
 test('calendar keeps private events out and redacts busy details', () => {
-  assert.equal(normaliseCalendarEvent({ id: 'private', title: 'Secret', start: '2026-10-28T01:00:00Z', visibility: 'private' }), null);
+  assert.equal(normaliseCalendarEvent({ id: 'private', title: 'Secret', starts_at: '2026-10-28T01:00:00Z', visibility: 'private' }), null);
 
   const busy = normaliseCalendarEvent({
     id: 'busy',
     title: 'Private appointment',
-    start: '2026-10-28T01:00:00Z',
-    end: '2026-10-28T02:00:00Z',
-    busy: true,
+    starts_at: '2026-10-28T01:00:00Z',
+    ends_at: '2026-10-28T02:00:00Z',
+    visibility: 'busy',
+    all_day: false,
     location: 'Private room',
     description: 'Should never be public',
   });
 
   assert.deepEqual({ title: busy.title, location: busy.location, description: busy.description, busy: busy.busy }, {
     title: 'Busy',
-    location: '',
-    description: '',
+    location: undefined,
+    description: undefined,
     busy: true,
   });
 });
 
 test('calendar preserves UTC timed boundaries and date-only exclusive ends', () => {
-  const timed = normaliseCalendarEvent({ id: 'utc', start: '2026-10-31T16:00:00Z', end: '2026-10-31T17:30:00Z' });
+  const timed = normaliseCalendarEvent({ id: 'utc', visibility: 'public', all_day: false, starts_at: '2026-10-31T16:00:00Z', ends_at: '2026-10-31T17:30:00Z' });
   assert.equal(timed.start, '2026-10-31T16:00:00.000Z');
   assert.equal(timed.end, '2026-10-31T17:30:00.000Z');
 
-  const allDay = normaliseCalendarEvent({ id: 'day', dateonly: true, start: '2026-11-01', end: '2026-11-03', title: 'Open day' });
+  const allDay = normaliseCalendarEvent({ id: 'day', visibility: 'public', all_day: true, start_date: '2026-11-01', end_date: '2026-11-03', title: 'Open day' });
   assert.equal(allDay.allDay, true);
   assert.equal(allDay.start, '2026-11-01');
   assert.equal(allDay.end, '2026-11-03');
 });
 
-test('calendar month grid starts on Monday and retains source order for equal times', () => {
+test('calendar month grid starts on Monday and sorts equal times by stable ID', () => {
   const range = getCalendarMonthRange(new Date('2026-10-01T00:00:00Z'));
   assert.equal(range.start, '2026-09-28');
   assert.equal(range.end, '2026-11-02');
 
   const events = normaliseCalendarEvents([
-    { id: 'b', start: '2026-10-01T10:00:00Z', end: '2026-10-01T11:00:00Z' },
-    { id: 'a', start: '2026-10-01T10:00:00Z', end: '2026-10-01T11:00:00Z' },
+    { id: 'b', visibility: 'public', starts_at: '2026-10-01T10:00:00Z', ends_at: '2026-10-01T11:00:00Z' },
+    { id: 'a', visibility: 'public', starts_at: '2026-10-01T10:00:00Z', ends_at: '2026-10-01T11:00:00Z' },
   ]);
   assert.deepEqual(events.map((event) => event.id), ['a', 'b']);
 });
@@ -99,7 +100,7 @@ test('calendar keeps the last good events when a visible refresh fails', async (
       return {
         ok: true,
         async json() {
-          return [{ id: 'public', start: '2026-10-28T01:00:00Z', end: '2026-10-28T02:00:00Z', title: 'Public event' }];
+          return { events: [{ id: 'public', visibility: 'public', starts_at: '2026-10-28T01:00:00Z', ends_at: '2026-10-28T02:00:00Z', title: 'Public event' }], upcoming: [] };
         },
       };
     },
@@ -108,10 +109,14 @@ test('calendar keeps the last good events when a visible refresh fails', async (
     monthKey: '2026-10',
     selectedDate: '2026-10-28',
     events: [],
-    participation: new Map(),
+    upcoming: [],
     cache: new Map(),
     request: null,
-    refreshAgain: false,
+    requestController: null,
+    requestToken: 0,
+    requestMonthKey: null,
+    queuedMonthKey: null,
+    queuedForce: false,
     loading: false,
     error: null,
     disposed: false,

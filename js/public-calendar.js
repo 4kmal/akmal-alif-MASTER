@@ -346,7 +346,7 @@ function appendEventDetails(state, item, event) {
     item.appendChild(createElement(state.documentRef, 'span', 'calendar-event-metadata', metadata));
   }
   if (event.participation) {
-    item.appendChild(createElement(state.documentRef, 'span', 'calendar-event-participation', `Your participation: ${event.participation}`));
+    item.appendChild(createElement(state.documentRef, 'span', 'calendar-event-participation', `Akmal's participation: ${event.participation}`));
   }
   item.appendChild(createElement(
     state.documentRef,
