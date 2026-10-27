@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // @vitest-environment jsdom
 import { createApp, nextTick } from 'vue'
 import JudgingWorkspace from '../app/components/judging/JudgingWorkspace.vue'
-import { ASSIGNMENT, FEATURES } from '../shared/judging/model.mjs'
+import { ASSIGNMENT, FEATURES, TEAMS } from '../shared/judging/model.mjs'
 
 interface FetchCall { url: string, body?: Record<string, any> }
 interface DeferredEvidence { id: string, resolve: (response: Response) => void }
@@ -53,6 +53,7 @@ describe('judgingWorkspace save behavior', () => {
   let conflictEnvelope: boolean
   let cursorAheadRecovery: boolean
   let stateCursorIssued: boolean
+  let exportFailure: boolean
   let originalFetch: typeof fetch
   let originalOnline: boolean
 
@@ -74,6 +75,11 @@ describe('judgingWorkspace save behavior', () => {
     conflictEnvelope = false
     cursorAheadRecovery = false
     stateCursorIssued = false
+    exportFailure = false
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:judging-workbook')
+      static revokeObjectURL = vi.fn()
+    })
     originalFetch = globalThis.fetch
     originalOnline = navigator.onLine
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
@@ -95,6 +101,13 @@ describe('judgingWorkspace save behavior', () => {
         return jsonResponse(syncStatusPayload)
       if (url.endsWith('/jobs'))
         return jsonResponse({ jobs: jobsPayload })
+      if (parsedUrl.pathname.endsWith('/exports')) {
+        if (exportFailure)
+          return jsonResponse({ statusMessage: 'A review changed; refresh before exporting.' }, 409)
+        return new Response(new Uint8Array([80, 75, 3, 4]), {
+          headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+        })
+      }
       if (url.endsWith('/devices'))
         return jsonResponse({ devices: [{ id: 'device-1', name: 'Review station', expiresAt: '2026-10-29T00:00:00.000Z' }] })
       if (url.includes('/devices/'))
@@ -145,6 +158,7 @@ describe('judgingWorkspace save behavior', () => {
     app = null
     host.remove()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     globalThis.fetch = originalFetch
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: originalOnline })
     vi.useRealTimers()
@@ -588,7 +602,7 @@ describe('judgingWorkspace save behavior', () => {
     expect(fetchCalls.some(call => call.url.endsWith('/sync/status'))).toBe(false)
   })
 
-  it('invokes the draft export URL when no edits are pending', async () => {
+  it('downloads a successful workbook response and releases its object URL', async () => {
     delayedFirstSave = false
     mountLocal()
     await settle()
@@ -601,7 +615,35 @@ describe('judgingWorkspace save behavior', () => {
 
     const anchor = append.mock.calls.map(call => call[0]).find(element => element instanceof HTMLAnchorElement) as HTMLAnchorElement | undefined
     expect(click).toHaveBeenCalled()
-    expect(anchor?.getAttribute('href')).toBe('/api/local/exports?final=0')
+    expect(fetchCalls.some(call => call.url === '/api/local/exports?final=0')).toBe(true)
+    expect(anchor?.getAttribute('href')).toBe('blob:judging-workbook')
+    expect(anchor?.download).toBe('SDC-D1-J04-draft.xlsx')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:judging-workbook')
+  })
+
+  it('keeps the dashboard open and displays an export rejection', async () => {
+    exportFailure = true
+    mountAdmin()
+    await settle()
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const draft = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Draft XLSX'))
+    draft?.click()
+    await settle()
+    expect(click).not.toHaveBeenCalled()
+    expect(host.textContent).toContain('A review changed; refresh before exporting.')
+  })
+
+  it('keeps final export locked when all reviews are complete but no snapshots exist', async () => {
+    stateRecords = [
+      { key: 'judge', version: 1, data: { name: ASSIGNMENT.judgeName, date: '2026-10-28', domain: ASSIGNMENT.domain, generalNotes: '', warningsAcknowledged: true } },
+      ...TEAMS.map(team => ({ key: `review:${team.id}`, version: 1, data: { teamId: team.id, scores: [80, 80, 80, 80], repoCheck: 'Yes', notes: '', reviewedAt: '2026-10-28T00:00:00.000Z', warningsAcknowledged: true } })),
+    ]
+    mountAdmin()
+    await settle()
+    const final = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Final XLSX'))
+    expect(final?.disabled).toBe(true)
+    expect(host.textContent).toContain('no intake record')
   })
 
   it('uses the owner DELETE device route when revoking a station', async () => {

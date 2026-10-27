@@ -332,6 +332,8 @@ const latestAssessmentJobs = computed(() => {
 const priorAssessmentJobs = computed(() => assessmentJobs.value.filter(job => !latestAssessmentJobs.value.some(latest => latest.id === job.id)))
 const assessmentMessage = ref('')
 const exportMessage = ref('')
+const exporting = ref(false)
+const exportUrls = new Set<string>()
 const recoveryMessage = ref('')
 const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const deadlineNow = ref(Date.now())
@@ -386,7 +388,7 @@ const intakeInputMap = computed(() => {
   const entries = Object.values(records)
     .filter(record => record.key.startsWith('intake:'))
     .map(record => [record.key.slice('intake:'.length), record.data])
-  return entries.length ? Object.fromEntries(entries) : undefined
+  return Object.fromEntries(entries)
 })
 const reviewRows = computed(() => calculateReviews(reviewInputMap.value))
 const readinessResult = computed(() => readiness(judgeDraft, reviewInputMap.value, intakeInputMap.value))
@@ -396,7 +398,7 @@ const incompleteCount = computed(() => reviewRows.value.filter(row => row.status
 const issueCount = computed(() => teams.value.filter(team => hasIssues(reviewDrafts[team.id])).length)
 const deadlineText = computed(() => formatCountdown(assignment.value.deadline, deadlineNow.value))
 const deadlineDate = computed(() => formatDateTime(assignment.value.deadline))
-const overallReadiness = computed(() => `${readinessResult.value.reviewedCount}/${readinessResult.value.totalTeams} ready`)
+const overallReadiness = computed(() => readinessResult.value.ready ? 'Ready for export' : 'Review required')
 const syncLabel = computed(() => {
   if (syncState.value === 'unpaired')
     return 'Unpaired · pair station'
@@ -1974,6 +1976,8 @@ async function flushDirtyRecords() {
 }
 
 async function downloadExport(finalExport: boolean) {
+  if (exporting.value)
+    return
   exportMessage.value = ''
   if (finalExport && !readinessResult.value.ready) {
     exportMessage.value = 'Final export is locked until all nine reviews and judge details are ready.'
@@ -1987,13 +1991,34 @@ async function downloadExport(finalExport: boolean) {
   }
   if (typeof document === 'undefined')
     return
-  const anchor = document.createElement('a')
-  anchor.href = `${props.apiBase}/exports?final=${finalExport ? '1' : '0'}`
-  anchor.download = ''
-  anchor.rel = 'noreferrer'
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
+  exporting.value = true
+  exportMessage.value = 'Preparing workbook…'
+  try {
+    const response = await fetch(`${props.apiBase}/exports?final=${finalExport ? '1' : '0'}`, { credentials: 'include' })
+    if (!response.ok)
+      throw new Error(payloadMessage(await readJson(response), `Workbook export failed (${response.status}).`))
+    if (!response.headers.get('content-type')?.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'))
+      throw new Error('The export did not return an Excel workbook. Refresh your owner session and try again.')
+    const url = URL.createObjectURL(await response.blob())
+    exportUrls.add(url)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `SDC-D1-J04-${finalExport ? 'final' : 'draft'}.xlsx`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url)
+      exportUrls.delete(url)
+    }, 1_000)
+    exportMessage.value = 'Workbook download started.'
+  }
+  catch (error) {
+    exportMessage.value = error instanceof Error ? error.message : 'The workbook could not be exported.'
+  }
+  finally {
+    exporting.value = false
+  }
 }
 
 watch(() => props.apiBase, () => {
@@ -2045,6 +2070,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  for (const url of exportUrls)
+    URL.revokeObjectURL(url)
+  exportUrls.clear()
   stopPolling()
   window.removeEventListener('online', handleOnline)
   window.removeEventListener('offline', handleOffline)
@@ -2163,10 +2191,10 @@ onBeforeUnmount(() => {
           </h2>
         </div>
         <div class="section-actions">
-          <button class="secondary-button" type="button" @click="downloadExport(false)">
+          <button class="secondary-button" type="button" :disabled="exporting" @click="downloadExport(false)">
             <Download :size="15" aria-hidden="true" /> Draft export
           </button>
-          <button class="primary-button" type="button" :disabled="!readinessResult.ready" :title="readinessResult.ready ? 'Download the final workbook' : 'Complete all nine reviewed rows first'" @click="downloadExport(true)">
+          <button class="primary-button" type="button" :disabled="exporting || !readinessResult.ready" :title="readinessResult.ready ? 'Download the final workbook' : 'Complete the export checks below first'" @click="downloadExport(true)">
             <Download :size="15" aria-hidden="true" /> Final export
           </button>
         </div>
@@ -2327,7 +2355,9 @@ onBeforeUnmount(() => {
             </div>
             <div class="job-list">
               <div
-                v-for="job in latestAssessmentJobs" :key="job.id" class="job-row"
+                v-for="job in latestAssessmentJobs" :key="job.id" class="
+                  job-row
+                "
               >
                 <div>
                   <strong>{{ teamName(job.teamId) }}</strong><small>{{ job.message ?? job.status }}</small><span
@@ -2349,7 +2379,9 @@ onBeforeUnmount(() => {
                   >
                     Regenerate
                   </button><button
-                    v-if="['failed', 'cancelled'].includes(job.status)" type="button" class="secondary-button compact-button" @click="queueAssessment(job.teamId, job.id)"
+                    v-if="['failed', 'cancelled'].includes(job.status)" type="button" class="
+                      secondary-button compact-button
+                    " @click="queueAssessment(job.teamId, job.id)"
                   >
                     Retry
                   </button><button
@@ -2366,7 +2398,9 @@ onBeforeUnmount(() => {
                 No assessment jobs queued.
               </p>
             </div>
-            <details v-if="priorAssessmentJobs.length" class="assessment-history">
+            <details
+              v-if="priorAssessmentJobs.length" class="assessment-history"
+            >
               <summary>Earlier attempts ({{ priorAssessmentJobs.length }})</summary>
               <ol>
                 <li v-for="job in priorAssessmentJobs" :key="job.id">
@@ -2751,11 +2785,11 @@ onBeforeUnmount(() => {
           >
             <RefreshCw :size="15" aria-hidden="true" /> {{ intakeLoading ? 'Intake running…' : 'Run local intake' }}
           </button><button
-            class="secondary-button" type="button" @click="downloadExport(false)"
+            class="secondary-button" type="button" :disabled="exporting" @click="downloadExport(false)"
           >
             <Download :size="15" aria-hidden="true" /> Draft XLSX
           </button><button
-            class="primary-button" type="button" :disabled="!readinessResult.ready" @click="downloadExport(true)"
+            class="primary-button" type="button" :disabled="exporting || !readinessResult.ready" @click="downloadExport(true)"
           >
             <Download :size="15" aria-hidden="true" /> Final XLSX
           </button>
@@ -2765,7 +2799,16 @@ onBeforeUnmount(() => {
           v-if="exportMessage" class="feedback" role="status"
         >
           {{ exportMessage }}
-        </p><p
+        </p><details
+          v-if="readinessResult.warnings.length" class="assessment-history"
+        >
+          <summary>Export checks ({{ readinessResult.warnings.length }})</summary>
+          <ul>
+            <li v-for="warning in readinessResult.warnings" :key="warning">
+              {{ warning }}
+            </li>
+          </ul>
+        </details><p
           class="micro-copy"
         >
           Upload the XLSX yourself after final review.

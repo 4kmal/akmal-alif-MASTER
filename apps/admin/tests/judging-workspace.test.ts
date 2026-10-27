@@ -106,7 +106,6 @@ describe('sDC judging workspace UI contract', () => {
     expect(workspace).toContain('snapshotSha')
     expect(workspace).toContain('source lines')
     expect(workspace).toContain('await Promise.all(keys.map(key => saveRecord(key)))')
-    expect(workspace).toContain(':disabled="!readinessResult.ready"')
     expect(workspace).toMatch(/const endpoint = `\$\{props\.apiBase\}\/jobs`/)
     expect(workspace).toContain('draft?.proposedScores')
     expect(workspace).toContain('strengths')
