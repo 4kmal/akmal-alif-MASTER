@@ -4,9 +4,10 @@ export default eventHandler(async (event) => {
   const { actor } = requireJudgingOwner(event)
   const id = pathId(event)
   const bytes = await readJudgingBytes(event)
-  const meta = await putJudgingEvidence(event, id, bytes, actor)
   const db = requireJudgingDb(event)
   const current = await getJudgingRecord(db, `evidence:${id}`)
+  const expectedSourceSha256 = typeof current?.data.sha256 === 'string' ? current.data.sha256 : undefined
+  const meta = await putJudgingEvidence(event, id, bytes, actor, undefined, expectedSourceSha256)
   let record
   if (current) {
     const data = await validateJudgingRecord(`evidence:${id}`, {

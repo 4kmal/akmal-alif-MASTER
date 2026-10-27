@@ -2,7 +2,7 @@ import type { H3Event } from 'h3'
 import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { getJudgingRecord, saveJudgingRecord } from '../server/utils/judging'
+import { getJudgingEvidenceObject, getJudgingRecord, saveJudgingRecord } from '../server/utils/judging'
 
 const globals = globalThis as unknown as Record<string, unknown>
 globals.createError ??= (options: Record<string, unknown>) => Object.assign(new Error(String(options.statusMessage ?? 'error')), options)
@@ -187,5 +187,76 @@ describe('judging record CAS and idempotency', () => {
     await expect(saveJudgingRecord(database as never, `evidence:${id}`, 0, invalid, 'evidence-invalid', 'sync-device', undefined, event)).rejects.toMatchObject({ statusCode: 400 })
     expect(writes).toBe(0)
     await expect(getJudgingRecord(database as never, `evidence:${id}`)).resolves.toBeNull()
+  })
+
+  it('rejects forged source and JSON object paths before mirroring', async () => {
+    const id = '2'.repeat(32)
+    const sourceHash = '3'.repeat(64)
+    const base = {
+      id,
+      teamId: '01-console',
+      snapshotSha: '4'.repeat(40),
+      path: 'README.md',
+      kind: 'source',
+      sha256: sourceHash,
+      text: 'extracted README text',
+      lines: 1,
+      coverage: 'README',
+      createdAt: '2026-10-28T00:00:00.000Z',
+    }
+    let writes = 0
+    const bucket = {
+      head: async () => null,
+      put: async () => {
+        writes += 1
+      },
+    }
+    const event = { context: { cloudflare: { env: { R2: bucket } } } } as unknown as H3Event
+
+    await expect(saveJudgingRecord(database as never, `evidence:${id}`, 0, {
+      ...base,
+      objectKey: 'judging/private/admin-secret',
+    }, 'evidence-forged-source-path', 'sync-device', undefined, event)).rejects.toMatchObject({ statusCode: 400 })
+    await expect(saveJudgingRecord(database as never, `evidence:${id}`, 0, {
+      ...base,
+      jsonSha256: '5'.repeat(64),
+      jsonObjectKey: 'judging/private/admin-json',
+    }, 'evidence-forged-json-path', 'sync-device', undefined, event)).rejects.toMatchObject({ statusCode: 400 })
+    expect(writes).toBe(0)
+    await expect(getJudgingRecord(database as never, `evidence:${id}`)).resolves.toBeNull()
+  })
+
+  it('rejects forged stored evidence paths and invalid IDs before any R2 read', async () => {
+    const id = '6'.repeat(32)
+    const data = {
+      id,
+      teamId: '01-console',
+      snapshotSha: '7'.repeat(40),
+      path: 'README.md',
+      kind: 'source',
+      sha256: '8'.repeat(64),
+      text: 'extracted README text',
+      lines: 1,
+      coverage: 'README',
+      createdAt: '2026-10-28T00:00:00.000Z',
+      objectKey: 'judging/private/admin-secret',
+    }
+    database.db.prepare(`INSERT INTO judging_records
+      (event_id, record_key, version, data_json, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('sdc-2026', `evidence:${id}`, 1, JSON.stringify(data), '2026-10-28T00:00:00.000Z', 'test')
+
+    let reads = 0
+    const bucket = {
+      get: async () => {
+        reads += 1
+        return null
+      },
+    }
+    const event = { context: { cloudflare: { env: { DB: database, R2: bucket } } } } as unknown as H3Event
+
+    await expect(getJudgingEvidenceObject(event, id)).rejects.toMatchObject({ statusCode: 500 })
+    await expect(getJudgingEvidenceObject(event, '../admin-secret')).rejects.toMatchObject({ statusCode: 400 })
+    expect(reads).toBe(0)
   })
 })

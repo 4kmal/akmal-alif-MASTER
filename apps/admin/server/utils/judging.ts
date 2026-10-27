@@ -65,6 +65,9 @@ export interface JudgingEvidenceMeta {
   filename?: string
 }
 
+const EVIDENCE_ID_PATTERN = /^(?:[\da-f]{32}|[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})$/i
+const SHA256_PATTERN = /^[\da-f]{64}$/i
+
 function environment(event: H3Event): JudgingEnv {
   return (event.context.cloudflare?.env ?? {}) as JudgingEnv
 }
@@ -194,6 +197,32 @@ function mutationHashData(key: string, data: Record<string, unknown>): Record<st
   return value
 }
 
+function evidenceSourceObjectKey(id: string, sha256: string): string {
+  return `${JUDGING_R2_PREFIX}/evidence/${id}/${sha256}`
+}
+
+function evidenceJsonObjectKey(id: string, jsonSha256: string): string {
+  return `${JUDGING_R2_PREFIX}/evidence/${id}/json/${jsonSha256}`
+}
+
+function assertEvidenceStorageFields(id: string, data: Record<string, unknown>): void {
+  if (!EVIDENCE_ID_PATTERN.test(id))
+    throw createError({ statusCode: 400, statusMessage: 'Evidence identifier is invalid' })
+
+  const objectKey = data.objectKey
+  if (objectKey !== undefined) {
+    if (typeof data.sha256 !== 'string' || !SHA256_PATTERN.test(data.sha256) || typeof objectKey !== 'string' || objectKey !== evidenceSourceObjectKey(id, data.sha256))
+      throw createError({ statusCode: 400, statusMessage: 'Evidence source object key is invalid' })
+  }
+
+  const jsonSha256 = data.jsonSha256
+  const jsonObjectKey = data.jsonObjectKey
+  if (jsonSha256 !== undefined || jsonObjectKey !== undefined) {
+    if (typeof jsonSha256 !== 'string' || !SHA256_PATTERN.test(jsonSha256) || typeof jsonObjectKey !== 'string' || jsonObjectKey !== evidenceJsonObjectKey(id, jsonSha256))
+      throw createError({ statusCode: 400, statusMessage: 'Evidence JSON object key is invalid' })
+  }
+}
+
 export async function sha256Text(value: string): Promise<string> {
   return bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))))
 }
@@ -235,6 +264,8 @@ export async function saveJudgingRecord(
     }
   }
   if (key.startsWith('evidence:')) {
+    const evidenceId = key.slice('evidence:'.length)
+    assertEvidenceStorageFields(evidenceId, data)
     const current = baseVersion > 0 ? await getJudgingRecord(db, key) : null
     const currentHash = current?.data.sha256
     const nextHash = data.sha256
@@ -242,9 +273,10 @@ export async function saveJudgingRecord(
       throw createError({ statusCode: 409, statusMessage: 'Evidence source sha256 is immutable', data: { current } })
     if (typeof current?.data.objectKey === 'string' && data.objectKey == null)
       data = { ...current.data, ...data, objectKey: current.data.objectKey }
+    assertEvidenceStorageFields(evidenceId, data)
     if (event) {
       data = validateJudgingRecord(key, data)
-      data = await mirrorJudgingEvidenceRecord(event, key.slice('evidence:'.length), data, actor, deviceId)
+      data = await mirrorJudgingEvidenceRecord(event, evidenceId, data, actor, deviceId)
     }
     requestHash = await sha256Text(canonicalJson({ key, baseVersion, data: mutationHashData(key, data) }))
   }
@@ -617,7 +649,7 @@ export async function getJudgingTemplate(event: H3Event): Promise<Uint8Array> {
   return bytes
 }
 
-export async function putJudgingEvidence(event: H3Event, id: string, bytes: Uint8Array, actor: string, deviceId?: string): Promise<JudgingEvidenceMeta> {
+export async function putJudgingEvidence(event: H3Event, id: string, bytes: Uint8Array, actor: string, deviceId?: string, expectedSourceSha256?: string): Promise<JudgingEvidenceMeta> {
   if (bytes.byteLength > JUDGING_MAX_EVIDENCE_BYTES)
     throw createError({ statusCode: 413, statusMessage: 'Evidence is too large' })
   const contentType = getHeader(event, 'content-type')?.split(';', 1)[0]?.trim().toLowerCase() || 'application/octet-stream'
@@ -625,6 +657,8 @@ export async function putJudgingEvidence(event: H3Event, id: string, bytes: Uint
   if (!['source', 'document', 'transcript', 'link'].includes(kind))
     throw createError({ statusCode: 400, statusMessage: 'Evidence kind is invalid' })
   const sha256 = await sha256Bytes(bytes)
+  if (expectedSourceSha256 !== undefined && expectedSourceSha256 !== sha256)
+    throw createError({ statusCode: 409, statusMessage: 'Evidence source sha256 is immutable' })
   const now = new Date().toISOString()
   const meta: JudgingEvidenceMeta = {
     id,
@@ -646,18 +680,21 @@ export async function putJudgingEvidence(event: H3Event, id: string, bytes: Uint
   const url = getHeader(event, 'x-judging-url')?.trim()
   if (url)
     meta.url = url
-  const objectKey = `${JUDGING_R2_PREFIX}/evidence/${id}/${sha256}`
+  const objectKey = evidenceSourceObjectKey(id, sha256)
   meta.objectKey = objectKey
   await validateJudgingRecord(`evidence:${id}`, meta as unknown as Record<string, unknown>)
   const bucket = requireJudgingR2(event)
-  await bucket.put(objectKey, bytes, {
-    httpMetadata: { contentType },
-    customMetadata: { sha256, eventId: JUDGING_EVENT_ID, actor, deviceId: deviceId ?? '', evidenceId: id },
-  })
+  if (!await bucket.head(objectKey)) {
+    await bucket.put(objectKey, bytes, {
+      httpMetadata: { contentType },
+      customMetadata: { sha256, eventId: JUDGING_EVENT_ID, actor, deviceId: deviceId ?? '', evidenceId: id },
+    })
+  }
   return meta
 }
 
 export async function mirrorJudgingEvidenceRecord(event: H3Event, id: string, data: Record<string, unknown>, actor: string, deviceId?: string): Promise<Record<string, unknown>> {
+  assertEvidenceStorageFields(id, data)
   const bucket = environment(event).R2
   if (!bucket)
     return data
@@ -666,7 +703,7 @@ export async function mirrorJudgingEvidenceRecord(event: H3Event, id: string, da
   delete mirrorData.jsonObjectKey
   const serialized = canonicalJson(mirrorData)
   const jsonSha256 = await sha256Text(serialized)
-  const objectKey = `${JUDGING_R2_PREFIX}/evidence/${id}/json/${jsonSha256}`
+  const objectKey = evidenceJsonObjectKey(id, jsonSha256)
   if (!await bucket.head(objectKey)) {
     await bucket.put(objectKey, new TextEncoder().encode(serialized), {
       httpMetadata: { contentType: 'application/json; charset=utf-8' },
@@ -684,13 +721,23 @@ export async function mirrorJudgingEvidenceRecord(event: H3Event, id: string, da
 }
 
 export async function getJudgingEvidenceObject(event: H3Event, id: string): Promise<{ object: R2ObjectBody | null, meta: JudgingEvidenceMeta | null }> {
+  if (!EVIDENCE_ID_PATTERN.test(id))
+    throw createError({ statusCode: 400, statusMessage: 'Evidence identifier is invalid' })
   const db = requireJudgingDb(event)
   const row = await getJudgingRecord(db, `evidence:${id}`)
-  const meta = row?.data as unknown as JudgingEvidenceMeta | null
-  const bucket = environment(event).R2
-  const object = bucket ? await bucket.get(meta?.objectKey || `${JUDGING_R2_PREFIX}/evidence/${id}`) : null
-  if (!object && !row)
+  if (!row)
     throw createError({ statusCode: 404, statusMessage: 'Judging evidence not found' })
+  const meta = row?.data as unknown as JudgingEvidenceMeta | null
+  try {
+    if (!meta || typeof meta.id !== 'string' || meta.id.toLowerCase() !== id.toLowerCase())
+      throw new Error('Evidence id does not match its record key')
+    assertEvidenceStorageFields(id, meta as unknown as Record<string, unknown>)
+  }
+  catch {
+    throw createError({ statusCode: 500, statusMessage: 'Stored judging evidence metadata is invalid' })
+  }
+  const bucket = environment(event).R2
+  const object = bucket && typeof meta.objectKey === 'string' ? await bucket.get(meta.objectKey) : null
   return { object, meta }
 }
 
