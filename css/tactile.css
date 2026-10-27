@@ -1159,7 +1159,8 @@ body.tracklist-drawer-open {
 }
 
 .calendar-timezone {
-  max-width: 9ch;
+  flex: 0 0 auto;
+  white-space: nowrap;
   text-align: right;
 }
 
