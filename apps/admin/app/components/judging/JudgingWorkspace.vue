@@ -280,6 +280,7 @@ const pendingSnapshots = new Map<string, PendingSaveSnapshot>()
 const draftGenerations = reactive<Record<string, number>>({})
 const browserDrafts = reactive<Record<string, BrowserDraft>>({})
 const recoveredDraftKeys = new Set<string>()
+const appliedStateVersions = new Map<string, { apiBase: string, version: number }>()
 const DRAFT_STORAGE_KEY = 'sdc-judging-drafts-v1'
 const MAX_DRAFT_BYTES = 256 * 1024
 const hydrating = ref(false)
@@ -336,6 +337,10 @@ const exporting = ref(false)
 const exportUrls = new Set<string>()
 const recoveryMessage = ref('')
 const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null)
+let stateFetchPromise: Promise<void> | null = null
+let stateFetchPromiseGeneration = -1
+let stateFetchGeneration = 0
+let stateFetchDisposed = false
 const deadlineNow = ref(Date.now())
 const filterOptions: Array<[ReviewFilter, string]> = [
   ['all', 'All'],
@@ -860,8 +865,10 @@ function applyState(payload: any) {
   if (payload?.serverTime)
     serverTime.value = String(payload.serverTime)
   const incomingCursor = Number(payload?.cursor)
-  if (Number.isSafeInteger(incomingCursor) && incomingCursor >= 0)
+  if (Number.isSafeInteger(incomingCursor) && incomingCursor >= 0
+    && (stateCursor.value === null || incomingCursor >= stateCursor.value)) {
     stateCursor.value = incomingCursor
+  }
   const incomingConflicts = normalizeConflicts(payload?.conflicts)
   if (incomingConflicts.length) {
     syncConflicts.value = incomingConflicts
@@ -882,7 +889,11 @@ function applyState(payload: any) {
       continue
     if (dirtyKeys.has(record.key))
       continue
+    const applied = appliedStateVersions.get(record.key)
+    if (applied && applied.apiBase === props.apiBase && record.version < applied.version)
+      continue
     applyRecord(record)
+    appliedStateVersions.set(record.key, { apiBase: props.apiBase, version: record.version })
   }
   for (const team of teams.value) {
     if (!reviewDrafts[team.id])
@@ -893,7 +904,13 @@ function applyState(payload: any) {
   syncState.value = syncConflicts.value.length ? 'conflict' : (dirtyKeys.size ? 'pending' : 'synced')
 }
 
-async function fetchState(options: { silent?: boolean, fullRetry?: boolean } = {}) {
+function isCurrentStateRequest(generation: number, apiBase: string) {
+  return !stateFetchDisposed && generation === stateFetchGeneration && props.apiBase === apiBase
+}
+
+async function performStateFetch(generation: number, apiBase: string, options: { silent?: boolean, fullRetry?: boolean }) {
+  if (!isCurrentStateRequest(generation, apiBase))
+    return
   if (!isOnline.value && options.silent && !props.local) {
     syncState.value = 'offline'
     return
@@ -901,41 +918,79 @@ async function fetchState(options: { silent?: boolean, fullRetry?: boolean } = {
   if (!options.silent)
     loading.value = true
   errorMessage.value = ''
+  let fullRetry = Boolean(options.fullRetry)
   try {
-    const requestedCursor = stateCursor.value
-    const stateEndpoint = `${props.apiBase}/state${requestedCursor === null ? '' : `?cursor=${requestedCursor}`}`
-    const response = await fetch(stateEndpoint, { credentials: 'include', headers: { Accept: 'application/json' } })
-    const payload = await readJson(response)
-    if (!response.ok) {
-      if (response.status === 400 && requestedCursor !== null && !options.fullRetry) {
-        stateCursor.value = null
-        await fetchState({ ...options, fullRetry: true })
+    while (isCurrentStateRequest(generation, apiBase)) {
+      const requestedCursor = stateCursor.value
+      const stateEndpoint = `${apiBase}/state${requestedCursor === null ? '' : `?cursor=${requestedCursor}`}`
+      const response = await fetch(stateEndpoint, { credentials: 'include', headers: { Accept: 'application/json' } })
+      const payload = await readJson(response)
+      if (!isCurrentStateRequest(generation, apiBase))
         return
+      if (!response.ok) {
+        if (response.status === 400 && requestedCursor !== null && !fullRetry) {
+          stateCursor.value = null
+          fullRetry = true
+          continue
+        }
+        throw new Error(payloadMessage(payload, `State request failed (${response.status})`))
       }
-      throw new Error(payloadMessage(payload, `State request failed (${response.status})`))
+      applyState(payload)
+      recoverBrowserDrafts()
+      await fetchSyncStatus(generation, apiBase)
+      return
     }
-    applyState(payload)
-    recoverBrowserDrafts()
-    await fetchSyncStatus()
   }
   catch (error) {
+    if (!isCurrentStateRequest(generation, apiBase))
+      return
     recoverBrowserDrafts()
     errorMessage.value = error instanceof Error ? error.message : 'The judging state could not be loaded.'
     syncState.value = isOnline.value ? 'pending' : 'offline'
   }
   finally {
-    loading.value = false
+    if (isCurrentStateRequest(generation, apiBase))
+      loading.value = false
   }
 }
 
-async function fetchSyncStatus() {
+function fetchState(options: { silent?: boolean, fullRetry?: boolean } = {}) {
+  const generation = stateFetchGeneration
+  const apiBase = props.apiBase
+  if (stateFetchPromise && stateFetchPromiseGeneration === generation) {
+    if (!options.silent)
+      loading.value = true
+    return stateFetchPromise
+  }
+  const request = performStateFetch(generation, apiBase, options)
+  stateFetchPromise = request
+  stateFetchPromiseGeneration = generation
+  request.then(() => {
+    if (stateFetchPromise === request) {
+      stateFetchPromise = null
+      stateFetchPromiseGeneration = -1
+    }
+  }, () => {
+    if (stateFetchPromise === request) {
+      stateFetchPromise = null
+      stateFetchPromiseGeneration = -1
+    }
+  })
+  return request
+}
+
+async function fetchSyncStatus(generation: number, apiBase: string) {
   if (!props.local) {
     syncError.value = ''
     return
   }
+  if (!isCurrentStateRequest(generation, apiBase))
+    return
   try {
     const response = await fetch(`${props.apiBase}/sync/status`, { credentials: 'include', headers: { Accept: 'application/json' } })
     const payload = readJsonRecord(await readJson(response))
+    if (!isCurrentStateRequest(generation, apiBase))
+      return
     if (!response.ok) {
       syncError.value = payloadMessage(payload, `Sync status failed (${response.status})`)
       syncState.value = 'failed'
@@ -1219,6 +1274,7 @@ async function saveRecordOnce(key: string) {
   const baseVersion = pending?.baseVersion ?? versions[key] ?? 0
   const data = pending ? cloneRecordData(pending.data) : cloneRecordData(recordDataForKey(key))
   const mutationId = pending?.mutationId ?? mutationIds.get(key) ?? randomId()
+  const requestApiBase = props.apiBase
   try {
     if (validateRecord(key, data) === false)
       throw new Error(`Record ${key} failed validation.`)
@@ -1267,6 +1323,7 @@ async function saveRecordOnce(key: string) {
     pendingSnapshots.delete(key)
     records[key] = saved
     versions[key] = saved.version
+    appliedStateVersions.set(key, { apiBase: requestApiBase, version: saved.version })
     if (!newerEdits)
       applyRecord(saved)
     if (newerEdits) {
@@ -1983,17 +2040,17 @@ async function downloadExport(finalExport: boolean) {
     exportMessage.value = 'Final export is locked until all nine reviews and judge details are ready.'
     return
   }
-  if (finalExport && !records.judge)
-    markJudgeDirty()
-  if (!await flushDirtyRecords() || conflict.value || syncConflicts.value.length) {
-    exportMessage.value = 'Export is waiting for local edits or a conflict to finish syncing.'
-    return
-  }
   if (typeof document === 'undefined')
     return
   exporting.value = true
-  exportMessage.value = 'Preparing workbook…'
   try {
+    if (finalExport && !records.judge)
+      markJudgeDirty()
+    if (!await flushDirtyRecords() || conflict.value || syncConflicts.value.length) {
+      exportMessage.value = 'Export is waiting for local edits or a conflict to finish syncing.'
+      return
+    }
+    exportMessage.value = 'Preparing workbook…'
     const response = await fetch(`${props.apiBase}/exports?final=${finalExport ? '1' : '0'}`, { credentials: 'include' })
     if (!response.ok)
       throw new Error(payloadMessage(await readJson(response), `Workbook export failed (${response.status}).`))
@@ -2022,6 +2079,8 @@ async function downloadExport(finalExport: boolean) {
 }
 
 watch(() => props.apiBase, () => {
+  stateFetchGeneration += 1
+  appliedStateVersions.clear()
   stateCursor.value = null
   void fetchState()
 })
@@ -2063,13 +2122,15 @@ onMounted(() => {
   deadlineNow.value = Date.now()
   beginPolling()
   void fetchState()
-  void fetchSyncStatus()
   void loadIntakeProgress()
   void loadAssessmentJobs()
   void refreshDevices()
 })
 
 onBeforeUnmount(() => {
+  stateFetchDisposed = true
+  stateFetchGeneration += 1
+  appliedStateVersions.clear()
   for (const url of exportUrls)
     URL.revokeObjectURL(url)
   exportUrls.clear()

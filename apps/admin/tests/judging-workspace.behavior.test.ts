@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // @vitest-environment jsdom
-import { createApp, nextTick } from 'vue'
+import { createApp, defineComponent, h, nextTick, ref } from 'vue'
 import JudgingWorkspace from '../app/components/judging/JudgingWorkspace.vue'
 import { ASSIGNMENT, FEATURES, TEAMS } from '../shared/judging/model.mjs'
 
@@ -53,6 +53,9 @@ describe('judgingWorkspace save behavior', () => {
   let conflictEnvelope: boolean
   let cursorAheadRecovery: boolean
   let stateCursorIssued: boolean
+  let stateCursorValue: number | undefined
+  let deferStateResponses: boolean
+  let stateResponseResolvers: Array<(response: Response) => void>
   let exportFailure: boolean
   let originalFetch: typeof fetch
   let originalOnline: boolean
@@ -75,6 +78,9 @@ describe('judgingWorkspace save behavior', () => {
     conflictEnvelope = false
     cursorAheadRecovery = false
     stateCursorIssued = false
+    stateCursorValue = undefined
+    deferStateResponses = false
+    stateResponseResolvers = []
     exportFailure = false
     vi.stubGlobal('URL', class extends URL {
       static createObjectURL = vi.fn(() => 'blob:judging-workbook')
@@ -95,7 +101,10 @@ describe('judgingWorkspace save behavior', () => {
           stateCursorIssued = true
           return jsonResponse(emptyState(stateRecords, 7))
         }
-        return jsonResponse(emptyState(stateRecords, cursorAheadRecovery ? 8 : undefined))
+        const response = jsonResponse(emptyState(stateRecords, cursorAheadRecovery ? 8 : stateCursorValue))
+        if (deferStateResponses)
+          return new Promise<Response>(resolve => stateResponseResolvers.push(resolve))
+        return response
       }
       if (url.endsWith('/sync/status'))
         return jsonResponse(syncStatusPayload)
@@ -143,7 +152,7 @@ describe('judgingWorkspace save behavior', () => {
             },
           }, 409)
         }
-        return jsonResponse({ key: body.key, version: 1, data: body.data, updatedAt: '2026-10-28T00:00:01.000Z' })
+        return jsonResponse({ key: body.key, version: Number(body.baseVersion ?? 0) + 1, data: body.data, updatedAt: '2026-10-28T00:00:01.000Z' })
       }
       if (url.endsWith('/pair'))
         return pairErrorEnvelope ? jsonResponse({ error: 'Pair code rejected' }, 400) : jsonResponse({})
@@ -202,6 +211,112 @@ describe('judgingWorkspace save behavior', () => {
     expect(recordCalls).toHaveLength(2)
     expect(recordCalls[1].body?.data?.name).toBe('Second edit')
     expect(recordCalls[1].body?.mutationId).not.toBe(recordCalls[0].body?.mutationId)
+  })
+
+  it('serializes overlapping state refreshes and keeps a newer save over a delayed older response', async () => {
+    delayedFirstSave = false
+    stateCursorValue = 1
+    stateRecords = [{
+      key: 'judge',
+      version: 1,
+      data: { name: 'Initial judge', date: '2026-10-28', domain: ASSIGNMENT.domain, generalNotes: '', warningsAcknowledged: false },
+      updatedAt: '2026-10-28T00:00:01.000Z',
+    }]
+    mountAdmin()
+    await settle()
+
+    deferStateResponses = true
+    const refresh = host.querySelector<HTMLButtonElement>('button[aria-label="Refresh judging state"]')
+    refresh?.click()
+    await nextTick()
+    refresh?.click()
+    window.dispatchEvent(new Event('online'))
+    await nextTick()
+    expect(fetchCalls.filter(call => new URL(call.url, 'http://localhost').pathname.endsWith('/state'))).toHaveLength(2)
+    expect(stateResponseResolvers).toHaveLength(1)
+
+    const input = nameInput(host)
+    setInput(input, 'Newer saved judge')
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+    expect(fetchCalls.filter(call => call.url.endsWith('/records'))).toHaveLength(1)
+
+    stateResponseResolvers.shift()?.(jsonResponse(emptyState([{
+      key: 'judge',
+      version: 1,
+      data: { name: 'Older poll response', date: '2026-10-28', domain: ASSIGNMENT.domain, generalNotes: '', warningsAcknowledged: false },
+      updatedAt: '2026-10-28T00:00:01.000Z',
+    }], 2)))
+    await settle()
+
+    expect(input.value).toBe('Newer saved judge')
+    expect(fetchCalls.filter(call => new URL(call.url, 'http://localhost').pathname.endsWith('/state'))).toHaveLength(2)
+  })
+
+  it('ignores an old state response when the workspace api base changes', async () => {
+    stateCursorValue = 1
+    stateRecords = [{
+      key: 'judge',
+      version: 1,
+      data: { name: 'Initial judge', date: '2026-10-28', domain: ASSIGNMENT.domain, generalNotes: '', warningsAcknowledged: false },
+      updatedAt: '2026-10-28T00:00:01.000Z',
+    }]
+    const apiBase = ref('/api/admin/judging/sdc-2026')
+    const Wrapper = defineComponent({
+      setup: () => () => h(JudgingWorkspace, { apiBase: apiBase.value, local: false }),
+    })
+    app = createApp(Wrapper)
+    app.mount(host)
+    await settle()
+
+    deferStateResponses = true
+    host.querySelector<HTMLButtonElement>('button[aria-label="Refresh judging state"]')?.click()
+    await nextTick()
+    expect(stateResponseResolvers).toHaveLength(1)
+
+    apiBase.value = '/api/admin/judging/other'
+    await nextTick()
+    await settle()
+    expect(stateResponseResolvers).toHaveLength(2)
+
+    stateResponseResolvers.shift()?.(jsonResponse(emptyState([{
+      key: 'judge',
+      version: 2,
+      data: { name: 'Stale old base', date: '2026-10-28', domain: ASSIGNMENT.domain, generalNotes: '', warningsAcknowledged: false },
+      updatedAt: '2026-10-28T00:00:02.000Z',
+    }], 2)))
+    stateResponseResolvers.shift()?.(jsonResponse(emptyState([{
+      key: 'judge',
+      version: 2,
+      data: { name: 'Current base', date: '2026-10-28', domain: ASSIGNMENT.domain, generalNotes: '', warningsAcknowledged: false },
+      updatedAt: '2026-10-28T00:00:03.000Z',
+    }], 3)))
+    await settle()
+
+    expect(nameInput(host).value).toBe('Current base')
+    expect(fetchCalls.filter(call => new URL(call.url, 'http://localhost').pathname.endsWith('/state')).map(call => call.url)).toEqual([
+      '/api/admin/judging/sdc-2026/state',
+      '/api/admin/judging/sdc-2026/state?cursor=1',
+      '/api/admin/judging/other/state',
+    ])
+  })
+
+  it('ignores a deferred state response after the workspace unmounts', async () => {
+    mountAdmin()
+    await settle()
+    deferStateResponses = true
+    host.querySelector<HTMLButtonElement>('button[aria-label="Refresh judging state"]')?.click()
+    await nextTick()
+    expect(stateResponseResolvers).toHaveLength(1)
+    const requestsBeforeUnmount = fetchCalls.length
+    app?.unmount()
+    app = null
+
+    stateResponseResolvers.shift()?.(jsonResponse(emptyState([{ key: 'judge', version: 1, data: { name: 'Late response' } }], 2)))
+    await settle()
+
+    expect(fetchCalls.slice(requestsBeforeUnmount).some(call => call.url.endsWith('/sync/status'))).toBe(false)
   })
 
   it('retries a lost acknowledgement identically before sending the newer draft with a fresh mutation', async () => {
@@ -585,6 +700,8 @@ describe('judgingWorkspace save behavior', () => {
     pairErrorEnvelope = true
     mountLocal()
     await settle()
+    await nextTick()
+    await settle()
 
     expect(host.textContent).toContain('Sync error · Device credential could not be read')
     const pairInput = host.querySelector<HTMLInputElement>('input[autocomplete="one-time-code"]')
@@ -620,6 +737,36 @@ describe('judgingWorkspace save behavior', () => {
     expect(anchor?.download).toBe('SDC-D1-J04-draft.xlsx')
     await vi.advanceTimersByTimeAsync(1_000)
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:judging-workbook')
+  })
+
+  it('claims the export lock while dirty records flush and starts only one workbook request', async () => {
+    mountLocal()
+    await settle()
+    setInput(nameInput(host), 'Export lock edit')
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+    expect(saveResolvers).toHaveLength(1)
+
+    const draft = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Draft XLSX'))
+    expect(draft).toBeTruthy()
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    draft?.click()
+    draft?.click()
+    await nextTick()
+    expect(draft?.disabled).toBe(true)
+
+    saveResolvers.shift()?.(jsonResponse({
+      key: 'judge',
+      version: 1,
+      data: { name: 'Export lock edit', date: '2026-10-28', domain: ASSIGNMENT.domain, generalNotes: '', warningsAcknowledged: false },
+      updatedAt: '2026-10-28T00:00:01.000Z',
+    }))
+    await settle()
+    await settle()
+
+    expect(fetchCalls.filter(call => call.url === '/api/local/exports?final=0')).toHaveLength(1)
+    expect(click).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the dashboard open and displays an export rejection', async () => {
