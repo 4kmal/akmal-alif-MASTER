@@ -2617,6 +2617,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .judging-workspace {
+  container-type: inline-size;
   --judge-bg: #f0f0ed;
   --judge-surface: #fbfbf8;
   --judge-surface-raised: #fff;
@@ -4158,7 +4159,7 @@ button:disabled {
   }
 }
 
-@media (min-width: 1280px) {
+@container (min-width: 1000px) {
   .workbench-tabs {
     display: none;
   }
