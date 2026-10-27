@@ -637,7 +637,7 @@ function normalizeAssessmentJob(source: any): AssessmentJob {
     status: String(value.status ?? 'queued'),
     stale: value.stale === true || value.stale === 1 || value.stale === 'true' || result.stale === true || result.stale === 1 || result.stale === 'true',
     progress: Number.isFinite(Number(value.progress)) ? Number(value.progress) : undefined,
-    message: value.message ? String(value.message) : undefined,
+    message: value.message ? String(value.message) : value.error ? String(value.error) : undefined,
     suggestedScores: normalizeSuggestedScores(value),
     strengths: normalizeStringList(value.strengths ?? result.strengths),
     concerns: normalizeStringList(value.concerns ?? result.concerns),
@@ -1717,15 +1717,15 @@ async function loadAssessmentJobs() {
   }
 }
 
-async function queueAssessment(teamId: string) {
+async function queueAssessment(teamId: string, retryJobId?: string) {
   assessmentMessage.value = ''
   try {
-    const endpoint = props.local ? `${props.apiBase}/assessments/jobs` : `${props.apiBase}/assessments`
+    const endpoint = `${props.apiBase}/assessments`
     const response = await fetch(endpoint, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ teamId }),
+      body: JSON.stringify({ teamId, ...(retryJobId ? { retryJobId } : {}) }),
     })
     const payload = readJsonRecord(await readJson(response))
     if (!response.ok)
@@ -2192,6 +2192,10 @@ onBeforeUnmount(() => {
                     " @click="queueAssessment(job.teamId)"
                   >
                     Regenerate
+                  </button><button
+                    v-if="['failed', 'cancelled'].includes(job.status)" type="button" class="secondary-button compact-button" @click="queueAssessment(job.teamId, job.id)"
+                  >
+                    Retry
                   </button><button
                     v-if="['queued', 'running'].includes(job.status)" type="button" class="
                       icon-button
@@ -4297,6 +4301,9 @@ button:disabled {
   .repo-check {
     align-items: stretch;
     flex-direction: column;
+  }
+  .repo-check label {
+    flex: 0 1 auto;
   }
   .ai-score-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -357,6 +357,19 @@ describe('judgingWorkspace save behavior', () => {
     expect(jobReads()).toBe(4)
   })
 
+  it('shows provider failures and retries through the supported local assessment route', async () => {
+    jobsPayload = [{ id: 'failed-job-1', teamId: '01-console', status: 'failed', progress: 100, error: 'Provider request timed out' }]
+    mountLocal()
+    await settle()
+    expect(host.querySelector('.job-list')?.textContent).toContain('Provider request timed out')
+    const retry = [...host.querySelectorAll<HTMLButtonElement>('.job-list button')].find(button => button.textContent?.trim() === 'Retry')
+    expect(retry).toBeTruthy()
+    retry?.click()
+    await settle()
+    expect(fetchCalls.find(call => call.url === '/api/local/assessments')?.body).toEqual({ teamId: '01-console', retryJobId: 'failed-job-1' })
+    expect(fetchCalls.some(call => call.url.endsWith('/assessments/jobs'))).toBe(false)
+  })
+
   it('exposes workbench tabs with roving focus and Home/End keyboard navigation', async () => {
     mountLocal()
     await settle()
