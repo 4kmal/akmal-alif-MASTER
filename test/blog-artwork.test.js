@@ -239,6 +239,17 @@ test('renders original filter icons only for the known category slugs', () => {
   assert.equal(renderBlogFilterIcon('uncategorized'), '');
 });
 
+test('owner-selected filter icons override slugs and cover every studio choice', () => {
+  const choices = ['civic-tech', 'cybersecurity', 'game-development', 'robotics', 'anthem',
+    'internet-culture', 'psychology', 'machine-learning', 'neuroscience', 'technology',
+    'design', 'education', 'music', 'news', 'personal', 'projects', 'general'];
+  for (const choice of choices) {
+    assert.match(renderBlogFilterIcon('a-new-category', choice), /class="blog-filter-icon/);
+  }
+  assert.match(renderBlogFilterIcon('civic-tech', 'psychology'), /blog-filter-icon--psychology/);
+  assert.match(renderBlogFilterIcon('psychology', 'robotics'), /blog-filter-icon--robotics/);
+});
+
 test('starts static until public settings enable one playback sequence', () => {
   const fixture = makeMotionFixture();
 

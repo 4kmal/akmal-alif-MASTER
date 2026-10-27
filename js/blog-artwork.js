@@ -236,6 +236,14 @@ const BLOG_FILTER_ICON_ALIASES = Object.freeze({
   'internet-culture': 'internet-culture',
   internetculture: 'internet-culture',
   internet: 'internet-culture',
+  technology: 'machine-learning',
+  design: 'all',
+  education: 'neuroscience',
+  music: 'anthem',
+  news: 'internet-culture',
+  personal: 'psychology',
+  projects: 'civic-tech',
+  general: 'all',
 });
 
 function normaliseLegacyPath(value) {
@@ -284,6 +292,7 @@ export function renderBlogFilterIcon(slug, preferredIconKey = '') {
   const slugKey = String(slug ?? '').trim().toLowerCase();
   const preferredKey = String(preferredIconKey ?? '').trim().toLowerCase();
   const iconKey = BLOG_FILTER_ICON_ALIASES[preferredKey]
+    || (Object.hasOwn(BLOG_FILTER_ICONS, preferredKey) ? preferredKey : '')
     || BLOG_FILTER_ICON_ALIASES[slugKey]
     || slugKey;
   return BLOG_FILTER_ICONS[iconKey] ?? '';
