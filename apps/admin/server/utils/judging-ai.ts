@@ -22,6 +22,7 @@ const MAX_METADATA_CHARS = 8_000
 const MAX_DRAFT_TEXT = 8_000
 const MAX_JOB_ERROR = 1_000
 const MAX_ACTIVE_JUDGING_JOBS = 9
+const MAX_ACTIVE_PROVIDER_REQUESTS = 2
 const JUDGING_JOB_LEASE_MS = 2 * 60 * 1_000
 const JUDGING_BATCH_LEASE_MS = 15 * 60 * 1_000
 const BATCH_PROVIDER = 'workers-ai-batch'
@@ -783,10 +784,18 @@ async function scheduleNext(event: H3Event): Promise<void> {
     return
   eventContext.judgingNextScheduled = true
   const db = requireJudgingDb(event)
-  const row = first<{ id: string }>(await db.prepare(`SELECT id FROM judging_jobs
-    WHERE event_id = ? AND (status = 'queued' OR (status = 'running' AND json_extract(draft_json, '$.provider') = ? AND json_extract(draft_json, '$.requestId') IS NOT NULL))
-    ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, created_at ASC LIMIT 1`).bind('sdc-2026', BATCH_PROVIDER).all())
-  if (row)
+  const active = rows<{ id: string }>(await db.prepare(`SELECT id FROM judging_jobs
+    WHERE event_id = ? AND status = 'running' AND json_extract(draft_json, '$.provider') = ? AND json_extract(draft_json, '$.requestId') IS NOT NULL
+    ORDER BY created_at ASC, id ASC LIMIT ?`).bind('sdc-2026', BATCH_PROVIDER, MAX_ACTIVE_PROVIDER_REQUESTS).all())
+  const running = first<{ count: number }>(await db.prepare(`SELECT COUNT(*) AS count FROM judging_jobs
+    WHERE event_id = ? AND status = 'running'`).bind('sdc-2026').all())
+  const available = Math.max(0, MAX_ACTIVE_PROVIDER_REQUESTS - Number(running?.count ?? 0))
+  const queued = available > 0
+    ? rows<{ id: string }>(await db.prepare(`SELECT id FROM judging_jobs
+      WHERE event_id = ? AND status = 'queued'
+      ORDER BY created_at ASC, id ASC LIMIT ?`).bind('sdc-2026', available).all())
+    : []
+  for (const row of [...active, ...queued])
     await scheduleJudgingJob(event, row.id)
 }
 
@@ -802,7 +811,7 @@ export async function runJudgingJob(event: H3Event, jobId: string): Promise<void
   if (candidate.status === 'queued') {
     const claimed = await db.prepare(`UPDATE judging_jobs SET status = 'running', progress = 5, attempts = attempts + 1, started_at = COALESCE(started_at, ?), updated_at = ?, error = NULL
       WHERE event_id = ? AND id = ? AND status = 'queued'
-        AND NOT EXISTS (SELECT 1 FROM judging_jobs WHERE event_id = ? AND status = 'running')`).bind(claimAt, claimAt, 'sdc-2026', jobId, 'sdc-2026').run()
+        AND (SELECT COUNT(*) FROM judging_jobs WHERE event_id = ? AND status = 'running') < ?`).bind(claimAt, claimAt, 'sdc-2026', jobId, 'sdc-2026', MAX_ACTIVE_PROVIDER_REQUESTS).run()
     if (changes(claimed) !== 1)
       return
   }

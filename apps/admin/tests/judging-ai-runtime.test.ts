@@ -334,6 +334,89 @@ describe('judging AI runtime contract', () => {
     expect(row.progress).toBe(50)
   })
 
+  it('polls both active batches and fills one free provider slot without duplicating requests', async () => {
+    const teams = ['01-console', '02-ctrl-ai', '03-ctrl-cv']
+    const evidenceIds = ['a', 'b', 'c'].map(value => value.repeat(32))
+    const inputs = []
+    for (const [index, teamId] of teams.entries()) {
+      insertAssessmentFixture(database, evidenceIds[index]!, teamId)
+      inputs.push(await buildAssessmentInput(database as never, teamId))
+    }
+    const jobIds = [
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333',
+    ]
+    insertJob(database, jobIds[0]!, teams[0]!, inputs[0]!.inputHash)
+    insertJob(database, jobIds[1]!, teams[1]!, inputs[1]!.inputHash)
+    insertJob(database, jobIds[2]!, teams[2]!, inputs[2]!.inputHash)
+    setPendingJob(database, jobIds[0]!, inputs[0]!.inputHash, 'batch-1')
+    setPendingJob(database, jobIds[1]!, inputs[1]!.inputHash, 'batch-2')
+    database.db.prepare('UPDATE judging_jobs SET created_at = ? WHERE id = ?').run('2026-10-28T00:00:01.000Z', jobIds[0])
+    database.db.prepare('UPDATE judging_jobs SET created_at = ? WHERE id = ?').run('2026-10-28T00:00:02.000Z', jobIds[1])
+    database.db.prepare('UPDATE judging_jobs SET created_at = ? WHERE id = ?').run('2026-10-28T00:00:03.000Z', jobIds[2])
+
+    const calls: Record<string, unknown>[] = []
+    const waiters: Promise<unknown>[] = []
+    const event = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: {
+              run: async (_model: string, payload: Record<string, unknown>) => {
+                calls.push(payload)
+                if (payload.request_id === 'batch-1')
+                  return { status: 'completed', responses: [{ success: true, result: { response: responseFor(evidenceIds[0]!) } }] }
+                if (payload.request_id === 'batch-2')
+                  return { status: 'running', request_id: 'batch-2' }
+                return { status: 'queued', request_id: 'batch-3' }
+              },
+            },
+          },
+          context: { waitUntil: (promise: Promise<unknown>) => { waiters.push(promise) } },
+        },
+      },
+    } as unknown as H3Event
+
+    await listJudgingJobs(event)
+    await Promise.all(waiters)
+
+    expect(calls).toHaveLength(2)
+    expect(calls.map(call => call.request_id)).toEqual(['batch-1', 'batch-2'])
+    expect((database.db.prepare('SELECT status FROM judging_jobs WHERE id = ?').get(jobIds[0]) as { status: string }).status).toBe('completed')
+    expect((database.db.prepare('SELECT status FROM judging_jobs WHERE id = ?').get(jobIds[2]) as { status: string }).status).toBe('queued')
+
+    const nextWaiters: Promise<unknown>[] = []
+    const nextEvent = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: {
+              run: async (_model: string, payload: Record<string, unknown>) => {
+                calls.push(payload)
+                if (payload.request_id === 'batch-2')
+                  return { status: 'running', request_id: 'batch-2' }
+                return { status: 'queued', request_id: 'batch-3' }
+              },
+            },
+          },
+          context: { waitUntil: (promise: Promise<unknown>) => { nextWaiters.push(promise) } },
+        },
+      },
+    } as unknown as H3Event
+
+    await listJudgingJobs(nextEvent)
+    await Promise.all(nextWaiters)
+
+    expect(calls.slice(2).map(call => call.request_id ?? 'submission')).toEqual(['batch-2', 'submission'])
+    const queued = database.db.prepare('SELECT status, progress, draft_json FROM judging_jobs WHERE id = ?').get(jobIds[2]) as { status: string, progress: number, draft_json: string }
+    expect(queued.status).toBe('running')
+    expect(queued.progress).toBe(50)
+    expect(JSON.parse(queued.draft_json).requestId).toBe('batch-3')
+  })
+
   it('fails a completed batch response and clears private provider state', async () => {
     const evidenceId = 'a'.repeat(32)
     insertRecord(database, 'intake:01-console', {
