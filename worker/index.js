@@ -644,6 +644,183 @@ async function handleBlogSettings(request, env) {
   return jsonResponse({ artwork_motion: motion }, 200, { 'Cache-Control': 'public, max-age=60' });
 }
 
+function calendarDate(value, key) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${key} must use YYYY-MM-DD`);
+  }
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value) {
+    throw new Error(`${key} is invalid`);
+  }
+  return value;
+}
+
+function calendarLocalDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function calendarYearLater(value) {
+  const [year, month, day] = value.split('-').map(Number);
+  const horizon = new Date(Date.UTC(year + 1, month - 1, day));
+  return horizon.toISOString().slice(0, 10);
+}
+
+function calendarRange(url) {
+  let start;
+  let end;
+  try {
+    start = calendarDate(url.searchParams.get('start'), 'start');
+    end = calendarDate(url.searchParams.get('end'), 'end');
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Calendar range is invalid' };
+  }
+  const span = (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000;
+  if (end <= start || span < 1 || span > 366) {
+    return { error: 'Calendar range must be 1 to 366 days' };
+  }
+  const utcStart = new Date(`${start}T00:00:00+08:00`).toISOString();
+  const utcEnd = new Date(`${end}T00:00:00+08:00`).toISOString();
+  return { start, end, utcStart, utcEnd };
+}
+
+function mapPublicCalendarEvent(row) {
+  if (row.visibility === 'busy') {
+    return {
+      title: 'Busy',
+      visibility: 'busy',
+      timezone: row.timezone || 'Asia/Kuala_Lumpur',
+      all_day: Number(row.all_day) === 1,
+      start_date: row.start_date ?? null,
+      end_date: row.end_date ?? null,
+      starts_at: row.starts_at ?? null,
+      ends_at: row.ends_at ?? null,
+    };
+  }
+  return {
+    id: row.id,
+    version: Number(row.version),
+    title: row.title,
+    description: row.description ?? null,
+    location: row.location ?? null,
+    url: row.url ?? null,
+    kind: row.kind,
+    timezone: row.timezone || 'Asia/Kuala_Lumpur',
+    all_day: Number(row.all_day) === 1,
+    start_date: row.start_date ?? null,
+    end_date: row.end_date ?? null,
+    starts_at: row.starts_at ?? null,
+    ends_at: row.ends_at ?? null,
+    visibility: 'public',
+    participation: row.participation,
+    blocks_availability: Number(row.blocks_availability) === 1,
+  };
+}
+
+async function handleCalendar(request, env, url) {
+  if (request.method !== 'GET') {
+    return methodNotAllowed('GET');
+  }
+  const range = calendarRange(url);
+  if (range.error) {
+    return errorResponse(400, range.error);
+  }
+  if (!env.DB || typeof env.DB.prepare !== 'function') {
+    return errorResponse(503, 'Calendar unavailable');
+  }
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, version, title, description, location, url, kind, timezone, all_day,
+        start_date, end_date, starts_at, ends_at, visibility, participation, blocks_availability
+      FROM calendar_events
+      WHERE archived_at IS NULL
+        AND visibility IN ('public', 'busy')
+        AND (
+          (start_date IS NOT NULL AND start_date < ? AND end_date > ?)
+          OR (starts_at IS NOT NULL AND starts_at < ? AND ends_at > ?)
+        )
+      ORDER BY COALESCE(starts_at, start_date) ASC, id ASC
+    `).bind(range.end, range.start, range.utcEnd, range.utcStart).all();
+    const actualNow = new Date();
+    const upcomingStart = actualNow.toISOString();
+    const upcomingStartDate = calendarLocalDate(actualNow);
+    const upcomingEndDate = calendarYearLater(upcomingStartDate);
+    const upcomingEnd = new Date(`${upcomingEndDate}T00:00:00+08:00`).toISOString();
+    const upcomingResult = await env.DB.prepare(`
+      SELECT id, version, title, description, location, url, kind, timezone, all_day,
+        start_date, end_date, starts_at, ends_at, visibility, participation, blocks_availability
+      FROM calendar_events
+      WHERE archived_at IS NULL
+        AND visibility IN ('public', 'busy')
+        AND (
+          (start_date IS NOT NULL AND start_date < ? AND end_date > ?)
+          OR (starts_at IS NOT NULL AND starts_at < ? AND ends_at > ?)
+        )
+      ORDER BY COALESCE(starts_at, start_date) ASC, id ASC
+      LIMIT 3
+    `).bind(upcomingEndDate, upcomingStartDate, upcomingEnd, upcomingStart).all();
+    return jsonResponse({
+      timezone: 'Asia/Kuala_Lumpur',
+      events: rowsFromResult(result).map(mapPublicCalendarEvent),
+      upcoming: rowsFromResult(upcomingResult).map(mapPublicCalendarEvent),
+    }, 200, { 'Cache-Control': 'public, max-age=60' });
+  } catch {
+    return errorResponse(503, 'Calendar unavailable');
+  }
+}
+
+async function handlePublishedBlogGallery(request, env, manifestId) {
+  if (request.method !== 'GET') {
+    return methodNotAllowed('GET');
+  }
+  if (!env.DB || typeof env.DB.prepare !== 'function') {
+    return mediaNotFound();
+  }
+  const now = new Date().toISOString();
+  const manifest = await env.DB.prepare(`
+    SELECT m.id, m.revision, m.title, m.created_at
+    FROM blog_gallery_manifests AS m
+    INNER JOIN blog_post_gallery_refs AS r ON r.manifest_id = m.id AND r.scope = 'published'
+    INNER JOIN blog_posts AS p ON p.id = r.post_id
+    WHERE m.id = ? AND p.status = 'published' AND p.published_at <= ?
+    LIMIT 1
+  `).bind(manifestId, now).first();
+  if (!manifest) {
+    return errorResponse(404, 'Not Found');
+  }
+  const pages = await env.DB.prepare(`
+    SELECT page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id
+    FROM blog_gallery_manifest_pages WHERE manifest_id = ? ORDER BY sort_order ASC, original_page ASC
+  `).bind(manifestId).all();
+  return jsonResponse({
+    id: manifest.id,
+    manifestId: manifest.id,
+    revision: Number(manifest.revision),
+    title: manifest.title,
+    created_at: manifest.created_at,
+    pages: rowsFromResult(pages).map(page => ({
+      id: page.page_id,
+      original_page: Number(page.original_page),
+      title: page.title ?? null,
+      caption: page.caption ?? null,
+      order: Number(page.sort_order),
+      visible: Number(page.visible) === 1,
+      asset_id: page.asset_id,
+      thumbnail_asset_id: page.thumbnail_asset_id,
+      original_url: `/media/blog/${encodeURIComponent(page.asset_id)}`,
+      thumbnail_url: page.thumbnail_asset_id
+        ? `/media/blog/${encodeURIComponent(page.thumbnail_asset_id)}`
+        : `/media/blog/${encodeURIComponent(page.asset_id)}`,
+    })),
+  }, 200, { 'Cache-Control': 'public, max-age=60' });
+}
+
 async function handleApi(request, env, url) {
   const pathname = url.pathname;
 
@@ -653,6 +830,10 @@ async function handleApi(request, env, url) {
 
   if (pathname === '/api/blog/categories' || pathname === '/api/blog/categories/') {
     return handleCategories(request, env);
+  }
+
+  if (pathname === '/api/calendar' || pathname === '/api/calendar/') {
+    return handleCalendar(request, env, url);
   }
 
   if (pathname === '/api/blog/posts' || pathname === '/api/blog/posts/') {
@@ -673,6 +854,24 @@ async function handleApi(request, env, url) {
       return errorResponse(400, 'Malformed post slug');
     }
     return handlePosts(request, env, slug);
+  }
+
+  const galleriesPrefix = '/api/blog/galleries/';
+  if (pathname.startsWith(galleriesPrefix)) {
+    const rawManifestId = pathname.slice(galleriesPrefix.length);
+    if (!rawManifestId || rawManifestId.includes('/')) {
+      return errorResponse(404, 'Not Found');
+    }
+    let manifestId;
+    try {
+      manifestId = decodeURIComponent(rawManifestId);
+    } catch {
+      return errorResponse(400, 'Malformed gallery manifest id');
+    }
+    if (!/^[\w-]+$/.test(manifestId)) {
+      return errorResponse(404, 'Not Found');
+    }
+    return handlePublishedBlogGallery(request, env, manifestId);
   }
 
   if (pathname === '/api/profile-metrics' || pathname === '/api/profile-metrics/') {

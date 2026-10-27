@@ -9,6 +9,7 @@ const migrationSql = [
   readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'),
   readFileSync(new URL('../migrations/0002_blog_studio.sql', import.meta.url), 'utf8'),
   readFileSync(new URL('../migrations/0003_blog_audit.sql', import.meta.url), 'utf8'),
+  readFileSync(new URL('../migrations/0004_gallery_calendar.sql', import.meta.url), 'utf8'),
 ].join('\n');
 
 class SQLiteStatement {
@@ -589,4 +590,161 @@ test('new blog media is public only while referenced by a published post', async
   database.prepare(`UPDATE blog_posts SET status = 'draft' WHERE id = ?`).run('post-new-post');
   const unpublished = await workerFetch(request('/media/blog/asset-one'), env);
   assert.equal(unpublished.status, 404);
+});
+
+test('published gallery manifests expose safe asset URLs only for current published posts', async (t) => {
+  const { database, d1 } = createDatabase(blogFixtures());
+  t.after(() => database.close());
+  const now = '2025-06-01T00:00:00.000Z';
+  const asset = database.prepare(`
+    INSERT INTO blog_assets
+      (id, name, mime_type, kind, size, object_key, source_object_key, status, created_by, created_at)
+    VALUES (?, ?, ?, 'image', ?, ?, ?, 'ready', ?, ?)
+  `);
+  asset.run('gallery-image', 'page.webp', 'image/webp', 4, 'blog/originals/gallery-image/page.webp', 'blog/originals/gallery-image/page.webp', 'owner', now);
+  asset.run('gallery-thumb', 'thumb.webp', 'image/webp', 4, 'blog/originals/gallery-thumb/thumb.webp', 'blog/originals/gallery-thumb/thumb.webp', 'owner', now);
+  database.prepare(`
+    INSERT INTO blog_galleries
+      (id, post_id, version, status, title, page_count, finalized_manifest_id, created_by, updated_by, created_at, updated_at)
+    VALUES ('gallery-one', 'post-new-post', 2, 'finalized', 'Anthem', 1, 'manifest-one', 'owner', 'owner', ?, ?)
+  `).run(now, now);
+  database.prepare(`
+    INSERT INTO blog_gallery_manifests (id, gallery_id, revision, title, created_by, created_at)
+    VALUES ('manifest-one', 'gallery-one', 1, 'Anthem', 'owner', ?)
+  `).run(now);
+  database.prepare(`
+    INSERT INTO blog_gallery_pages
+      (id, gallery_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id, status)
+    VALUES ('page-one', 'gallery-one', 1, 'Cover', 'Caption', 0, 1, 'gallery-image', 'gallery-thumb', 'ready')
+  `).run();
+  database.prepare(`
+    INSERT INTO blog_gallery_manifest_pages
+      (manifest_id, page_id, original_page, title, caption, sort_order, visible, asset_id, thumbnail_asset_id)
+    VALUES ('manifest-one', 'page-one', 1, 'Cover', 'Caption', 0, 1, 'gallery-image', 'gallery-thumb')
+  `).run();
+  database.prepare(`
+    INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+    VALUES ('post-new-post', 'manifest-one', 'published')
+  `).run();
+  database.prepare(`
+    INSERT INTO blog_galleries
+      (id, post_id, version, status, title, page_count, finalized_manifest_id, created_by, updated_by, created_at, updated_at)
+    VALUES ('gallery-future', 'post-future-post', 2, 'finalized', 'Future gallery', 1, 'manifest-future', 'owner', 'owner', ?, ?)
+  `).run(now, now);
+  database.prepare(`
+    INSERT INTO blog_gallery_manifests (id, gallery_id, revision, title, created_by, created_at)
+    VALUES ('manifest-future', 'gallery-future', 1, 'Future gallery', 'owner', ?)
+  `).run(now);
+  database.prepare(`
+    INSERT INTO blog_post_gallery_refs (post_id, manifest_id, scope)
+    VALUES ('post-future-post', 'manifest-future', 'published')
+  `).run();
+
+  const media = new FakeR2({
+    'blog/originals/gallery-image/page.webp': {
+      bytes: new TextEncoder().encode('page'),
+      contentType: 'image/webp',
+      etag: 'page',
+    },
+    'blog/originals/gallery-thumb/thumb.webp': {
+      bytes: new TextEncoder().encode('thumb'),
+      contentType: 'image/webp',
+      etag: 'thumb',
+    },
+  });
+  const env = environment(d1, new FakeAssets(), media);
+
+  const manifest = await workerFetch(request('/api/blog/galleries/manifest-one'), env);
+  assert.equal(manifest.status, 200);
+  assert.equal(manifest.headers.get('Cache-Control'), 'public, max-age=60');
+  assert.deepEqual(await manifest.json(), {
+    id: 'manifest-one',
+    manifestId: 'manifest-one',
+    revision: 1,
+    title: 'Anthem',
+    created_at: now,
+    pages: [{
+      id: 'page-one',
+      original_page: 1,
+      title: 'Cover',
+      caption: 'Caption',
+      order: 0,
+      visible: true,
+      asset_id: 'gallery-image',
+      thumbnail_asset_id: 'gallery-thumb',
+      original_url: '/media/blog/gallery-image',
+      thumbnail_url: '/media/blog/gallery-thumb',
+    }],
+  });
+
+  const original = await workerFetch(request('/media/blog/originals/gallery-image/page.webp'), env);
+  assert.equal(original.status, 404);
+  assert.equal(media.calls.length, 0);
+
+  const future = await workerFetch(request('/api/blog/galleries/manifest-future'), env);
+  assert.equal(future.status, 404);
+});
+
+test('public calendar returns bounded KL ranges without private metadata', async (t) => {
+  const { database, d1 } = createDatabase();
+  t.after(() => database.close());
+  const event = database.prepare(`
+    INSERT INTO calendar_events
+      (id, title, description, location, url, kind, timezone, all_day, start_date, end_date,
+       visibility, participation, blocks_availability, created_by, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  event.run('public-day', 'Public day', 'Public details', 'Kuala Lumpur', 'https://example.test/day', 'event', 'Asia/Kuala_Lumpur', 1, '2025-06-10', '2025-06-12', 'public', 'confirmed', 1, 'owner', 'owner');
+  event.run('private-day', 'Private day', 'Private details', 'Private room', null, 'meeting', 'Asia/Kuala_Lumpur', 1, '2025-06-12', '2025-06-13', 'private', 'planning', 1, 'owner', 'owner');
+  database.prepare(`
+    INSERT INTO calendar_events
+      (id, title, kind, timezone, all_day, starts_at, ends_at, visibility, participation, blocks_availability, created_by, updated_by)
+    VALUES ('busy-slot', 'Sensitive meeting', 'meeting', 'Asia/Kuala_Lumpur', 0, '2025-06-15T02:00:00.000Z', '2025-06-15T03:00:00.000Z', 'busy', 'confirmed', 1, 'owner', 'owner')
+  `).run();
+  database.prepare(`
+    INSERT INTO calendar_events
+      (id, title, kind, timezone, all_day, start_date, end_date, visibility, participation, blocks_availability, archived_at, created_by, updated_by)
+    VALUES ('archived-day', 'Archived', 'activity', 'Asia/Kuala_Lumpur', 1, '2025-06-20', '2025-06-21', 'public', 'interested', 0, '2025-01-01T00:00:00.000Z', 'owner', 'owner')
+  `).run();
+  const env = environment(d1);
+
+  const response = await workerFetch(request('/api/calendar?start=2025-06-01&end=2025-07-01'), env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Cache-Control'), 'public, max-age=60');
+  const body = await response.json();
+  assert.equal(body.timezone, 'Asia/Kuala_Lumpur');
+  assert.equal(body.events.length, 2);
+  assert.deepEqual(body.upcoming, []);
+  assert.deepEqual(body.events[0], {
+    id: 'public-day',
+    version: 1,
+    title: 'Public day',
+    description: 'Public details',
+    location: 'Kuala Lumpur',
+    url: 'https://example.test/day',
+    kind: 'event',
+    timezone: 'Asia/Kuala_Lumpur',
+    all_day: true,
+    start_date: '2025-06-10',
+    end_date: '2025-06-12',
+    starts_at: null,
+    ends_at: null,
+    visibility: 'public',
+    participation: 'confirmed',
+    blocks_availability: true,
+  });
+  assert.deepEqual(body.events[1], {
+    title: 'Busy',
+    visibility: 'busy',
+    timezone: 'Asia/Kuala_Lumpur',
+    all_day: false,
+    start_date: null,
+    end_date: null,
+    starts_at: '2025-06-15T02:00:00.000Z',
+    ends_at: '2025-06-15T03:00:00.000Z',
+  });
+  assert.equal(Object.hasOwn(body.events[1], 'id'), false);
+  assert.equal((await workerFetch(request('/api/calendar?start=2025-06-01&end=2026-07-01'), env)).status, 400);
+  assert.equal((await workerFetch(request('/api/calendar?start=2025-06-01'), env)).status, 400);
+  assert.equal((await workerFetch(request('/api/calendar?start=2025-02-31&end=2025-03-02'), env)).status, 400);
 });

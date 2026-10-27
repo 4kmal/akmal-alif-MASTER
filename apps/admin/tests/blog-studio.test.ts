@@ -23,6 +23,7 @@ const migrationSql = [
   readFileSync(new URL('../../../migrations/0001_initial.sql', import.meta.url), 'utf8'),
   readFileSync(new URL('../../../migrations/0002_blog_studio.sql', import.meta.url), 'utf8'),
   readFileSync(new URL('../../../migrations/0003_blog_audit.sql', import.meta.url), 'utf8'),
+  readFileSync(new URL('../../../migrations/0004_gallery_calendar.sql', import.meta.url), 'utf8'),
 ].join('\n')
 
 class SQLiteStatement {

@@ -14,9 +14,20 @@ export interface BlogMediaReference {
   name?: string
 }
 
+export interface BlogGalleryReference {
+  id: string
+  title?: string | null
+  pageCount?: number | null
+  firstPage?: {
+    assetId: string
+    thumbnailAssetId?: string | null
+  } | null
+}
+
 export interface RenderBlogContentOptions {
   mode?: 'public' | 'preview'
   resolveMedia?: (assetId: string) => Promise<BlogMediaReference | null>
+  resolveGallery?: (manifestId: string) => Promise<BlogGalleryReference | null>
 }
 
 export function blogByteLength(value: string): number {
@@ -373,6 +384,57 @@ async function renderNode(node: TiptapNode, state: RenderState, depth: number, o
       })
       return `${wrapperStart + image + (caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : '')}</figure>`
     }
+    case 'blogGallery': {
+      const manifestId = text(attrs?.manifestId, 'blogGallery manifestId', 128)
+      if (!/^[\w-]+$/.test(manifestId))
+        fail('blogGallery manifestId is invalid')
+      if (!options.resolveGallery)
+        fail('Gallery resolver is unavailable')
+      const gallery = await options.resolveGallery(manifestId)
+      if (!gallery || gallery.id !== manifestId)
+        fail('Referenced gallery manifest is unavailable')
+      const title = gallery.title ? text(gallery.title, 'blogGallery title', 300) : 'Gallery'
+      const firstPage = gallery.firstPage
+      const originalPath = firstPage?.assetId
+        ? options.mode === 'preview'
+          ? `/api/admin/blog/media/${encodeURIComponent(firstPage.assetId)}/source`
+          : `/media/blog/${encodeURIComponent(firstPage.assetId)}`
+        : undefined
+      const thumbnailAssetId = firstPage?.thumbnailAssetId || firstPage?.assetId
+      const thumbnailPath = thumbnailAssetId
+        ? options.mode === 'preview'
+          ? `/api/admin/blog/media/${encodeURIComponent(thumbnailAssetId)}/source`
+          : `/media/blog/${encodeURIComponent(thumbnailAssetId)}`
+        : undefined
+      const fallback = originalPath
+        ? `${openTag('a', { class: 'blog-gallery-fallback', href: originalPath })}${thumbnailPath ? openTag('img', { src: thumbnailPath, alt: title, loading: 'lazy' }) : ''}<span>${escapeHtml(title)}</span></a>`
+        : `<p>${escapeHtml(title)}</p>`
+      const attributes = {
+        'class': options.mode === 'preview' ? 'blog-gallery blog-gallery-static' : 'blog-gallery',
+        'data-gallery-manifest-id': manifestId,
+        'data-gallery-manifest': manifestId,
+        'data-gallery-load': 'click',
+        'aria-label': title,
+      }
+      if (options.mode === 'preview')
+        return `${openTag('div', attributes)}${fallback}</div>`
+      return `${openTag('div', attributes)}<noscript>${fallback}</noscript></div>`
+    }
+    case 'blogYouTube': {
+      const videoId = text(attrs?.videoId, 'blogYouTube videoId', 32)
+      if (!/^[\w-]{11}$/.test(videoId))
+        fail('blogYouTube videoId must be an approved YouTube ID')
+      const title = attrs?.title == null || attrs.title === '' ? 'YouTube video' : text(attrs.title, 'blogYouTube title', 300)
+      const attributes = {
+        'class': options.mode === 'preview' ? 'blog-youtube blog-youtube-static' : 'blog-youtube',
+        'data-youtube-id': videoId,
+        'data-youtube-load': 'click',
+        'aria-label': title,
+      }
+      if (options.mode === 'preview')
+        return `${openTag('div', attributes)}<p>${escapeHtml(title)}</p></div>`
+      return `${openTag('div', attributes)}<button type="button">${escapeHtml(title)}</button></div>`
+    }
     default:
       fail(`Unsupported document node: ${type}`)
   }
@@ -384,6 +446,7 @@ export async function renderTiptapDocument(document: unknown, options: RenderBlo
   const html = await renderNode(document as TiptapNode, { nodes: 0, text: 0 }, 0, {
     mode: options.mode ?? 'public',
     resolveMedia: options.resolveMedia ?? (async () => null),
+    resolveGallery: options.resolveGallery ?? (async () => null),
   })
   if (blogByteLength(html) > BLOG_MAX_CANONICAL_BYTES)
     fail('Rendered content is too large')
@@ -596,6 +659,7 @@ export function snapshotDraft(draft: Record<string, unknown>): string {
     meta_description: draft.meta_description ?? null,
     content_json: draft.content_json ?? null,
     content_html: draft.content_html,
+    gallery_manifest_ids: Array.isArray(draft.gallery_manifest_ids) ? draft.gallery_manifest_ids : [],
     updated_at: draft.updated_at,
   })
 }
