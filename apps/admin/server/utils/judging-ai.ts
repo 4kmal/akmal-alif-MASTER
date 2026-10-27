@@ -658,12 +658,12 @@ function batchPollResult(value: unknown): BatchPollResult {
     const error = objectValue(firstResponse.error)
     throw new Error(typeof error?.message === 'string' ? `Workers AI batch failed: ${error.message}` : 'Workers AI batch response failed')
   }
-  const result = firstResponse.result
+  const result = firstResponse.result ?? (typeof firstResponse.response === 'string' || Array.isArray(firstResponse.choices) ? firstResponse : undefined)
   if (typeof result === 'string')
     return { pending: false, response: { response: result } }
   const resultObject = objectValue(result)
   if (!resultObject)
-    throw new Error('Workers AI batch returned an invalid result')
+    throw new Error(`Workers AI batch returned an invalid result (${batchResponseShape(object)})`)
   return { pending: false, response: resultObject as AiChatResponse }
 }
 

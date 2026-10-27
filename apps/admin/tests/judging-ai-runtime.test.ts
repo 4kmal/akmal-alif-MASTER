@@ -422,7 +422,7 @@ describe('judging AI runtime contract', () => {
     expect(row.error).toContain('responses=undefined')
   })
 
-  it('accepts the results batch envelope and a closed think block with a JSON code fence', async () => {
+  it.each(['wrapped', 'direct'])('accepts %s results entries and a closed think block with a JSON code fence', async (shape) => {
     const evidenceId = 'a'.repeat(32)
     insertAssessmentFixture(database, evidenceId)
     const input = await buildAssessmentInput(database as never, '01-console')
@@ -436,11 +436,11 @@ describe('judging AI runtime contract', () => {
             DB: database,
             AI: {
               run: async () => ({
-                results: [{
+                results: [shape === 'wrapped' ? {
                   id: 0,
                   success: true,
                   result: { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` },
-                }],
+                } : { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }],
                 usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
               }),
             },
