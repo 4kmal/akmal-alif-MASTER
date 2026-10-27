@@ -2373,12 +2373,21 @@ export async function initBlogGallerySource(event: H3Event, id: string) {
   const mutationToken = crypto.randomUUID()
   try {
     const result = await db.batch([
-      db.prepare('UPDATE blog_galleries SET version = ?, mutation_token = ?, source_id = ?, page_count = ?, updated_by = ?, updated_at = ? WHERE id = ? AND created_by = ? AND status = \'draft\' AND version = ?').bind(nextVersion, mutationToken, sourceId, pageCount, actor, now, id, actor, version),
       db.prepare(`
         INSERT INTO blog_gallery_sources (id, gallery_id, filename, mime_type, size, object_key, r2_upload_id, part_size, status, created_by, created_at)
         SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?
-        WHERE EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND created_by = ? AND status = 'draft' AND version = ? AND mutation_token = ?)
-      `).bind(sourceId, id, filename, BLOG_GALLERY_SOURCE_MIME, size, objectKey, multipart.uploadId, BLOG_UPLOAD_PART_SIZE, actor, now, id, actor, nextVersion, mutationToken),
+        WHERE EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND created_by = ? AND status = 'draft' AND version = ?)
+      `).bind(sourceId, id, filename, BLOG_GALLERY_SOURCE_MIME, size, objectKey, multipart.uploadId, BLOG_UPLOAD_PART_SIZE, actor, now, id, actor, version),
+      db.prepare(`
+        UPDATE blog_galleries SET version = ?, mutation_token = ?, source_id = ?, page_count = ?, updated_by = ?, updated_at = ?
+        WHERE id = ? AND created_by = ? AND status = 'draft' AND version = ?
+          AND EXISTS (SELECT 1 FROM blog_gallery_sources WHERE id = ? AND gallery_id = ? AND created_by = ? AND status = 'active')
+      `).bind(nextVersion, mutationToken, sourceId, pageCount, actor, now, id, actor, version, sourceId, id, actor),
+      db.prepare(`
+        DELETE FROM blog_gallery_sources
+        WHERE id = ?
+          AND NOT EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND source_id = ? AND mutation_token = ? AND version = ?)
+      `).bind(sourceId, id, sourceId, mutationToken, nextVersion),
       auditInsert(db, actor, 'gallery.source.init', id, { status: 'active', version: nextVersion, source_id: sourceId }, 'EXISTS (SELECT 1 FROM blog_galleries WHERE id = ? AND mutation_token = ? AND version = ?)', [id, mutationToken, nextVersion]),
     ])
     if (changes(result[0]) !== 1 || changes(result[1]) !== 1)

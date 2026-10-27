@@ -94,12 +94,20 @@ class SQLiteD1 {
 }
 
 class FakeBucket {
+  private uploadNumber = 0
+  readonly createdUploadIds: string[] = []
+  readonly abortedUploadIds: string[] = []
+
   async createMultipartUpload() {
+    const uploadId = `r2-gallery-upload-${++this.uploadNumber}`
+    this.createdUploadIds.push(uploadId)
     return {
-      uploadId: 'r2-gallery-upload',
+      uploadId,
       uploadPart: async () => ({ etag: 'etag-1' }),
       complete: async () => undefined,
-      abort: async () => undefined,
+      abort: async () => {
+        this.abortedUploadIds.push(uploadId)
+      },
     }
   }
 
@@ -273,6 +281,62 @@ describe('gallery publication contract', () => {
       const sink = eventFor(d1, bucket, 'POST', '/galleries', { post_id: 'post-one', title: 'Sink' })
       sink.context.authMethod = 'site-token'
       await expect(createBlogGallery(sink)).rejects.toMatchObject({ statusCode: 403 })
+    }
+    finally {
+      database.close()
+    }
+  })
+
+  it('initializes a valid source with foreign keys enabled and advances the gallery CAS version', async () => {
+    const { database, d1, bucket } = fixture()
+    try {
+      expect((database.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys).toBe(1)
+      const gallery = await createBlogGallery(eventFor(d1, bucket, 'POST', '/galleries', { post_id: 'post-one', title: 'Anthem', page_count: 1 }))
+      const initialized = await initBlogGallerySource(eventFor(d1, bucket, 'POST', `/galleries/${gallery.gallery.id}/source`, {
+        version: gallery.gallery.version,
+        filename: 'anthem.pdf',
+        mime_type: 'application/pdf',
+        size: 1_024,
+        page_count: 1,
+      }), gallery.gallery.id)
+      expect(initialized.version).toBe(2)
+      expect(initialized.source.status).toBe('active')
+      expect(initialized.upload.id).toBe(initialized.source.id)
+      const row = database.prepare('SELECT version, source_id, page_count FROM blog_galleries WHERE id = ?').get(gallery.gallery.id) as { version: number, source_id: string, page_count: number }
+      expect(row).toEqual({ version: 2, source_id: initialized.source.id, page_count: 1 })
+      const source = database.prepare('SELECT gallery_id, status, mime_type FROM blog_gallery_sources WHERE id = ?').get(initialized.source.id) as { gallery_id: string, status: string, mime_type: string }
+      expect(source).toEqual({ gallery_id: gallery.gallery.id, status: 'active', mime_type: 'application/pdf' })
+    }
+    finally {
+      database.close()
+    }
+  })
+
+  it('cleans up a stale concurrent source init without leaving a database or R2 orphan', async () => {
+    const { database, d1, bucket } = fixture()
+    try {
+      const gallery = await createBlogGallery(eventFor(d1, bucket, 'POST', '/galleries', { post_id: 'post-one', title: 'Anthem', page_count: 1 }))
+      const body = {
+        version: gallery.gallery.version,
+        filename: 'anthem.pdf',
+        mime_type: 'application/pdf',
+        size: 1_024,
+        page_count: 1,
+      }
+      const results = await Promise.allSettled([
+        initBlogGallerySource(eventFor(d1, bucket, 'POST', `/galleries/${gallery.gallery.id}/source`, body), gallery.gallery.id),
+        initBlogGallerySource(eventFor(d1, bucket, 'POST', `/galleries/${gallery.gallery.id}/source`, body), gallery.gallery.id),
+      ])
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      const rejected = results.find(result => result.status === 'rejected') as PromiseRejectedResult
+      expect(rejected.reason).toMatchObject({ statusCode: 409 })
+      const galleryRow = database.prepare('SELECT version, source_id FROM blog_galleries WHERE id = ?').get(gallery.gallery.id) as { version: number, source_id: string }
+      expect(galleryRow.version).toBe(2)
+      const sourceCount = (database.prepare('SELECT COUNT(*) AS count FROM blog_gallery_sources WHERE gallery_id = ?').get(gallery.gallery.id) as { count: number }).count
+      expect(sourceCount).toBe(1)
+      expect(database.prepare('SELECT id FROM blog_gallery_sources WHERE id = ?').get(galleryRow.source_id)).toBeTruthy()
+      expect(bucket.createdUploadIds).toHaveLength(2)
+      expect(bucket.abortedUploadIds).toHaveLength(1)
     }
     finally {
       database.close()
