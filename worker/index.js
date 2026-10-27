@@ -685,6 +685,11 @@ async function handleApi(request, env, url) {
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
 
+  if (url.pathname === '/api/judging-sync/pair' || url.pathname.startsWith('/api/judging-sync/sdc-2026/')) {
+    const { handleJudgingSyncGateway } = await import('./admin-gateway.js');
+    return handleJudgingSyncGateway(request, env);
+  }
+
   if (url.pathname === '/api/events') {
     const { handleAnalyticsGateway } = await import('./admin-gateway.js');
     return handleAnalyticsGateway(request, env);

@@ -79,6 +79,27 @@ export function isAdminPath(pathname) {
   return pathname === '/admin' || pathname.startsWith('/admin/') || pathname === '/api/admin' || pathname.startsWith('/api/admin/');
 }
 
+export function isJudgingSyncPath(pathname) {
+  return pathname === '/api/judging-sync/pair' || pathname.startsWith('/api/judging-sync/sdc-2026/');
+}
+
+export async function handleJudgingSyncGateway(request, env) {
+  const url = new URL(request.url);
+  if (url.origin !== adminOrigin(env) || !isJudgingSyncPath(url.pathname)) return reply(404, 'Not Found');
+  if (!env.ADMIN || !env.PORTFOLIO_GATEWAY_TOKEN) return reply(503, 'Judging service is not configured');
+  // Device credentials stay in the local service. Browser owner sessions use /api/admin/judging.
+  if (request.headers.has('Origin') || request.headers.get('Sec-Fetch-Site') === 'cross-site') return reply(403, 'Device sync does not accept browser requests');
+  if (!['GET', 'POST', 'PUT', 'DELETE', 'HEAD'].includes(request.method)) return reply(405, 'Method Not Allowed');
+  if (Number(request.headers.get('Content-Length')) > 5 * 1024 * 1024) return reply(413, 'Judging request is too large');
+  const headers = trustedHeaders(request, env);
+  headers.delete('Cf-Access-Jwt-Assertion');
+  headers.delete('Cookie');
+  const deviceAuthorization = request.headers.get('Authorization');
+  if (deviceAuthorization) headers.set('Authorization', deviceAuthorization);
+  if (url.pathname === '/api/judging-sync/pair') headers.set('x-judging-pair-ip', request.headers.get('CF-Connecting-IP') || 'unknown');
+  return proxyResponse(await env.ADMIN.fetch(new Request(request, { headers, redirect: 'manual' })));
+}
+
 function trustedHeaders(request, env, analytics = false) {
   const headers = new Headers(request.headers);
   for (const name of [...headers.keys()]) {

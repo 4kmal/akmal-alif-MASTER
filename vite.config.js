@@ -2,9 +2,10 @@ import { defineConfig, loadEnv, normalizePath } from 'vite';
 import { relative, resolve } from 'path';
 import { readdirSync, statSync, cpSync, existsSync, mkdirSync } from 'fs';
 import { Agent as HttpsAgent } from 'node:https';
+import { privateWorkspaceGuard } from './scripts/private-workspaces.mjs';
 
 const projectRoot = resolve(__dirname, '.');
-const ignoredDirectories = new Set(['node_modules', 'dist', 'generated', 'repo-reference', 'coverage', 'apps', 'admin-analytics']);
+const ignoredDirectories = new Set(['node_modules', 'dist', 'generated', 'repo-reference', 'coverage', 'apps', 'admin-analytics', 'events']);
 const backendPaths = ['/api', '/media', '/assets/video/', '/blog/blogpic/thumb1.mp4'];
 
 function isBackendPath(url = '') {
@@ -93,10 +94,11 @@ export default defineConfig(({ mode }) => {
   server: {
     port: 3000,
     strictPort: true,
+    fs: { deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/events/judging/**', '**/repo-reference/**'] },
     open: false,
     proxy,
     watch: {
-      ignored: ['**/repo-reference/**', '**/dist/**', '**/generated/**', '**/.wrangler/**', '**/coverage/**', '**/apps/**', '**/admin-analytics/**'],
+      ignored: ['**/repo-reference/**', '**/dist/**', '**/generated/**', '**/.wrangler/**', '**/coverage/**', '**/apps/**', '**/admin-analytics/**', '**/events/judging/**'],
     },
   },
   build: {
@@ -106,6 +108,7 @@ export default defineConfig(({ mode }) => {
     },
   },
   plugins: [
+    { name: 'private-workspace-guard', configureServer(server) { server.middlewares.use(privateWorkspaceGuard); } },
     {
       name: 'portfolio-event-tracking',
       transformIndexHtml: {

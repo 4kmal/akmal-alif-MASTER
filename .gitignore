@@ -16,3 +16,6 @@ apps/admin/.editor-runtime/
 apps/admin/public/world.json
 apps/admin/public/sphere.bin
 apps/admin/wrangler.deploy.jsonc
+
+# Private judging evidence, participant snapshots and credentials
+/events/judging/
