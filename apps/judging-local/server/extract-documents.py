@@ -32,4 +32,4 @@ elif path.suffix.lower() in ('.docx', '.pptx'):
             limit -= len(text)
             if limit <= 0:
                 break
-print(json.dumps({'pages': pages, 'coverage': 'PDF pages' if path.suffix.lower() == '.pdf' else 'Slides' if path.suffix.lower() == '.pptx' else 'Document XML paragraphs; pagination unavailable'}, ensure_ascii=False))
+print(json.dumps({'pages': pages, 'coverage': 'PDF pages' if path.suffix.lower() == '.pdf' else 'Slides' if path.suffix.lower() == '.pptx' else 'Document XML paragraphs; pagination unavailable'}, ensure_ascii=True))

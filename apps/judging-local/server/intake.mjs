@@ -5,6 +5,8 @@ import { resolve, relative, extname, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { fileURLToPath } from 'node:url';
+import { request as httpsRequest } from 'node:https';
+import { BlockList, isIP } from 'node:net';
 import { sha256, fileHash, confinedFile } from './workspace.mjs';
 
 const exec = promisify(execFile);
@@ -18,20 +20,47 @@ async function git(args, cwd) {
 }
 async function exists(path) { try { await access(path); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; } }
 
+const nonPublicV4 = new BlockList();
+for (const [network, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]]) nonPublicV4.addSubnet(network, prefix, 'ipv4');
+const nonPublicV6 = new BlockList();
+nonPublicV6.addSubnet('2001:db8::', 32, 'ipv6');
 function privateAddress(address) {
-  return /^(?:0\.|10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|224\.)/.test(address)
-    || address.includes(':') && (!/^[2-3][a-f0-9:]+$/i.test(address));
+  const family = isIP(address);
+  if (family === 4) return nonPublicV4.check(address, 'ipv4');
+  return family !== 6 || !/^[2-3]/.test(address) || nonPublicV6.check(address, 'ipv6');
 }
 
-export async function checkPublicUrl(value, fetcher = fetch, resolver = lookup) {
+function pinnedRequest(url, init, address) {
+  return new Promise((resolveResponse, reject) => {
+    const request = httpsRequest(url, {
+      method: init.method, headers: init.headers, signal: init.signal, agent: false,
+      lookup: (_hostname, options, callback) => {
+        const done = typeof options === 'function' ? options : callback;
+        if (options?.all) done(null, [address]);
+        else done(null, address.address, address.family || (address.address.includes(':') ? 6 : 4));
+      },
+    }, response => {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(response.headers)) if (value) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
+      resolveResponse(new Response(null, { status: response.statusCode, headers }));
+      response.destroy();
+    });
+    request.once('error', reject);
+    request.end();
+  });
+}
+
+export async function checkPublicUrl(value, fetcher, resolver = lookup) {
   let url = new URL(value);
   for (let hop = 0; hop < 5; hop++) {
     if (url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443') throw new Error('Only public HTTPS links are checked');
     const addresses = await resolver(url.hostname, { all: true });
     if (!addresses.length || addresses.some(item => privateAddress(item.address))) throw new Error('Private network destination rejected');
-    let response = await fetcher(url, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(8000) });
+    const address = addresses.find(item => item.family === 4) || addresses[0];
+    const checkedFetch = fetcher || ((target, init) => pinnedRequest(target, init, address));
+    let response = await checkedFetch(url, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(8000) });
     if ([403, 405, 501].includes(response.status)) {
-      response = await fetcher(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(8000), headers: { Range: 'bytes=0-0' } });
+      response = await checkedFetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(8000), headers: { Range: 'bytes=0-0' } });
       await response.body?.cancel();
     }
     if ([301, 302, 303, 307, 308].includes(response.status) && response.headers.get('location')) { url = new URL(response.headers.get('location'), url); continue; }
@@ -57,11 +86,13 @@ async function inventory(root, current = root, result = []) {
 export function discoverLinks(text) {
   const links = new Map();
   for (const line of text.split('\n')) {
-    for (const match of line.matchAll(/https:\/\/[^\s<>"')\]]+/g)) {
+    for (const match of line.matchAll(/https:\/\/[^\s<>"')\]|*`]+/g)) {
       try {
-        const url = new URL(match[0].replace(/[.,;]+$/, ''));
+        const url = new URL(match[0].replace(/[.,;*`]+$/, ''));
         for (const key of [...url.searchParams.keys()]) if (/token|secret|password|api.?key|auth/i.test(key)) url.searchParams.delete(key);
-        const kind = /youtube\.com|youtu\.be/.test(url.hostname) ? 'video' : /replit\.app|vercel\.app|netlify\.app/.test(url.hostname) || /live demo|deployment|deployed url/i.test(line) ? 'deployment' : /slides|pitch|deck|drive\.google/.test(line) ? 'deck' : 'reference';
+        const deployedHost = /(?:^|\.)(?:replit\.app|vercel\.app|netlify\.app)$/.test(url.hostname);
+        const knownReference = /(?:^|\.)(?:github\.com|shields\.io|docs\.replit\.com|youtube\.com|youtu\.be|drive\.google\.com)$/.test(url.hostname);
+        const kind = /youtube\.com|youtu\.be/.test(url.hostname) ? 'video' : deployedHost || !knownReference && /live demo|deployment|deployed url/i.test(line) ? 'deployment' : /slides|pitch|deck|drive\.google/.test(line) ? 'deck' : 'reference';
         links.set(url.href, { url: url.href, kind, status: null, parity: 'unverified' });
       } catch { /* Invalid participant link remains in the original source. */ }
     }
@@ -72,22 +103,30 @@ export function discoverLinks(text) {
 export async function intakeTeam({ workspace, team, store, refresh = false, report = () => {} }) {
   const recordKey = `intake:${team.id}`;
   const previous = store.get(recordKey)?.data;
-  if (previous?.verified && !refresh) {
+  async function verifyPrevious() {
     const directory = await confinedFile(workspace, previous.snapshotPath);
     if (await git(['rev-parse', 'HEAD'], directory) !== previous.sha) throw new Error('Existing snapshot changed; preserved for review');
+    if (await git(['status', '--porcelain'], directory)) throw new Error('Existing snapshot has working-tree changes; preserved for review');
     for (const artifact of previous.artifacts) if (await fileHash(await confinedFile(directory, artifact.path)) !== artifact.sha256) throw new Error(`Existing evidence changed: ${artifact.path}`);
     report(`Verified saved snapshot ${previous.sha.slice(0, 8)}`);
     return previous;
   }
+  if (previous?.verified && !refresh) return verifyPrevious();
   report('Freezing remote HEAD');
   const remote = await git(['ls-remote', '--symref', team.repoUrl, 'HEAD']);
   const branch = remote.match(/ref: refs\/heads\/(.+)\s+HEAD/)?.[1] || 'main';
   const sha = remote.match(/^([a-f0-9]{40})\s+HEAD/m)?.[1];
   if (!sha || !/^[a-zA-Z0-9_./-]+$/.test(branch)) throw new Error('Could not freeze repository HEAD');
+  if (previous?.verified && previous.sha === sha) return verifyPrevious();
   const retrievedAt = new Date().toISOString();
-  const snapshotPath = `repos/${team.id}/${sha}`;
-  const target = resolve(workspace, snapshotPath);
+  let snapshotPath = `repos/${team.id}/${sha}`;
+  let target = resolve(workspace, snapshotPath);
   await mkdir(resolve(workspace, 'repos', team.id), { recursive: true });
+  if (await exists(target)) {
+    snapshotPath += `-retry-${randomUUID().slice(0, 8)}`;
+    target = resolve(workspace, snapshotPath);
+    report('Preserved existing download; retrying into a new snapshot folder');
+  }
   if (!await exists(target)) {
     report(`Downloading ${sha.slice(0, 8)}`);
     await git(['clone', '--depth', '1', '--single-branch', '--no-tags', '--branch', branch, '--', team.repoUrl, target], workspace);
@@ -126,7 +165,7 @@ export async function intakeTeam({ workspace, team, store, refresh = false, repo
         pages = document.pages;
         coverage = document.coverage;
         text = pages.map(page => `[Page ${page.page}]\n${page.text}`).join('\n\n');
-      } catch (error) { issues.push(`Text extraction unavailable for ${item.path}: ${error.message.slice(0, 160)}`); }
+      } catch (error) { issues.push(`Text extraction unavailable for ${item.path}: ${(error.stderr || error.message).trim().split('\n').at(-1).slice(0, 160)}`); }
     }
     const id = sha256(`${team.id}\n${sha}\n${item.path}`).slice(0, 32);
     const evidence = { id, teamId: team.id, snapshotSha: sha, path: item.path, kind, sha256: artifacts.find(file => file.path === item.path).sha256, text: text.slice(0, 250000), lines: text.split('\n').length, ...(pages ? { pages } : {}), coverage, createdAt: retrievedAt };

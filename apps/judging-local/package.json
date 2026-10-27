@@ -5,7 +5,7 @@
   "packageManager": "pnpm@11.2.2",
   "engines": { "node": "24.21.0" },
   "scripts": {
-    "dev": "node server/index.mjs",
+    "dev": "node --watch-path=server --watch-path=../admin/shared/judging server/index.mjs",
     "intake": "node server/intake-cli.mjs",
     "test": "node --test test/*.test.mjs",
     "build": "vite build"

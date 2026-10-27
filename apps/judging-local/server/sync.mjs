@@ -12,6 +12,7 @@ export function createSync(workspace, store) {
   let credential;
   let running = false;
   let stopped = false;
+  let lastActivity = Date.now();
   const status = { status: 'unpaired', pending: store.pendingCount(), lastSuccessfulAt: store.meta('lastSync'), error: null, device: null };
 
   function safeDevice(value) { return { id: value.deviceId || value.id, name: value.name || 'Local judging workspace', expiresAt: value.expiresAt }; }
@@ -56,6 +57,7 @@ export function createSync(workspace, store) {
     status.error = null;
     status.status = 'pending';
     store.setMeta('templateSynced', null);
+    store.setMeta('cloudCursor', null);
     void tick();
     return { device: status.device, status: status.status };
   }
@@ -63,6 +65,7 @@ export function createSync(workspace, store) {
   async function tick() {
     await loaded;
     if (running || stopped || !credential?.token) return;
+    if (Date.now() - lastActivity > 30000 && store.pendingCount() === 0) return;
     running = true;
     status.status = 'syncing';
     try {
@@ -89,10 +92,16 @@ export function createSync(workspace, store) {
         store.ack(entry, remoteRecord);
         sent++;
       }
-      const response = await remote('/state');
+      const cursor = store.meta('cloudCursor');
+      let response = await remote(`/state${Number.isSafeInteger(cursor) ? `?cursor=${cursor}` : ''}`);
+      if (response.status === 400 && Number.isSafeInteger(cursor)) {
+        // A database recovery can move the server cursor behind this station.
+        response = await remote('/state');
+      }
       if (!response.ok) throw new Error(`Cloud refresh failed (${response.status})`);
       const result = await response.json();
       for (const record of result.records) store.pull(record);
+      if (Number.isSafeInteger(result.cursor)) store.setMeta('cloudCursor', result.cursor);
       status.lastSuccessfulAt = new Date().toISOString();
       store.setMeta('lastSync', status.lastSuccessfulAt);
       status.pending = store.pendingCount();
@@ -106,5 +115,5 @@ export function createSync(workspace, store) {
   const timer = setInterval(() => { void tick(); }, 10000);
   timer.unref();
   void tick();
-  return { pair, remote, tick, status: () => ({ ...status, pending: store.pendingCount(), conflicts: store.conflicts() }), stop: () => { stopped = true; clearInterval(timer); } };
+  return { pair, remote, tick, touch: () => { lastActivity = Date.now(); }, status: () => ({ ...status, pending: store.pendingCount(), conflicts: store.conflicts() }), stop: () => { stopped = true; clearInterval(timer); } };
 }

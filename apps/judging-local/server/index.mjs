@@ -7,7 +7,7 @@ import { initializeWorkspace, browserRequestAllowed } from './workspace.mjs';
 import { openStore } from './store.mjs';
 import { createSync } from './sync.mjs';
 import { createIntakeQueue } from './intake.mjs';
-import { ASSIGNMENT, validateRecord } from '../../admin/shared/judging/model.mjs';
+import { ASSIGNMENT, assertRecord } from '../../admin/shared/judging/model.mjs';
 import { exportWorkbook, importAssignment } from '../../admin/shared/judging/workbook.mjs';
 
 const port = Number(process.env.JUDGING_PORT || 8791);
@@ -19,7 +19,7 @@ const assignment = { ...ASSIGNMENT, ...imported };
 const store = openStore(resolve(workspace, 'data/judging.sqlite'));
 const sync = createSync(workspace, store);
 const intake = createIntakeQueue(workspace, assignment, store);
-const vite = await createViteServer({ configFile: fileURLToPath(new URL('../vite.config.mjs', import.meta.url)), server: { middlewareMode: true }, appType: 'spa' });
+let vite;
 
 function json(res, value, status = 200) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(value)); }
 async function body(req, limit = 1024 * 1024) {
@@ -33,12 +33,23 @@ const server = createServer(async (req, res) => {
   try {
     if (!browserRequestAllowed(req, port)) return json(res, { error: 'Only the loopback dashboard origin is allowed' }, 403);
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
+    if (url.pathname === '/admin/fonts/inter-latin.woff2' && req.method === 'GET') {
+      const font = await readFile(fileURLToPath(new URL('../../admin/public/admin/fonts/inter-latin.woff2', import.meta.url)));
+      res.writeHead(200, { 'Content-Type': 'font/woff2', 'Cache-Control': 'public, max-age=86400' });
+      return res.end(font);
+    }
     if (!url.pathname.startsWith('/api/local/')) return vite.middlewares(req, res, () => json(res, { error: 'Not found' }, 404));
+    sync.touch();
     const path = url.pathname.slice('/api/local'.length);
-    if (path === '/state' && req.method === 'GET') return json(res, { assignment, records: store.list(), serverTime: new Date().toISOString(), sync: sync.status(), conflicts: store.conflicts() });
+    if (path === '/state' && req.method === 'GET') {
+      const cursor = url.searchParams.has('cursor') ? Number(url.searchParams.get('cursor')) : undefined;
+      if (cursor !== undefined && (!Number.isSafeInteger(cursor) || cursor < 0)) return json(res, { error: 'Invalid state cursor' }, 400);
+      return json(res, { assignment, ...store.state(cursor), serverTime: new Date().toISOString(), sync: sync.status(), conflicts: store.conflicts() });
+    }
     if (path === '/records' && req.method === 'POST') {
       const input = await body(req);
-      validateRecord(input.key, input.data);
+      input.data = assertRecord(input.key, input.data);
+      if (!Number.isSafeInteger(input.baseVersion) || input.baseVersion < 0) return json(res, { error: 'A valid base version is required' }, 400);
       const result = store.save(input);
       if (result.conflict) return json(res, result, 409);
       void sync.tick();
@@ -65,16 +76,18 @@ const server = createServer(async (req, res) => {
       const reviews = records.filter(record => record.key.startsWith('review:')).map(record => ({ teamId: record.key.slice(7), ...record.data }));
       const judge = store.get('judge')?.data || { name: assignment.name || assignment.judgeName, domain: assignment.domain, date: '', generalNotes: '', warningsAcknowledged: false };
       const final = url.searchParams.get('final') === '1';
-      const output = await exportWorkbook(await readFile(templatePath), { judge, reviews }, { final });
+      const intakes = records.filter(record => record.key.startsWith('intake:')).map(record => record.data);
+      const output = await exportWorkbook(await readFile(templatePath), { judge, reviews, intakes }, { final });
       const filename = `SDC-D1-J04-${final ? 'final' : 'draft'}-${new Date().toISOString().replaceAll(':', '-')}.xlsx`;
       await writeFile(resolve(workspace, 'exports', filename), output);
       res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' });
       return res.end(Buffer.from(output));
     }
-    if (path === '/assessments' || /^\/assessments\/[a-zA-Z0-9-]+\/cancel$/.test(path)) {
+    if (path === '/jobs' || path === '/assessments' || /^\/assessments\/[a-zA-Z0-9-]+\/cancel$/.test(path)) {
       if (!['GET', 'POST'].includes(req.method)) return json(res, { error: 'Method not allowed' }, 405);
       const payload = req.method === 'POST' ? JSON.stringify(await body(req)) : undefined;
-      const response = await sync.remote(path, { method: req.method, ...(payload ? { headers: { 'Content-Type': 'application/json' }, body: payload } : {}) });
+      const remotePath = path === '/assessments' && req.method === 'GET' ? '/jobs' : path;
+      const response = await sync.remote(remotePath, { method: req.method, ...(payload ? { headers: { 'Content-Type': 'application/json' }, body: payload } : {}) });
       return json(res, await response.json(), response.status);
     }
     return json(res, { error: 'Not found' }, 404);
@@ -82,6 +95,7 @@ const server = createServer(async (req, res) => {
     json(res, { error: error.message }, error.status || 400);
   }
 });
+vite = await createViteServer({ configFile: fileURLToPath(new URL('../vite.config.mjs', import.meta.url)), server: { middlewareMode: true, hmr: { server } }, appType: 'spa' });
 server.listen(port, '127.0.0.1', () => console.log(`SDC judging workspace: http://127.0.0.1:${port}`));
 async function close() { sync.stop(); await vite.close(); server.close(); store.close(); }
 process.once('SIGINT', close);

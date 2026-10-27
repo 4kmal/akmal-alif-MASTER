@@ -19,3 +19,4 @@ apps/admin/wrangler.deploy.jsonc
 
 # Private judging evidence, participant snapshots and credentials
 /events/judging/
+apps/judging-local/*.timestamp-*.mjs

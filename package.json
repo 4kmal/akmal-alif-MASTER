@@ -13,6 +13,7 @@
     "preview": "wrangler dev",
     "dev:worker": "wrangler dev",
     "dev:admin": "pnpm --dir apps/admin dev",
+    "dev:judging": "pnpm --dir apps/judging-local dev",
     "build:admin": "pnpm --dir apps/admin build",
     "test:admin": "pnpm --dir apps/admin test --run",
     "check:admin": "pnpm --dir apps/admin types:check && pnpm --dir apps/admin lint",

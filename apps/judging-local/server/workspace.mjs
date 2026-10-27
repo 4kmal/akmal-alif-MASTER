@@ -1,12 +1,20 @@
-import { realpath, mkdir, readFile } from 'node:fs/promises';
+import { realpath, mkdir, readFile, chmod } from 'node:fs/promises';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const exec = promisify(execFile);
 
 export const DEFAULT_WORKSPACE = 'C:/xampp/htdocs/akmal-alif-MASTER/events/judging/sdcHackathon';
 
 export async function initializeWorkspace(root = process.env.JUDGING_WORKSPACE || DEFAULT_WORKSPACE) {
   await mkdir(root, { recursive: true });
   const absolute = await realpath(root);
+  if (process.platform === 'win32') {
+    const { stdout } = await exec('whoami', [], { windowsHide: true });
+    await exec('icacls', [absolute, '/inheritance:r', '/grant:r', `${stdout.trim()}:(OI)(CI)(F)`, 'SYSTEM:(OI)(CI)(F)'], { windowsHide: true });
+  } else await chmod(absolute, 0o700);
   for (const folder of ['repos', 'sources', 'evidence', 'data', 'exports']) await mkdir(resolve(absolute, folder), { recursive: true });
   return absolute;
 }

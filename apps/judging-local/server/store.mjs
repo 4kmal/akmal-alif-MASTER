@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 
 export function openStore(filename) {
   const db = new DatabaseSync(filename);
@@ -7,7 +7,11 @@ export function openStore(filename) {
     CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, version INTEGER NOT NULL, cloud_version INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS outbox (key TEXT PRIMARY KEY, mutation_id TEXT NOT NULL, base_version INTEGER NOT NULL, local_version INTEGER NOT NULL, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS conflicts (key TEXT PRIMARY KEY, remote TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS mutations (id TEXT PRIMARY KEY, hash TEXT NOT NULL, response TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS record_changes (sequence INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL);
+    CREATE TRIGGER IF NOT EXISTS record_inserted AFTER INSERT ON records BEGIN INSERT INTO record_changes(key) VALUES(NEW.key); END;
+    CREATE TRIGGER IF NOT EXISTS record_updated AFTER UPDATE ON records BEGIN INSERT INTO record_changes(key) VALUES(NEW.key); END;`);
 
   function record(row) { return row ? { key: row.key, version: row.version, data: JSON.parse(row.data), updatedAt: row.updated_at } : null; }
   function get(key) { return record(db.prepare('SELECT * FROM records WHERE key=?').get(key)); }
@@ -17,8 +21,15 @@ export function openStore(filename) {
     try { const result = fn(); db.exec('COMMIT'); return result; }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
-  function save({ key, baseVersion, data }, queue = true) {
+  function save({ key, baseVersion, data, mutationId = randomUUID() }, queue = true) {
     return atomic(() => {
+      if (typeof mutationId !== 'string' || mutationId.length < 8 || mutationId.length > 128) throw new Error('Invalid mutation ID');
+      const hash = createHash('sha256').update(JSON.stringify({ key, baseVersion, data })).digest('hex');
+      const previous = db.prepare('SELECT hash,response FROM mutations WHERE id=?').get(mutationId);
+      if (previous) {
+        if (previous.hash !== hash) throw new Error('Mutation ID was already used for a different edit');
+        return JSON.parse(previous.response);
+      }
       const current = db.prepare('SELECT * FROM records WHERE key=?').get(key);
       const conflict = db.prepare('SELECT remote FROM conflicts WHERE key=?').get(key);
       if (conflict || (current?.version || 0) !== baseVersion) return { conflict: true, current: get(key), remote: conflict ? JSON.parse(conflict.remote) : null };
@@ -26,10 +37,20 @@ export function openStore(filename) {
       const version = baseVersion + 1;
       db.prepare('INSERT INTO records(key,version,cloud_version,data,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET version=excluded.version,data=excluded.data,updated_at=excluded.updated_at').run(key, version, current?.cloud_version || 0, JSON.stringify(data), now);
       if (queue) db.prepare('INSERT INTO outbox(key,mutation_id,base_version,local_version,data) VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET mutation_id=excluded.mutation_id,local_version=excluded.local_version,data=excluded.data').run(key, randomUUID(), current?.cloud_version || 0, version, JSON.stringify(data));
-      return get(key);
+      const result = get(key);
+      db.prepare('INSERT INTO mutations(id,hash,response) VALUES(?,?,?)').run(mutationId, hash, JSON.stringify(result));
+      return result;
     });
   }
   function upsert(key, data) { return save({ key, baseVersion: get(key)?.version || 0, data }); }
+  function state(cursor) {
+    return atomic(() => {
+      const newest = db.prepare('SELECT COALESCE(MAX(sequence),0) AS cursor FROM record_changes').get().cursor;
+      if (cursor === undefined || cursor > newest) return { records: list(), cursor: newest };
+      const changed = db.prepare('SELECT DISTINCT key FROM record_changes WHERE sequence>? AND sequence<=?').all(cursor, newest);
+      return { records: changed.map(row => get(row.key)), cursor: newest };
+    });
+  }
   function pull(remote) {
     return atomic(() => {
       const row = db.prepare('SELECT * FROM records WHERE key=?').get(remote.key);
@@ -63,7 +84,7 @@ export function openStore(filename) {
       return get(key);
     });
   }
-  return { db, get, list, save, upsert, pull, ack, resolveConflict,
+  return { db, get, list, state, save, upsert, pull, ack, resolveConflict,
     pending: () => db.prepare('SELECT * FROM outbox WHERE key NOT IN (SELECT key FROM conflicts) ORDER BY rowid').all(),
     conflicts: () => db.prepare('SELECT key,remote FROM conflicts').all().map(row => ({ key: row.key, local: get(row.key), remote: JSON.parse(row.remote) })),
     pendingCount: () => db.prepare('SELECT COUNT(*) AS count FROM outbox').get().count,
