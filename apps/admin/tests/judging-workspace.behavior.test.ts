@@ -337,6 +337,26 @@ describe('judgingWorkspace save behavior', () => {
     expect(input.value).toBe('')
   })
 
+  it('refreshes AI jobs every ten seconds and immediately after visible online recovery', async () => {
+    mountAdmin()
+    await settle()
+    const jobReads = () => fetchCalls.filter(call => call.url.endsWith('/jobs')).length
+    expect(jobReads()).toBe(1)
+    await vi.advanceTimersByTimeAsync(10_000)
+    await settle()
+    expect(jobReads()).toBe(2)
+    window.dispatchEvent(new Event('offline'))
+    await vi.advanceTimersByTimeAsync(10_000)
+    await settle()
+    expect(jobReads()).toBe(2)
+    window.dispatchEvent(new Event('online'))
+    await settle()
+    expect(jobReads()).toBe(3)
+    document.dispatchEvent(new Event('visibilitychange'))
+    await settle()
+    expect(jobReads()).toBe(4)
+  })
+
   it('exposes workbench tabs with roving focus and Home/End keyboard navigation', async () => {
     mountLocal()
     await settle()

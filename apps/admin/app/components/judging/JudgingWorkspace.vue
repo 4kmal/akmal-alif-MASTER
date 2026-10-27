@@ -1695,7 +1695,11 @@ async function loadIntakeProgress() {
   }
 }
 
+let assessmentJobsLoading = false
 async function loadAssessmentJobs() {
+  if (assessmentJobsLoading || !isOnline.value)
+    return
+  assessmentJobsLoading = true
   try {
     const endpoint = `${props.apiBase}/jobs`
     const response = await fetch(endpoint, { credentials: 'include', headers: { Accept: 'application/json' } })
@@ -1707,6 +1711,9 @@ async function loadAssessmentJobs() {
   }
   catch {
     // Assessment jobs are supplementary to the judging state; keep the workspace usable.
+  }
+  finally {
+    assessmentJobsLoading = false
   }
 }
 
@@ -1757,6 +1764,8 @@ function handleOnline() {
   isOnline.value = true
   syncState.value = dirtyKeys.size ? 'pending' : 'synced'
   void fetchState({ silent: true })
+  if (isVisible.value)
+    void loadAssessmentJobs()
   for (const key of dirtyKeys) void saveRecord(key)
 }
 
@@ -1767,8 +1776,10 @@ function handleOffline() {
 
 function handleVisibility() {
   isVisible.value = document.visibilityState === 'visible'
-  if (isVisible.value)
+  if (isVisible.value && isOnline.value) {
     void fetchState({ silent: true })
+    void loadAssessmentJobs()
+  }
 }
 
 function beginPolling() {
@@ -1776,9 +1787,10 @@ function beginPolling() {
     clearInterval(pollingTimer.value)
   pollingTimer.value = setInterval(() => {
     deadlineNow.value = Date.now()
-    if (isVisible.value) {
+    if (isVisible.value && isOnline.value) {
       void fetchState({ silent: true })
       void loadIntakeProgress()
+      void loadAssessmentJobs()
     }
   }, 10_000)
 }
