@@ -1058,7 +1058,7 @@ body.tracklist-drawer-open {
   display: block;
   width: 280px;
   min-width: 0;
-  align-self: start;
+  align-self: stretch;
 }
 
 .calendar-rail {
