@@ -22,7 +22,7 @@ The supplied artbook makes that grammar easier to see. Its 211 rasterised pages,
 
 Analog technology gives the setting a tactile answer to the usual science-fiction question of how advanced machines should feel. The equipment can be powerful without looking frictionless. Handcrafted surfaces suggest repair, improvisation, and local knowledge. Middle Eastern influence brings a visual vocabulary of geometry, ornament, and built environments that does not have to be reduced to a generic space-fantasy future. The triangle becomes a compositional signal, repeating across silhouettes and interfaces so that a player can recognise the world even when the scene changes.
 
-The gallery below keeps the artbook in its original PDF page order, using derived page images so readers can inspect the visual sequence without treating the gallery as a replacement for the original publication. Its captions credit BioWare, EA, and Dark Horse Books. The cover, the early landscape pages, the final page, and the back cover are not interchangeable samples. They mark how the book frames the world, introduces its spaces, and leaves the reader with an object rather than a feed.
+The gallery below keeps the artbook in its original PDF page order, using derived page images so readers can inspect the visual sequence. Credit for the artwork remains with BioWare, EA, and Dark Horse Books. The cover, the early landscape pages, the final page, and the back cover are not interchangeable samples. They mark how the book frames the world, introduces its spaces, and leaves the reader with an object rather than a feed.
 
 ## Preservation is an engineering and editorial job
 
