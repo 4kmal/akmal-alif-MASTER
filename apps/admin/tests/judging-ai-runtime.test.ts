@@ -81,11 +81,14 @@ function insertJob(database: SqliteD1, id: string, teamId: string, inputHash: st
     .run(id, 'sdc-2026', teamId, 'owner@example.test', inputHash, '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z')
 }
 
-function setPendingJob(database: SqliteD1, id: string, inputHash: string, requestId: string | null = 'batch-1', updatedAt = '2026-10-28T00:00:00.000Z'): void {
+function setPendingJob(database: SqliteD1, id: string, inputHash: string, requestId: string | null = 'batch-1', updatedAt = '2026-10-28T00:00:00.000Z', model?: string): void {
+  const pending: Record<string, unknown> = { provider: 'workers-ai-batch', requestId, inputHash, submittedAt: '2026-10-28T00:00:00.000Z' }
+  if (model)
+    pending.model = model
   database.db.prepare(`UPDATE judging_jobs
     SET status = 'running', progress = 50, attempts = 1, started_at = ?, updated_at = ?, draft_json = ?
     WHERE id = ?`)
-    .run(updatedAt, updatedAt, JSON.stringify({ provider: 'workers-ai-batch', requestId, inputHash, submittedAt: '2026-10-28T00:00:00.000Z' }), id)
+    .run(updatedAt, updatedAt, JSON.stringify(pending), id)
 }
 
 function insertAssessmentFixture(database: SqliteD1, evidenceId: string, teamId = '01-console'): void {
@@ -266,11 +269,12 @@ describe('judging AI runtime contract', () => {
     expect(firstSubmission.progress).toBe(50)
     expect(JSON.parse(firstSubmission.draft_json).requestId).toBe('batch-1')
     expect(calls).toHaveLength(1)
-    expect(calls[0]?.model).toBe('@cf/qwen/qwen3-30b-a3b-fp8')
+    expect(calls[0]?.model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct')
     expect(calls[0]?.options).toEqual({ queueRequest: true })
     const request = (calls[0]?.payload.requests as Record<string, unknown>[])[0]
     expect(request?.max_tokens).toBe(4096)
     expect(request?.temperature).toBe(0.2)
+    expect(request?.chat_template_kwargs).toBeUndefined()
 
     const messages = request?.messages as { role: string, content: string }[]
     const system = messages[0]?.content ?? ''
@@ -281,13 +285,15 @@ describe('judging AI runtime contract', () => {
       expect(system).toContain(`"feature": "${feature}"`)
     for (const field of ['evidenceId', 'lineStart', 'lineEnd', 'page', 'evidenceKind'])
       expect(system).toContain(`"${field}"`)
-    expect(user.endsWith('/no_think\nReturn only the valid JSON object matching the response shape above. Do not emit reasoning, analysis, markdown, or a <think> block.')).toBe(true)
-    expect(user.lastIndexOf('<<END_UNTRUSTED_EVIDENCE>>')).toBeLessThan(user.lastIndexOf('/no_think'))
+    expect(user.endsWith('Return only the valid JSON object matching the response shape above. Do not emit reasoning, analysis, markdown, or a <think> block.')).toBe(true)
+    expect(user).not.toContain('/no_think')
     expect(user.length).toBeLessThan(65_500)
 
     await Promise.all([runJudgingJob(event, firstJobId), runJudgingJob(event, firstJobId)])
     expect(calls).toHaveLength(2)
+    expect(calls[1]?.model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct')
     expect(calls[1]?.payload).toEqual({ request_id: 'batch-1' })
+    expect(JSON.parse((database.db.prepare('SELECT draft_json FROM judging_jobs WHERE id = ?').get(firstJobId) as { draft_json: string }).draft_json).model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct')
 
     await runJudgingJob(event, firstJobId)
     const firstStatus = database.db.prepare('SELECT status, draft_json FROM judging_jobs WHERE id = ?').get(firstJobId) as { status: string, draft_json: string }
@@ -308,7 +314,7 @@ describe('judging AI runtime contract', () => {
     const jobId = '66666666-6666-4666-8666-666666666666'
     insertJob(database, jobId, '01-console', input.inputHash)
     setPendingJob(database, jobId, input.inputHash)
-    const calls: Record<string, unknown>[] = []
+    const calls: { model: string, payload: Record<string, unknown> }[] = []
     const waiters: Promise<unknown>[] = []
     const event = {
       context: {
@@ -316,8 +322,8 @@ describe('judging AI runtime contract', () => {
           env: {
             DB: database,
             AI: {
-              run: async (_model: string, payload: Record<string, unknown>) => {
-                calls.push(payload)
+              run: async (model: string, payload: Record<string, unknown>) => {
+                calls.push({ model, payload })
                 return { status: 'running', request_id: 'batch-1' }
               },
             },
@@ -332,7 +338,7 @@ describe('judging AI runtime contract', () => {
     expect(jobs.some(job => job.id === jobId)).toBe(true)
     await Promise.all(waiters)
 
-    expect(calls).toEqual([{ request_id: 'batch-1' }])
+    expect(calls).toEqual([{ model: '@cf/qwen/qwen3-30b-a3b-fp8', payload: { request_id: 'batch-1' } }])
     const row = database.db.prepare('SELECT status, progress FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, progress: number }
     expect(row.status).toBe('running')
     expect(row.progress).toBe(50)
@@ -573,29 +579,33 @@ describe('judging AI runtime contract', () => {
     const input = await buildAssessmentInput(database as never, '01-console')
     const jobId = '88888888-8888-4888-8888-888888888888'
     insertJob(database, jobId, '01-console', input.inputHash)
-    setPendingJob(database, jobId, input.inputHash)
+    setPendingJob(database, jobId, input.inputHash, 'batch-1', '2026-10-28T00:00:00.000Z', '@cf/meta/llama-4-scout-17b-16e-instruct')
+    const calls: string[] = []
     const event = {
       context: {
         cloudflare: {
           env: {
             DB: database,
             AI: {
-              run: async () => ({
-                results: [shape === 'wrapped'
-                  ? {
-                      id: 0,
-                      success: true,
-                      result: { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` },
-                    }
-                  : shape === 'direct'
-                    ? { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }
-                    : shape === 'message-content'
-                      ? { response: null, choices: [{ message: { content: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` } }] }
-                      : shape === 'message-text'
-                        ? { response: null, choices: [{ message: { content: null, text: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` } }] }
-                        : { response: null, choices: [{ text: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }] }],
-                usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
-              }),
+              run: async (model: string) => {
+                calls.push(model)
+                return {
+                  results: [shape === 'wrapped'
+                    ? {
+                        id: 0,
+                        success: true,
+                        result: { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` },
+                      }
+                    : shape === 'direct'
+                      ? { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }
+                      : shape === 'message-content'
+                        ? { response: null, choices: [{ message: { content: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` } }] }
+                        : shape === 'message-text'
+                          ? { response: null, choices: [{ message: { content: null, text: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` } }] }
+                          : { response: null, choices: [{ text: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }] }],
+                  usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+                }
+              },
             },
           },
         },
@@ -607,6 +617,7 @@ describe('judging AI runtime contract', () => {
     const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string }
     expect(row.status).toBe('completed')
     expect(row.error).toBeNull()
+    expect(calls).toEqual(['@cf/meta/llama-4-scout-17b-16e-instruct'])
     const draft = database.db.prepare('SELECT draft_json FROM judging_jobs WHERE id = ?').get(jobId) as { draft_json: string }
     expect(JSON.parse(draft.draft_json).features).toHaveLength(6)
   })
@@ -648,6 +659,39 @@ describe('judging AI runtime contract', () => {
     expect(row.error).toContain('reasoning=string:17')
     expect(row.error).not.toContain('{"features": [')
     expect(row.error).not.toContain('private reasoning')
+  })
+
+  it('keeps citation validation strict for a Scout batch response', async () => {
+    const evidenceId = 'a'.repeat(32)
+    insertAssessmentFixture(database, evidenceId)
+    const input = await buildAssessmentInput(database as never, '01-console')
+    const jobId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad'
+    insertJob(database, jobId, '01-console', input.inputHash)
+    setPendingJob(database, jobId, input.inputHash, 'batch-1', '2026-10-28T00:00:00.000Z', '@cf/meta/llama-4-scout-17b-16e-instruct')
+    const calls: string[] = []
+    const invalidResponse = responseFor(evidenceId).replace('"lineStart":1,"lineEnd":1', '"lineStart":2,"lineEnd":2')
+    const event = {
+      context: {
+        cloudflare: {
+          env: {
+            DB: database,
+            AI: {
+              run: async (model: string) => {
+                calls.push(model)
+                return { results: [{ success: true, result: { response: invalidResponse } }] }
+              },
+            },
+          },
+        },
+      },
+    } as unknown as H3Event
+
+    await runJudgingJob(event, jobId)
+
+    const row = database.db.prepare('SELECT status, error FROM judging_jobs WHERE id = ?').get(jobId) as { status: string, error: string }
+    expect(row.status).toBe('failed')
+    expect(row.error).toContain('unavailable lines')
+    expect(calls).toEqual(['@cf/meta/llama-4-scout-17b-16e-instruct'])
   })
 
   it('rejects an unclosed think block without exposing its content', async () => {
