@@ -160,7 +160,7 @@ describe('judging AI runtime contract', () => {
     const recordQueries = database.queries.filter(query => query.includes('FROM judging_records'))
     expect(recordQueries).toHaveLength(2)
     expect(recordQueries.some(query => query.includes('record_key IN (?, ?)'))).toBe(true)
-    expect(recordQueries.some(query => query.includes("json_extract(data_json, '$.teamId') = ?"))).toBe(true)
+    expect(recordQueries.some(query => query.includes('json_extract(data_json, \'$.teamId\') = ?'))).toBe(true)
   })
 
   it('uses a bounded JSON-generation request and leaves the next job queued for a fresh poll', async () => {
