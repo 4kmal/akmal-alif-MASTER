@@ -144,6 +144,7 @@ describe('judgingWorkspace save behavior', () => {
     app?.unmount()
     app = null
     host.remove()
+    vi.restoreAllMocks()
     globalThis.fetch = originalFetch
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: originalOnline })
     vi.useRealTimers()
@@ -189,7 +190,7 @@ describe('judgingWorkspace save behavior', () => {
     expect(recordCalls[1].body?.mutationId).not.toBe(recordCalls[0].body?.mutationId)
   })
 
-  it('reuses a mutation id after an unknown save outcome so retry remains idempotent', async () => {
+  it('retries a lost acknowledgement identically before sending the newer draft with a fresh mutation', async () => {
     delayedFirstSave = false
     let unknownOutcome = true
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -205,7 +206,8 @@ describe('judgingWorkspace save behavior', () => {
           unknownOutcome = false
           throw new TypeError('network disconnected after request')
         }
-        return jsonResponse({ key: body.key, version: 1, data: body.data, updatedAt: '2026-10-28T00:00:01.000Z' })
+        const version = fetchCalls.filter(call => call.url.endsWith('/records')).length
+        return jsonResponse({ key: body.key, version, data: body.data, updatedAt: `2026-10-28T00:00:0${version}.000Z` })
       }
       return jsonResponse({})
     }) as typeof fetch
@@ -213,19 +215,34 @@ describe('judgingWorkspace save behavior', () => {
     mountLocal()
     await settle()
     const input = nameInput(host)
-    setInput(input, 'Retry me')
+    setInput(input, 'First payload')
     await nextTick()
     await vi.advanceTimersByTimeAsync(2_000)
     await settle()
+    const persistedAfterLostAck = JSON.parse(localStorage.getItem('sdc-judging-drafts-v1') ?? '{}').judge
+    expect(persistedAfterLostAck.pendingMutationId).toBeTruthy()
+    expect(persistedAfterLostAck.pendingData.name).toBe('First payload')
 
-    setInput(input, 'Retry me with another edit')
+    setInput(input, 'Newer visible draft')
     await nextTick()
     await vi.advanceTimersByTimeAsync(2_000)
     await settle()
 
     const recordCalls = fetchCalls.filter(call => call.url.endsWith('/records'))
     expect(recordCalls).toHaveLength(2)
+    expect(recordCalls[1].body?.data?.name).toBe('First payload')
+    expect(recordCalls[1].body?.baseVersion).toBe(recordCalls[0].body?.baseVersion)
+    expect(recordCalls[1].body?.data).toEqual(recordCalls[0].body?.data)
     expect(recordCalls[1].body?.mutationId).toBe(recordCalls[0].body?.mutationId)
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    await settle()
+    const finalRecordCalls = fetchCalls.filter(call => call.url.endsWith('/records'))
+    expect(finalRecordCalls).toHaveLength(3)
+    expect(finalRecordCalls[2].body?.data?.name).toBe('Newer visible draft')
+    expect(finalRecordCalls[2].body?.mutationId).not.toBe(finalRecordCalls[1].body?.mutationId)
+    expect(input.value).toBe('Newer visible draft')
+    expect(JSON.parse(localStorage.getItem('sdc-judging-drafts-v1') ?? '{}').judge).toBeUndefined()
   })
 
   it('posts local autosaves while the browser reports offline', async () => {
@@ -450,16 +467,32 @@ describe('judgingWorkspace save behavior', () => {
     await settle()
     const score = host.querySelector<HTMLInputElement>('input[aria-label="Innovation & Creativity score out of 100"]')
     expect(score).toBeTruthy()
+    score?.focus()
     setInput(score!, '80')
     await nextTick()
     await vi.advanceTimersByTimeAsync(2_000)
     await settle()
 
-    expect(host.querySelector('[role="dialog"]')).toBeTruthy()
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]')
+    expect(dialog).toBeTruthy()
     expect(host.querySelector('button[aria-label="Close conflict dialog"]')).toBeNull()
-    host.querySelector('[role="dialog"]')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(document.activeElement).toBe(dialog)
+    const choices = [...dialog!.querySelectorAll<HTMLButtonElement>('button')]
+    expect(choices).toHaveLength(2)
+    choices[0]?.focus()
+    choices[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(document.activeElement).toBe(choices[1])
+    choices[1]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    expect(document.activeElement).toBe(choices[0])
+    choices[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }))
+    expect(document.activeElement).toBe(choices[1])
+    dialog?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await nextTick()
     expect(host.querySelector('[role="dialog"]')).toBeTruthy()
+    choices[1]?.click()
+    await settle()
+    expect(document.activeElement).toBe(score)
   })
 
   it('persists a captured evidence link in timestamped notes without approving marks', async () => {
@@ -535,6 +568,22 @@ describe('judgingWorkspace save behavior', () => {
     mountAdmin()
     await settle()
     expect(fetchCalls.some(call => call.url.endsWith('/sync/status'))).toBe(false)
+  })
+
+  it('invokes the draft export URL when no edits are pending', async () => {
+    delayedFirstSave = false
+    mountLocal()
+    await settle()
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const append = vi.spyOn(document.body, 'appendChild')
+    const draft = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Draft XLSX'))
+    expect(draft).toBeTruthy()
+    draft?.click()
+    await settle()
+
+    const anchor = append.mock.calls.map(call => call[0]).find(element => element instanceof HTMLAnchorElement) as HTMLAnchorElement | undefined
+    expect(click).toHaveBeenCalled()
+    expect(anchor?.getAttribute('href')).toBe('/api/local/exports?final=0')
   })
 
   it('uses the owner DELETE device route when revoking a station', async () => {

@@ -198,6 +198,17 @@ interface BrowserDraft {
   baseVersion: number
   data: Record<string, any>
   updatedAt: string
+  pendingMutationId?: string
+  pendingBaseVersion?: number
+  pendingData?: Record<string, any>
+  pendingGeneration?: number
+}
+
+interface PendingSaveSnapshot {
+  mutationId: string
+  baseVersion: number
+  data: Record<string, any>
+  generation: number
 }
 
 interface CanonicalFeature {
@@ -265,6 +276,7 @@ const dirtyKeys = reactive(new Set<string>())
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const inflightSaves = new Map<string, Promise<void>>()
 const mutationIds = new Map<string, string>()
+const pendingSnapshots = new Map<string, PendingSaveSnapshot>()
 const draftGenerations = reactive<Record<string, number>>({})
 const browserDrafts = reactive<Record<string, BrowserDraft>>({})
 const recoveredDraftKeys = new Set<string>()
@@ -293,6 +305,7 @@ const sortDescending = ref(false)
 const theme = ref<'system' | 'light' | 'dark'>('system')
 const conflict = ref<ConflictState | null>(null)
 const conflictDialog = ref<HTMLDivElement | null>(null)
+const previousConflictFocus = ref<HTMLElement | null>(null)
 const evidenceLoading = ref(false)
 const evidenceError = ref('')
 const evidencePayload = ref<EvidenceItem | null>(null)
@@ -976,11 +989,18 @@ function readBrowserDraftStore() {
       const data = item.data && typeof item.data === 'object' && !Array.isArray(item.data) ? item.data as Record<string, any> : null
       if (!isBrowserDraftKey(key) || baseVersion === null || !data)
         continue
+      const pendingMutationId = typeof item.pendingMutationId === 'string' && item.pendingMutationId ? item.pendingMutationId : undefined
+      const pendingBaseVersion = typeof item.pendingBaseVersion === 'number' && Number.isSafeInteger(item.pendingBaseVersion) && item.pendingBaseVersion >= 0 ? item.pendingBaseVersion : undefined
+      const pendingData = item.pendingData && typeof item.pendingData === 'object' && !Array.isArray(item.pendingData) ? item.pendingData as Record<string, any> : undefined
+      const pendingGeneration = typeof item.pendingGeneration === 'number' && Number.isSafeInteger(item.pendingGeneration) && item.pendingGeneration >= 0 ? item.pendingGeneration : undefined
       drafts[key] = {
         key,
         baseVersion,
         data,
         updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
+        ...(pendingMutationId && pendingBaseVersion !== undefined && pendingData
+          ? { pendingMutationId, pendingBaseVersion, pendingData, pendingGeneration }
+          : {}),
       }
     }
     return drafts
@@ -999,6 +1019,10 @@ function writeBrowserDraftStore() {
       baseVersion: draft.baseVersion,
       data: draft.data,
       updatedAt: draft.updatedAt,
+      pendingMutationId: draft.pendingMutationId,
+      pendingBaseVersion: draft.pendingBaseVersion,
+      pendingData: draft.pendingData,
+      pendingGeneration: draft.pendingGeneration,
     }])) as Record<string, BrowserDraft>
     let serialized = JSON.stringify(entries)
     if (serialized.length > MAX_DRAFT_BYTES) {
@@ -1019,11 +1043,20 @@ function persistBrowserDraft(key: string) {
   if (!props.local || !isBrowserDraftKey(key))
     return
   try {
+    const pending = pendingSnapshots.get(key)
     browserDrafts[key] = {
       key,
       baseVersion: versions[key] ?? 0,
       data: cloneRecordData(recordDataForKey(key)),
       updatedAt: new Date().toISOString(),
+      ...(pending
+        ? {
+            pendingMutationId: pending.mutationId,
+            pendingBaseVersion: pending.baseVersion,
+            pendingData: cloneRecordData(pending.data),
+            pendingGeneration: pending.generation,
+          }
+        : {}),
     }
     writeBrowserDraftStore()
   }
@@ -1035,12 +1068,26 @@ function persistBrowserDraft(key: string) {
 function clearBrowserDraft(key: string) {
   if (!props.local)
     return
+  pendingSnapshots.delete(key)
   delete browserDrafts[key]
   writeBrowserDraftStore()
 }
 
 function loadBrowserDrafts() {
-  for (const [key, draft] of Object.entries(readBrowserDraftStore())) browserDrafts[key] = draft
+  for (const [key, draft] of Object.entries(readBrowserDraftStore())) {
+    browserDrafts[key] = draft
+    if (draft.pendingMutationId && draft.pendingBaseVersion !== undefined && draft.pendingData) {
+      // Generations are session-local. Recovering the visible draft below will
+      // create a new generation, so this snapshot is treated as older.
+      pendingSnapshots.set(key, {
+        mutationId: draft.pendingMutationId,
+        baseVersion: draft.pendingBaseVersion,
+        data: cloneRecordData(draft.pendingData),
+        generation: 0,
+      })
+      mutationIds.set(key, draft.pendingMutationId)
+    }
+  }
   const count = Object.keys(browserDrafts).length
   if (count)
     recoveryMessage.value = `${count} unsaved browser draft${count === 1 ? '' : 's'} found. They will be recovered against the current record.`
@@ -1159,15 +1206,19 @@ async function saveRecordOnce(key: string) {
     return
   }
   syncState.value = 'pending'
-  const generation = draftGenerations[key] ?? 0
-  const baseVersion = versions[key] ?? 0
-  const data = cloneRecordData(recordDataForKey(key))
-  const mutationId = mutationIds.get(key) ?? randomId()
-  mutationIds.set(key, mutationId)
+  const pending = pendingSnapshots.get(key)
+  const generation = pending?.generation ?? draftGenerations[key] ?? 0
+  const baseVersion = pending?.baseVersion ?? versions[key] ?? 0
+  const data = pending ? cloneRecordData(pending.data) : cloneRecordData(recordDataForKey(key))
+  const mutationId = pending?.mutationId ?? mutationIds.get(key) ?? randomId()
   try {
-    const validation = validateRecord(key, data)
-    if (validation === false)
+    if (validateRecord(key, data) === false)
       throw new Error(`Record ${key} failed validation.`)
+    if (!pending) {
+      pendingSnapshots.set(key, { mutationId, baseVersion, data: cloneRecordData(data), generation })
+      persistBrowserDraft(key)
+    }
+    mutationIds.set(key, mutationId)
     const response = await fetch(`${props.apiBase}/records`, {
       method: 'POST',
       credentials: 'include',
@@ -1205,6 +1256,7 @@ async function saveRecordOnce(key: string) {
     if (!saved)
       throw new Error('Save response did not contain a record.')
     const newerEdits = (draftGenerations[key] ?? 0) !== generation
+    pendingSnapshots.delete(key)
     records[key] = saved
     versions[key] = saved.version
     if (!newerEdits)
@@ -1265,6 +1317,7 @@ async function resolveConflict(choice: 'local' | 'remote') {
     applyRecord(current)
     conflict.value = null
     dirtyKeys.delete(key)
+    pendingSnapshots.delete(key)
     mutationIds.delete(key)
     clearBrowserDraft(key)
     syncState.value = dirtyKeys.size ? 'pending' : 'synced'
@@ -1277,6 +1330,8 @@ async function resolveConflict(choice: 'local' | 'remote') {
   }
   versions[key] = current.version
   conflict.value = null
+  pendingSnapshots.delete(key)
+  mutationIds.delete(key)
   dirtyKeys.add(key)
   syncState.value = 'pending'
   await saveRecord(key)
@@ -1316,6 +1371,26 @@ function handleTabKeydown(event: KeyboardEvent, currentTab: WorkspaceTab) {
   activeTab.value = nextTab
   const tabList = event.currentTarget instanceof HTMLElement ? event.currentTarget.closest('[role="tablist"]') : null
   void nextTick(() => tabList?.querySelector<HTMLElement>(`[data-workbench-tab="${nextTab}"]`)?.focus())
+}
+
+function handleConflictKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Tab')
+    return
+  const dialog = conflictDialog.value
+  if (!dialog)
+    return
+  const focusable = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+  if (!focusable.length) {
+    event.preventDefault()
+    dialog.focus()
+    return
+  }
+  const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
+  event.preventDefault()
+  const nextIndex = event.shiftKey
+    ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
+    : currentIndex < 0 || currentIndex === focusable.length - 1 ? 0 : currentIndex + 1
+  focusable[nextIndex]?.focus()
 }
 
 function setScore(index: number, event: Event) {
@@ -1919,6 +1994,24 @@ watch(() => props.apiBase, () => {
   stateCursor.value = null
   void fetchState()
 })
+watch(conflict, (nextConflict, previousConflict) => {
+  if (nextConflict) {
+    if (!previousConflict && typeof document !== 'undefined') {
+      const active = document.activeElement
+      previousConflictFocus.value = active instanceof HTMLElement && active !== document.body ? active : null
+    }
+    void nextTick(() => conflictDialog.value?.focus())
+    return
+  }
+  if (!previousConflict)
+    return
+  const target = previousConflictFocus.value
+  previousConflictFocus.value = null
+  void nextTick(() => {
+    if (target?.isConnected)
+      target.focus()
+  })
+})
 watch(selectedTeamId, () => {
   evidencePayload.value = null
   evidenceError.value = ''
@@ -1951,6 +2044,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('offline', handleOffline)
   document.removeEventListener('visibilitychange', handleVisibility)
   for (const timer of saveTimers.values()) clearTimeout(timer)
+  pendingSnapshots.clear()
+  mutationIds.clear()
 })
 </script>
 
@@ -2662,7 +2757,7 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
-    <div v-if="conflict" ref="conflictDialog" class="modal-scrim" role="dialog" aria-modal="true" aria-labelledby="conflict-title" tabindex="-1">
+    <div v-if="conflict" ref="conflictDialog" class="modal-scrim" role="dialog" aria-modal="true" aria-labelledby="conflict-title" tabindex="-1" @keydown="handleConflictKeydown">
       <div class="conflict-dialog">
         <div class="eyebrow">
           Version conflict
