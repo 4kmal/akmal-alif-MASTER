@@ -37,6 +37,7 @@ import {
   ASSIGNMENT as SHARED_ASSIGNMENT,
   CRITERIA,
   DOMAIN,
+  FEATURES,
   FEATURE_COUNT,
   JUDGE_NAME,
   TEAMS,
@@ -140,6 +141,7 @@ interface AssessmentJob {
   id: string
   teamId: string
   status: string
+  stale: boolean
   progress?: number
   message?: string
   suggestedScores?: Array<number | null>
@@ -192,14 +194,12 @@ interface BrowserDraft {
 }
 
 const DEADLINE_ISO = '2026-10-28T08:00:00+08:00'
-const FEATURE_LABELS = Object.freeze([
-  'Profiles',
-  'Trends',
-  'Matching',
-  'Reskilling',
-  'SDG alignment',
-  'Scenarios',
-])
+const canonicalFeatureDefinitions = Object.freeze(FEATURES
+  .slice(0, FEATURE_COUNT)
+  .map((feature: any, index: number) => typeof feature === 'string'
+    ? { id: feature, label: feature }
+    : { id: String(feature.id ?? feature.name ?? `feature-${index + 1}`), label: String(feature.label ?? feature.name ?? feature.id ?? `Feature ${index + 1}`) }))
+const canonicalFeatureLabels = Object.freeze(canonicalFeatureDefinitions.map(feature => feature.label))
 
 const canonicalTeams = TEAMS as unknown as Team[]
 const canonicalCriteria = CRITERIA.map(criterion => ({ ...criterion }))
@@ -283,7 +283,23 @@ const evidenceRecords = computed(() => Object.values(records)
   .filter(record => record.key.startsWith('evidence:'))
   .map(record => ({ ...normalizeEvidence({ ...record.data, id: record.data?.id ?? record.key.slice('evidence:'.length) }), updatedAt: record.updatedAt }))
   .filter(item => item.id))
-const selectedTeamEvidence = computed(() => evidenceRecords.value.filter(item => item.teamId === selectedTeamId.value))
+const selectedTeamEvidence = computed(() => evidenceRecords.value
+  .filter(item => item.teamId === selectedTeamId.value)
+  .sort(compareEvidence))
+const evidenceSearch = ref('')
+const filteredSelectedTeamEvidence = computed(() => {
+  const query = evidenceSearch.value.trim().toLowerCase()
+  if (!query) return selectedTeamEvidence.value
+  return selectedTeamEvidence.value.filter(item => evidenceSearchText(item).includes(query))
+})
+const visibleSelectedTeamEvidence = computed(() => {
+  const visible = filteredSelectedTeamEvidence.value
+  const selectedId = selectedEvidenceId.value
+  const readSelected = selectedId && evidencePayload.value?.id === selectedId
+  if (!readSelected || visible.some(item => item.id === selectedId)) return visible
+  const selected = selectedTeamEvidence.value.find(item => item.id === selectedId)
+  return selected ? [...visible, selected] : visible
+})
 const selectedEvidence = computed(() => evidencePayload.value
   ?? selectedTeamEvidence.value.find(item => item.id === selectedEvidenceId.value)
   ?? selectedTeamEvidence.value[0]
@@ -369,7 +385,7 @@ function normalizeAssignment(source: any): AssignmentData {
       label: String(criterion.label ?? canonicalCriteria[index].label),
       weight: criterion.weight,
     })),
-    features: [...FEATURE_LABELS],
+    features: [...canonicalFeatureLabels],
     teams: canonicalTeams.map(team => ({
       id: String(team.id),
       name: String(team.name),
@@ -412,7 +428,10 @@ function normalizeReview(source: any, teamId: string): ReviewData {
 }
 
 function normalizeFeatureStatus(value: any): FeatureStatus {
-  return value === 'present' || value === 'missing' ? value : 'unverified'
+  const candidate = value && typeof value === 'object'
+    ? value.status ?? value.value ?? value.state
+    : value
+  return candidate === 'present' || candidate === 'missing' ? candidate : 'unverified'
 }
 
 function normalizeRepoCheck(value: any): RepoCheck {
@@ -482,20 +501,32 @@ function normalizeAssessmentFeatures(value: any): AssessmentFeature[] {
     : value && typeof value === 'object'
       ? Object.entries(value).map(([feature, finding]) => ({ feature, ...(finding && typeof finding === 'object' ? finding : { note: finding }) }))
       : []
-  return FEATURE_LABELS.map((label, index) => {
+  return canonicalFeatureDefinitions.map(({ id, label }, index) => {
     const normalizedLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, '')
+    const normalizedId = id.toLowerCase().replace(/[^a-z0-9]+/g, '')
     const item = source.find((candidate: any) => {
       const candidateLabel = String(candidate?.label ?? candidate?.feature ?? candidate?.name ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
-      return candidateLabel === normalizedLabel || candidateLabel.includes(normalizedLabel) || normalizedLabel.includes(candidateLabel)
+      return candidateLabel === normalizedLabel
+        || candidateLabel === normalizedId
+        || candidateLabel.includes(normalizedLabel)
+        || normalizedLabel.includes(candidateLabel)
     }) ?? source[index]
     if (typeof item === 'string') return { label, status: 'unverified', proposal: 'unverified', demo: 'unverified', note: item }
-    const status = normalizeFeatureStatus(item?.status)
+    const statusValue = item?.status
+    const status = normalizeFeatureStatus(typeof statusValue === 'string' ? statusValue : item?.findingStatus ?? item?.evidenceStatus)
+    const proposal = item?.proposal
+      ?? item?.proposalStatus
+      ?? (statusValue && typeof statusValue === 'object' ? statusValue.proposal : undefined)
+      ?? (typeof statusValue === 'string' ? statusValue : undefined)
+    const demo = item?.demo
+      ?? item?.demoStatus
+      ?? (statusValue && typeof statusValue === 'object' ? statusValue.demo : undefined)
     return {
-      label: String(item?.label ?? item?.feature ?? item?.name ?? label),
+      label,
       status,
-      proposal: normalizeFeatureStatus(item?.proposal ?? item?.proposalStatus),
-      demo: normalizeFeatureStatus(item?.demo ?? item?.demoStatus),
-      note: String(item?.note ?? item?.finding ?? ''),
+      proposal: normalizeFeatureStatus(proposal),
+      demo: normalizeFeatureStatus(demo),
+      note: String(item?.note ?? item?.finding ?? (proposal && typeof proposal === 'object' ? proposal.note : '') ?? (demo && typeof demo === 'object' ? demo.note : '')),
     }
   })
 }
@@ -533,6 +564,7 @@ function normalizeAssessmentJob(source: any): AssessmentJob {
     id: String(value.id ?? value.jobId ?? randomId()),
     teamId: String(value.teamId ?? ''),
     status: String(value.status ?? 'queued'),
+    stale: value.stale === true || value.stale === 1 || value.stale === 'true' || result.stale === true || result.stale === 1 || result.stale === 'true',
     progress: Number.isFinite(Number(value.progress)) ? Number(value.progress) : undefined,
     message: value.message ? String(value.message) : undefined,
     suggestedScores: normalizeSuggestedScores(value),
@@ -560,6 +592,28 @@ function normalizeEvidence(source: any): EvidenceItem {
     sha256: value.sha256 ? String(value.sha256) : (value.hash ? String(value.hash) : undefined),
     observed: value.kind === 'link' ? false : Boolean(value.observed),
   }
+}
+
+function evidenceSearchText(item: EvidenceItem) {
+  return [item.title, item.path, item.kind, item.url, item.snapshotSha, item.sha256]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function evidencePriority(item: EvidenceItem) {
+  const pathOrTitle = `${item.path ?? ''} ${item.title}`.trim()
+  const basename = (item.path ?? item.title).split(/[\\/]/).pop() ?? item.title
+  if (/^readme(?:[._ -]|$)/i.test(basename) || /(^|[\\/])readme(?:[._ -]|$)/i.test(pathOrTitle)) return 0
+  if (item.kind === 'document' || /(proposal|pitch|deck|slide|document)/i.test(pathOrTitle) || /\.(?:pdf|docx?|pptx?)$/i.test(basename)) return 1
+  return 2
+}
+
+function compareEvidence(left: EvidenceItem, right: EvidenceItem) {
+  const priorityDifference = evidencePriority(left) - evidencePriority(right)
+  if (priorityDifference) return priorityDifference
+  const pathDifference = String(left.path ?? left.title).localeCompare(String(right.path ?? right.title), undefined, { numeric: true, sensitivity: 'base' })
+  return pathDifference || left.title.localeCompare(right.title, undefined, { numeric: true, sensitivity: 'base' }) || left.id.localeCompare(right.id)
 }
 
 function normalizeIntake(source: any): IntakeData | null {
@@ -1089,6 +1143,10 @@ function invalidateReviewApproval() {
 }
 
 function acceptAssessmentScores() {
+  if (selectedAssessment.value?.stale) {
+    assessmentMessage.value = 'This assessment is stale. Regenerate it before using its scores as a draft.'
+    return
+  }
   const suggestedScores = selectedAssessment.value?.suggestedScores
   if (!suggestedScores) return
   selectedReview.value.scores = suggestedScores.map(score => score === null ? null : clampScore(score))
@@ -1515,6 +1573,7 @@ watch(() => props.apiBase, () => {
 watch(selectedTeamId, () => {
   evidencePayload.value = null
   evidenceError.value = ''
+  evidenceSearch.value = ''
 })
 
 onMounted(() => {
@@ -1676,7 +1735,7 @@ onBeforeUnmount(() => {
           <div class="team-queue-list"><button v-for="team in filteredTeams" :key="team.id" type="button" :class="{ selected: selectedTeamId === team.id }" @click="selectTeam(team.id)"><span><strong>{{ team.name }}</strong><small>{{ team.id }}</small></span><span class="mini-score"><b>{{ formatScore(scoreFor(reviewDrafts[team.id])) }}</b><small>{{ statusLabel(reviewDrafts[team.id]) }}</small></span></button><p v-if="!filteredTeams.length" class="empty-copy">No teams match this view.</p></div>
         </section>
         <div class="panel-copy"><h3>Queue control</h3><p>Assessments are bounded to the nine assigned teams and remain visible while they run.</p><button class="secondary-button" type="button" @click="queueAllAssessments"><Send :size="15" aria-hidden="true" /> Queue all nine</button><p v-if="assessmentMessage" class="feedback" role="status">{{ assessmentMessage }}</p></div>
-        <div class="job-list"><div v-for="job in assessmentJobs" :key="job.id" class="job-row"><div><strong>{{ teamName(job.teamId) }}</strong><small>{{ job.message ?? job.status }}</small></div><div class="job-progress"><span>{{ job.progress ?? 0 }}%</span><span class="progress-track"><i :style="{ width: `${job.progress ?? 0}%` }" /></span></div><button v-if="['queued', 'running'].includes(job.status)" type="button" class="icon-button" aria-label="Cancel assessment" @click="cancelAssessment(job)"><X :size="15" aria-hidden="true" /></button></div><p v-if="!assessmentJobs.length" class="empty-copy">No assessment jobs queued.</p></div>
+        <div class="job-list"><div v-for="job in assessmentJobs" :key="job.id" class="job-row"><div><strong>{{ teamName(job.teamId) }}</strong><small>{{ job.message ?? job.status }}</small><span v-if="job.stale" class="stale-job-label">Stale draft · regenerate before use</span></div><div class="job-progress"><span>{{ job.progress ?? 0 }}%</span><span class="progress-track"><i :style="{ width: `${job.progress ?? 0}%` }" /></span></div><div class="job-actions"><button v-if="job.stale" type="button" class="secondary-button compact-button" @click="queueAssessment(job.teamId)">Regenerate</button><button v-if="['queued', 'running'].includes(job.status)" type="button" class="icon-button" aria-label="Cancel assessment" @click="cancelAssessment(job)"><X :size="15" aria-hidden="true" /></button></div></div><p v-if="!assessmentJobs.length" class="empty-copy">No assessment jobs queued.</p></div>
       </div>
       </div>
 
@@ -1686,8 +1745,10 @@ onBeforeUnmount(() => {
           <div class="panel-heading"><div><h3>Evidence</h3><p>Safe text only · source lines and PDF pages</p></div><button v-if="local" class="icon-button" type="button" aria-label="Run local intake" :disabled="intakeLoading" @click="startIntake"><RefreshCw :size="15" aria-hidden="true" /></button></div>
           <p v-if="intakeMessage" class="feedback" role="status">{{ intakeMessage }}</p>
           <p v-if="local && intakeProgress" class="feedback" role="status">Intake {{ intakeProgress.status ?? 'pending' }}<span v-if="intakeProgress.progress !== undefined"> · {{ intakeProgress.progress }}%</span></p>
-          <button v-for="item in selectedTeamEvidence" :key="item.id" type="button" class="evidence-item" :class="{ active: selectedEvidence?.id === item.id }" @click="loadEvidence(item)"><component :is="evidenceIcon(item.kind)" :size="16" aria-hidden="true" /><span><strong>{{ item.title }}</strong><small>{{ item.kind }}<span v-if="item.sha256 || item.snapshotSha"> · {{ (item.sha256 || item.snapshotSha)?.slice(0, 8) }}</span></small></span><ChevronRight :size="14" aria-hidden="true" /></button>
-          <p v-if="!selectedTeamEvidence.length" class="empty-copy">No evidence records for this team yet.</p>
+          <div class="evidence-toolbar"><label class="evidence-search"><Search :size="14" aria-hidden="true" /><span class="sr-only">Search current team evidence</span><input v-model="evidenceSearch" type="search" placeholder="Search this team’s evidence" aria-label="Search current team evidence" /></label><button v-if="evidenceSearch" class="icon-button" type="button" aria-label="Clear evidence search" @click="evidenceSearch = ''"><X :size="15" aria-hidden="true" /></button></div>
+          <p class="evidence-count" role="status">{{ filteredSelectedTeamEvidence.length }} of {{ selectedTeamEvidence.length }} evidence records</p>
+          <button v-for="item in visibleSelectedTeamEvidence" :key="item.id" type="button" class="evidence-item" :class="{ active: selectedEvidence?.id === item.id }" @click="loadEvidence(item)"><component :is="evidenceIcon(item.kind)" :size="16" aria-hidden="true" /><span><strong>{{ item.title }}</strong><small>{{ item.kind }}<span v-if="item.sha256 || item.snapshotSha"> · {{ (item.sha256 || item.snapshotSha)?.slice(0, 8) }}</span><span v-if="item.id === selectedEvidenceId && evidencePayload"> · selected</span></small></span><ChevronRight :size="14" aria-hidden="true" /></button>
+          <p v-if="!selectedTeamEvidence.length" class="empty-copy">No evidence records for this team yet.</p><p v-else-if="!visibleSelectedTeamEvidence.length" class="empty-copy">No evidence records match this search.</p>
         </aside>
         <article class="evidence-reader" aria-live="polite">
           <section v-if="selectedIntake" class="intake-summary" aria-labelledby="intake-summary-heading">
@@ -1714,7 +1775,7 @@ onBeforeUnmount(() => {
           <div class="panel-heading"><div><h3>Weighted scoring</h3><p>Scores stay decimal precise. Blank is different from zero.</p></div><strong class="large-score">{{ formatScore(selectedScore) }}<small>/100</small></strong></div>
           <div class="criteria-grid"><label v-for="(criterion, index) in criteria" :key="criterion.id" class="score-field"><span>{{ criterion.label }} <small>{{ Math.round(criterion.weight * 100) }}%</small></span><input :value="selectedReview.scores[index] === null ? '' : selectedReview.scores[index]" type="number" min="0" max="100" step="0.1" inputmode="decimal" :aria-label="`${criterion.label} score out of 100`" placeholder="—" @input="setScore(index, $event)" /><em>/100</em></label></div>
           <section v-if="selectedAssessment" class="ai-suggestion" aria-labelledby="ai-suggestion-heading">
-            <div class="panel-heading"><div><h4 id="ai-suggestion-heading">AI assessment suggestion</h4><p>Suggestions stay separate from the judge’s scores until explicitly copied as a draft.</p></div><button class="secondary-button" type="button" @click="acceptAssessmentScores">Use as draft</button></div>
+            <div class="panel-heading"><div><h4 id="ai-suggestion-heading">AI assessment suggestion</h4><p>Suggestions stay separate from the judge’s scores until explicitly copied as a draft.</p><p v-if="selectedAssessment.stale" class="stale-copy">This result is stale. Regenerate the assessment before using it as a draft.</p></div><button class="secondary-button" type="button" :disabled="selectedAssessment.stale" :title="selectedAssessment.stale ? 'Regenerate this stale assessment before using its scores' : undefined" @click="acceptAssessmentScores">{{ selectedAssessment.stale ? 'Stale · regenerate' : 'Use as draft' }}</button></div>
             <div v-if="selectedAssessment.suggestedScores?.length" class="ai-score-list"><span v-for="(score, index) in selectedAssessment.suggestedScores" :key="criteria[index].id"><strong>{{ criteria[index].label }}</strong><em>{{ formatScore(score) }}/100</em></span></div>
             <div class="ai-detail-grid">
               <div><h4>Strengths</h4><ul v-if="selectedAssessment.strengths.length"><li v-for="strength in selectedAssessment.strengths" :key="strength">{{ strength }}</li></ul><p v-else class="empty-copy">No strengths recorded.</p></div>
@@ -1950,6 +2011,10 @@ h4 { font-size: 0.78rem; }
 .job-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(8rem, 0.45fr) auto; align-items: center; gap: 0.6rem; border: 1px solid var(--judge-border); background: var(--judge-surface-raised); padding: 0.55rem 0.65rem; }
 .job-row strong, .job-row small { display: block; }
 .job-row small { color: var(--judge-muted); font-size: 0.69rem; }
+.job-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem; }
+.compact-button { min-height: 2rem; padding: 0.3rem 0.55rem; font-size: 0.67rem; }
+.stale-job-label, .stale-copy { display: block; color: var(--judge-yellow-ink); font-size: 0.67rem; font-weight: 750; }
+.ai-suggestion .stale-copy { color: var(--judge-yellow-ink); }
 .job-progress { display: flex; align-items: center; gap: 0.45rem; color: var(--judge-muted); font-size: 0.67rem; }
 .progress-track { flex: 1; height: 0.4rem; }
 .feedback { color: var(--judge-muted); font-size: 0.72rem; }
@@ -1958,6 +2023,11 @@ h4 { font-size: 0.78rem; }
 .evidence-list { min-width: 0; border-right: 1px solid var(--judge-border); padding-right: 0.85rem; }
 .evidence-list .panel-heading { align-items: flex-start; margin-bottom: 0.55rem; }
 .evidence-list .panel-heading p { margin-top: 0.2rem; color: var(--judge-muted); font-size: 0.68rem; }
+.evidence-toolbar { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.25rem; }
+.evidence-search { display: flex; align-items: center; gap: 0.35rem; min-width: 0; flex: 1 1 auto; border: 1px solid var(--judge-border); background: var(--judge-surface-raised); padding: 0 0.45rem; color: var(--judge-muted); }
+.evidence-search input { min-width: 0; border: 0; background: transparent; padding: 0.45rem 0.1rem; }
+.evidence-search input:focus { outline: 0; }
+.evidence-count { margin: 0 0 0.35rem; color: var(--judge-muted); font-size: 0.64rem; }
 .evidence-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.45rem; width: 100%; border: 1px solid transparent; background: transparent; color: var(--judge-text); padding: 0.55rem; text-align: left; cursor: pointer; }
 .evidence-item:hover, .evidence-item.active { border-color: var(--judge-border); background: color-mix(in srgb, var(--judge-yellow) 10%, var(--judge-surface)); }
 .evidence-item strong, .evidence-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

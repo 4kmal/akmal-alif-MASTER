@@ -6,6 +6,7 @@ import {
   ASSIGNMENT,
   CRITERIA,
   DOMAIN,
+  FEATURES,
   JUDGE_NAME,
   TEAM_IDS,
   calculateReviews,
@@ -69,7 +70,9 @@ describe('SDC judging workspace UI contract', () => {
     expect(workspace).toContain("todayInTimezone('Asia/Kuala_Lumpur')")
     for (const inventedDomain of ['Domain 1 · Digital fluency', 'Domain 2 · Future skills', 'Domain 3 · Community impact']) expect(workspace).not.toContain(inventedDomain)
     expect(TEAM_IDS).toHaveLength(9)
-    for (const feature of ['Profiles', 'Trends', 'Matching', 'Reskilling', 'SDG alignment', 'Scenarios']) expect(workspace).toContain(feature)
+    expect(FEATURES).toHaveLength(6)
+    expect(workspace).toContain('FEATURES')
+    expect(workspace).toContain('canonicalFeatureDefinitions')
     expect(workspace).not.toContain('FALLBACK_FEATURES')
     expect(workspace).not.toContain('Human judgement')
     expect(workspace).not.toContain('Problem framing')
