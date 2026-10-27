@@ -7,8 +7,13 @@ declare module 'pdfjs-dist/build/pdf.mjs' {
   interface Document {
     numPages: number
     getPage: (pageNumber: number) => Promise<Page>
-    destroy: () => Promise<void>
+    cleanup?: () => Promise<void> | void
+    destroy?: () => Promise<void> | void
+  }
+  interface LoadingTask {
+    promise: Promise<Document>
+    destroy?: () => Promise<void> | void
   }
   export const GlobalWorkerOptions: { workerSrc: string }
-  export function getDocument(options: { data: ArrayBuffer }): { promise: Promise<Document> }
+  export function getDocument(options: { data: ArrayBuffer }): LoadingTask
 }

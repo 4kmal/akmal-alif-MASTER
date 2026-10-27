@@ -18,12 +18,14 @@ import type {
   GallerySourceUpload,
   GalleryUploadPart,
 } from '@/utils/content-calendar'
+import { useAPI } from '@/utils/api'
 import { gallerySummaryFromManifest, normalizeCalendarEvent, normalizeCalendarSettings, normalizeGalleryManifest, toCalendarApiPayload } from '@/utils/content-calendar'
 
 type DraftPayload = Omit<BlogDraft, 'version' | 'updated_at'> & { version: number }
 
 export function useBlogApi() {
   const base = '/api/admin/blog'
+  const calendarBase = '/api/admin/calendar'
 
   return {
     listPosts: () => useAPI<{ posts: BlogPostSummary[] }>(`${base}/posts`),
@@ -42,10 +44,10 @@ export function useBlogApi() {
     getSettings: () => useAPI<BlogSettings>(`${base}/settings`),
     saveSettings: (settings: BlogSettings) => useAPI<BlogSettings>(`${base}/settings`, { method: 'PUT', body: settings }),
     listMedia: () => useAPI<{ assets: BlogAsset[], projects: BlogMediaProject[] }>(`${base}/media`),
-    startUpload: (payload: { filename: string, mime_type: string, size: number, width?: number, height?: number, duration_ms?: number, derived_from?: string[] }) => useAPI<{ asset: BlogAsset, upload: BlogMediaUpload }>(`${base}/media/uploads`, { method: 'POST', body: payload }),
+    startUpload: (payload: { filename: string, mime_type: string, size: number, width?: number, height?: number, duration_ms?: number, derived_from?: string[] }, signal?: AbortSignal) => useAPI<{ asset: BlogAsset, upload: BlogMediaUpload }>(`${base}/media/uploads`, { method: 'POST', body: payload, signal }),
     getUpload: (id: string) => useAPI<{ upload: BlogMediaUpload }>(`${base}/media/uploads/${encodeURIComponent(id)}`),
     putUploadPart: (id: string, part: number, body: Blob, signal?: AbortSignal) => useAPI<{ part_number: number, etag: string }>(`${base}/media/uploads/${encodeURIComponent(id)}/parts/${part}`, { method: 'PUT', body, signal }),
-    completeUpload: (id: string, parts: { part_number: number, etag: string }[]) => useAPI<{ asset: BlogAsset }>(`${base}/media/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST', body: { parts } }),
+    completeUpload: (id: string, parts: { part_number: number, etag: string }[], signal?: AbortSignal) => useAPI<{ asset: BlogAsset }>(`${base}/media/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST', body: { parts }, signal }),
     abortUpload: (id: string) => useAPI<{ aborted: true }>(`${base}/media/uploads/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     createProject: (payload: { title: string, document: unknown }) => useAPI<{ project: BlogMediaProject }>(`${base}/media/projects`, { method: 'POST', body: payload }),
     updateProject: (id: string, payload: { version: number, title: string, document: unknown }) => useAPI<{ project: BlogMediaProject }>(`${base}/media/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }),
@@ -62,45 +64,24 @@ export function useBlogApi() {
     finalizeGallery: async (id: string, payload: { version: number }) => normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(id)}/finalize`, { method: 'POST', body: payload })),
     updateGalleryPage: async (galleryId: string, pageId: string, payload: { version: number, page: { original_page: number, title?: string | null, caption?: string | null, order: number, visible: boolean, asset_id: string, thumbnail_asset_id: string } }) => normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(galleryId)}/pages/${encodeURIComponent(pageId)}`, { method: 'PUT', body: payload })),
     reorderGalleryPages: async (galleryId: string, payload: { version: number, page_ids: string[] }) => normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(galleryId)}/pages/reorder`, { method: 'PUT', body: payload })),
-    listGalleryRevisions: async (id: string) => {
-      try {
-        return await useAPI<{ revisions: GalleryRevisionSummary[] }>(`${base}/galleries/${encodeURIComponent(id)}/revisions`)
-      }
-      catch {
-        // Older backend revisions expose the current immutable manifest only.
-      }
-      const gallery = await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(id)}`)
-      const normalized = normalizeGalleryManifest(gallery)
-      const manifest = normalized.manifest
-      const revisions: GalleryRevisionSummary[] = manifest
-        ? [{ id: manifest.id, revision: manifest.revision, status: 'finalized', title: manifest.title, page_count: manifest.pages.length, created_at: manifest.created_at, finalized_at: normalized.finalized_at }]
-        : []
-      return { revisions }
-    },
-    getGalleryRevision: async (id: string, revision: string | number) => {
-      try {
-        return normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(id)}/revisions/${encodeURIComponent(String(revision))}`))
-      }
-      catch {
-        return normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(id)}`))
-      }
-    },
+    listGalleryRevisions: (id: string) => useAPI<{ revisions: GalleryRevisionSummary[] }>(`${base}/galleries/${encodeURIComponent(id)}/revisions`),
+    getGalleryRevision: async (id: string, revision: string | number) => normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(id)}/revisions/${encodeURIComponent(String(revision))}`)),
     startGallerySourceUpload: (galleryId: string, payload: { version: number, filename: string, mime_type: string, size: number, page_count?: number | null }) => useAPI<{ source: GallerySourceUpload, upload: GallerySourceUpload, version: number }>(`${base}/galleries/${encodeURIComponent(galleryId)}/source`, { method: 'POST', body: payload }),
     getGallerySourceUpload: (_galleryId: string, uploadId: string) => useAPI<{ source: GallerySourceUpload, upload: GallerySourceUpload }>(`${base}/galleries/source-uploads/${encodeURIComponent(uploadId)}`),
     putGallerySourcePart: (_galleryId: string, uploadId: string, part: number, body: Blob, signal?: AbortSignal) => useAPI<{ part_number: number, etag: string }>(`${base}/galleries/source-uploads/${encodeURIComponent(uploadId)}/parts/${part}`, { method: 'PUT', body, signal }),
-    completeGallerySourceUpload: (_galleryId: string, uploadId: string, parts: GalleryUploadPart[]) => useAPI<{ source: GallerySourceUpload }>(`${base}/galleries/source-uploads/${encodeURIComponent(uploadId)}/complete`, { method: 'POST', body: { parts } }),
+    completeGallerySourceUpload: (_galleryId: string, uploadId: string, parts: GalleryUploadPart[], signal?: AbortSignal) => useAPI<{ source: GallerySourceUpload }>(`${base}/galleries/source-uploads/${encodeURIComponent(uploadId)}/complete`, { method: 'POST', body: { parts }, signal }),
     abortGallerySourceUpload: (_galleryId: string, uploadId: string) => useAPI<{ aborted: true }>(`${base}/galleries/source-uploads/${encodeURIComponent(uploadId)}`, { method: 'DELETE' }),
-    attachGalleryPage: async (galleryId: string, payload: { version: number, page: { original_page: number, title?: string | null, caption?: string | null, order: number, visible: boolean, asset_id: string, thumbnail_asset_id: string } }) => normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(galleryId)}/pages`, { method: 'POST', body: payload })),
+    attachGalleryPage: async (galleryId: string, payload: { version: number, page: { original_page: number, title?: string | null, caption?: string | null, order: number, visible: boolean, asset_id: string, thumbnail_asset_id: string } }, signal?: AbortSignal) => normalizeGalleryManifest(await useAPI<GalleryDetailDto>(`${base}/galleries/${encodeURIComponent(galleryId)}/pages`, { method: 'POST', body: payload, signal })),
     listCalendarEvents: async (params?: { include_archived?: boolean, from?: string, to?: string }) => {
       const query = params ? `?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))}` : ''
-      const response = await useAPI<{ events: CalendarEvent[] }>(`${base}/calendar/events${query}`)
+      const response = await useAPI<{ events: CalendarEvent[] }>(`${calendarBase}/events${query}`)
       return { events: response.events.map(event => normalizeCalendarEvent(event)) }
     },
-    createCalendarEvent: async (payload: CalendarEventInput) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${base}/calendar/events`, { method: 'POST', body: toCalendarApiPayload(payload) })),
-    getCalendarEvent: async (id: string) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${base}/calendar/events/${encodeURIComponent(id)}`)),
-    updateCalendarEvent: async (id: string, payload: CalendarEventInput & { version: number }) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${base}/calendar/events/${encodeURIComponent(id)}`, { method: 'PUT', body: { ...toCalendarApiPayload(payload), version: payload.version } })),
-    setCalendarEventStatus: async (id: string, status: 'active' | 'archived', version: number) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${base}/calendar/events/${encodeURIComponent(id)}/status`, { method: 'POST', body: { version, status: status === 'archived' ? 'archive' : 'restore' } })),
-    getCalendarSettings: async () => normalizeCalendarSettings(await useAPI<{ settings: CalendarSettings }>(`${base}/calendar/settings`)),
-    saveCalendarSettings: async (payload: CalendarSettings) => normalizeCalendarSettings(await useAPI<{ settings: CalendarSettings }>(`${base}/calendar/settings`, { method: 'PUT', body: payload })),
+    createCalendarEvent: async (payload: CalendarEventInput) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${calendarBase}/events`, { method: 'POST', body: toCalendarApiPayload(payload) })),
+    getCalendarEvent: async (id: string) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${calendarBase}/events/${encodeURIComponent(id)}`)),
+    updateCalendarEvent: async (id: string, payload: CalendarEventInput & { version: number }) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${calendarBase}/events/${encodeURIComponent(id)}`, { method: 'PUT', body: { ...toCalendarApiPayload(payload), version: payload.version } })),
+    setCalendarEventStatus: async (id: string, status: 'active' | 'archived', version: number) => normalizeCalendarEvent(await useAPI<{ event: CalendarEvent }>(`${calendarBase}/events/${encodeURIComponent(id)}/status`, { method: 'POST', body: { version, status: status === 'archived' ? 'archive' : 'restore' } })),
+    getCalendarSettings: async () => normalizeCalendarSettings(await useAPI<{ settings: CalendarSettings }>(`${calendarBase}/settings`)),
+    saveCalendarSettings: async (payload: CalendarSettings) => normalizeCalendarSettings(await useAPI<{ settings: CalendarSettings }>(`${calendarBase}/settings`, { method: 'PUT', body: payload })),
   }
 }

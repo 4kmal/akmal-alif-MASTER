@@ -423,6 +423,10 @@ export function gallerySummaryFromManifest(value: GalleryManifest): GallerySumma
   }
 }
 
+export function galleryHasUnsavedChanges(title: string, savedTitle: string, orderDirty: boolean, pageMetadataDirty: boolean) {
+  return title.trim() !== savedTitle.trim() || orderDirty || pageMetadataDirty
+}
+
 export function validateGalleryPageCount(pageCount: number) {
   if (!Number.isInteger(pageCount) || pageCount < 1)
     throw new Error('The PDF did not report a valid page count.')

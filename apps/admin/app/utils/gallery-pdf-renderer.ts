@@ -86,7 +86,20 @@ export async function openGalleryPdfDocument(source: Blob | ArrayBuffer): Promis
   const pdfjs = await import('pdfjs-dist/build/pdf.mjs')
   pdfjs.GlobalWorkerOptions.workerSrc = '/admin/pdfjs/pdf.worker.mjs'
   const data = source instanceof Blob ? await source.arrayBuffer() : source
-  const pdfDocument = await pdfjs.getDocument({ data }).promise
+  const loadingTask = pdfjs.getDocument({ data })
+  let pdfDocument: Awaited<typeof loadingTask.promise>
+  try {
+    pdfDocument = await loadingTask.promise
+  }
+  catch (reason) {
+    try {
+      await loadingTask.destroy?.()
+    }
+    catch {
+      // Keep the PDF parse error as the primary failure.
+    }
+    throw reason
+  }
   let destroyed = false
 
   async function getPage(pageNumber: number) {
@@ -123,8 +136,21 @@ export async function openGalleryPdfDocument(source: Blob | ArrayBuffer): Promis
       if (destroyed)
         return
       destroyed = true
-      await (pdfDocument as { cleanup?: () => Promise<void> | void }).cleanup?.()
-      await pdfDocument.destroy()
+      try {
+        await (pdfDocument as { cleanup?: () => Promise<void> | void }).cleanup?.()
+      }
+      catch {
+        // Cleanup is best effort and must not replace an import or render error.
+      }
+      try {
+        if (typeof loadingTask.destroy === 'function')
+          await loadingTask.destroy()
+        else
+          await (pdfDocument as { destroy?: () => Promise<void> | void }).destroy?.()
+      }
+      catch {
+        // PDF.js may already have torn down the worker after a cancellation.
+      }
     },
   }
 }

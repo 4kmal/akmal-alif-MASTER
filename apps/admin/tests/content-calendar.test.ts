@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { getGalleryPdfPartRanges, getRecordedGalleryPdfBytes, isPdfHeader, validateGalleryPdf } from '../app/composables/useGalleryPdfUpload'
+import { GALLERY_PDF_MIME_TYPE, getGalleryPdfPartRanges, getRecordedGalleryPdfBytes, isPdfHeader, normalizeGalleryPdfMimeType, validateGalleryPdf } from '../app/composables/useGalleryPdfUpload'
 import { isBlogCategoryActive } from '../app/utils/blog-studio'
-import { calendarPrivacyPreview, GALLERY_MAX_PAGES, normalizeCalendarEvent, normalizeGalleryManifest, normalizeYouTubeVideoId, toCalendarApiPayload, validateCalendarEvent, validateGalleryPageCount, withCalendarVersion } from '../app/utils/content-calendar'
+import { calendarPrivacyPreview, GALLERY_MAX_PAGES, galleryHasUnsavedChanges, normalizeCalendarEvent, normalizeGalleryManifest, normalizeYouTubeVideoId, toCalendarApiPayload, validateCalendarEvent, validateGalleryPageCount, withCalendarVersion } from '../app/utils/content-calendar'
 import { getNativeGalleryViewportSize, getPendingGalleryPageNumbers } from '../app/utils/gallery-pdf-renderer'
 
 describe('gallery and calendar client contracts', () => {
@@ -36,11 +36,23 @@ describe('gallery and calendar client contracts', () => {
     expect(getRecordedGalleryPdfBytes(size, [{ part_number: 1, etag: 'a' }, { part_number: 3, etag: 'c' }])).toBe(15 * 1024 * 1024 + 4)
   })
 
+  it('normalizes browser PDF MIME variants before source upload', () => {
+    expect(normalizeGalleryPdfMimeType(new File(['%PDF-'], 'source.pdf', { type: '' }))).toBe(GALLERY_PDF_MIME_TYPE)
+    expect(normalizeGalleryPdfMimeType(new File(['%PDF-'], 'source.pdf', { type: 'application/octet-stream' }))).toBe(GALLERY_PDF_MIME_TYPE)
+  })
+
   it('normalizes gallery schema 1 pages and preserves old finalized revisions', () => {
     const manifest = normalizeGalleryManifest({ id: 'gallery', title: 'Archive', status: 'finalized', revision: 2, pages: [{ page_number: 2, order: 1 }, { page_number: 1, order: 0 }] })
     expect(manifest.schema_version).toBe(1)
     expect(manifest.status).toBe('finalized')
     expect(manifest.pages.map(page => page.page_number)).toEqual([1, 2])
+  })
+
+  it('requires a saved gallery draft before finalization', () => {
+    expect(galleryHasUnsavedChanges('Archive', 'Archive', false, false)).toBe(false)
+    expect(galleryHasUnsavedChanges('Archive (edited)', 'Archive', false, false)).toBe(true)
+    expect(galleryHasUnsavedChanges('Archive', 'Archive', true, false)).toBe(true)
+    expect(galleryHasUnsavedChanges('Archive', 'Archive', false, true)).toBe(true)
   })
 
   it('adapts the nested owner gallery DTO and keeps ready pages resumable', () => {

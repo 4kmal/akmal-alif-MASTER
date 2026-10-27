@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { GalleryManifest, GalleryPage, GalleryRevisionSummary } from '@/utils/content-calendar'
 import { ArrowLeft, Check, ChevronDown, ChevronUp, FileText, LoaderCircle, LockKeyhole, Save, Send, ShieldCheck, Upload, X } from '@lucide/vue'
+import { onBeforeUnmount } from 'vue'
 import { useBlogApi } from '@/composables/useBlogApi'
 import { useGalleryPdfUpload } from '@/composables/useGalleryPdfUpload'
 import { formatBytes, formatDate } from '@/utils/blog-studio'
+import { galleryHasUnsavedChanges } from '@/utils/content-calendar'
 import BlogModal from './BlogModal.vue'
 
 const route = useRoute()
@@ -24,6 +26,7 @@ const previewPage = ref<GalleryPage | null>(null)
 const showSourceRules = ref(false)
 const orderDirty = ref(false)
 const pageMetadataDirty = ref(false)
+const draftConflict = ref(false)
 const renderAbortController = ref<AbortController | null>(null)
 
 const form = reactive({
@@ -31,6 +34,8 @@ const form = reactive({
 })
 
 const galleryVersion = computed(() => gallery.value?.version ?? 0)
+const titleDirty = computed(() => Boolean(gallery.value && galleryHasUnsavedChanges(form.title, gallery.value.title, false, false)))
+const draftDirty = computed(() => titleDirty.value || orderDirty.value || pageMetadataDirty.value)
 const displayPages = computed<GalleryPage[]>(() => {
   if (!gallery.value)
     return []
@@ -59,9 +64,34 @@ const upload = useGalleryPdfUpload(galleryId, galleryVersion, (updated) => {
   notice.value = 'Original PDF uploaded. Page rendering can continue from the saved manifest.'
   void refreshRevisions()
 })
+const sourceUploading = computed(() => upload.task.value?.status === 'uploading')
 
 function syncForm(value: GalleryManifest) {
   form.title = value.title
+}
+
+function isCasConflict(reason: unknown) {
+  if (!reason || typeof reason !== 'object')
+    return false
+  const candidate = reason as { status?: unknown, statusCode?: unknown, data?: { status?: unknown } }
+  return Number(candidate.status ?? candidate.statusCode ?? candidate.data?.status) === 409
+}
+
+function preserveLocalDraftEdits(localTitle: string, localPages: GalleryPage[]) {
+  form.title = localTitle
+  if (!gallery.value || !localPages.length)
+    return
+  const serverPages = new Map(gallery.value.pages.map(page => [page.page_number, page]))
+  for (const localPage of localPages) {
+    const serverPage = serverPages.get(localPage.page_number)
+    serverPages.set(localPage.page_number, serverPage
+      ? { ...serverPage, ...localPage, id: serverPage.id ?? localPage.id }
+      : { ...localPage })
+  }
+  gallery.value = {
+    ...gallery.value,
+    pages: [...serverPages.values()].sort((left, right) => left.order - right.order || left.page_number - right.page_number),
+  }
 }
 
 async function refreshRevisions() {
@@ -78,10 +108,13 @@ async function refreshRevisions() {
 async function load() {
   loading.value = true
   error.value = ''
+  draftConflict.value = false
   try {
     const result = await api.getGallery(galleryId.value)
     gallery.value = result
     syncForm(result)
+    orderDirty.value = false
+    pageMetadataDirty.value = false
     await refreshRevisions()
   }
   catch (reason: unknown) {
@@ -97,6 +130,14 @@ async function onSourceFile(event: Event) {
   ;(event.target as HTMLInputElement).value = ''
   if (!file)
     return
+  if (processingPages.value) {
+    error.value = 'Finish or stop page rendering before changing the source PDF.'
+    return
+  }
+  if (sourceUploading.value || saving.value || finalizing.value) {
+    error.value = 'Wait for the current gallery operation to finish before changing the source PDF.'
+    return
+  }
   error.value = ''
   notice.value = ''
   try {
@@ -112,17 +153,27 @@ async function onSourceFile(event: Event) {
 async function saveDraft() {
   if (!gallery.value || saving.value)
     return
+  if (processingPages.value) {
+    error.value = 'Finish or stop page rendering before saving the draft.'
+    return
+  }
+  if (sourceUploading.value) {
+    error.value = 'Wait for the source PDF upload to finish before saving the draft.'
+    return
+  }
   saving.value = true
   error.value = ''
   notice.value = ''
+  draftConflict.value = false
+  const localTitle = form.title
+  const localPages = (orderDirty.value || pageMetadataDirty.value)
+    ? orderedPages().map(page => ({ ...page }))
+    : []
   try {
     // Keep the local permutation and page metadata while the gallery-level CAS
     // update returns a fresh server snapshot. The response may still contain
     // the old order, so taking this snapshot before replacing gallery.value is
     // essential.
-    const localPages = (orderDirty.value || pageMetadataDirty.value)
-      ? orderedPages().map(page => ({ ...page }))
-      : []
     const payload: { version: number, title: string, page_count?: number, resume_page?: number } = {
       version: gallery.value.version,
       title: form.title.trim(),
@@ -157,11 +208,40 @@ async function saveDraft() {
     }
     orderDirty.value = false
     pageMetadataDirty.value = false
+    draftConflict.value = false
     syncForm(gallery.value)
     notice.value = 'Gallery draft saved.'
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Could not save the gallery draft. Refresh and review the conflict.'
+    preserveLocalDraftEdits(localTitle, localPages)
+    draftConflict.value = isCasConflict(reason)
+    error.value = draftConflict.value
+      ? 'The gallery draft changed on the server. Review your edits, or reload the latest draft.'
+      : reason instanceof Error ? reason.message : 'Could not save the gallery draft. Review your edits and retry.'
+  }
+  finally {
+    saving.value = false
+  }
+}
+
+async function reloadLatest() {
+  if (!gallery.value || saving.value)
+    return
+  saving.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const latest = await api.getGallery(gallery.value.id)
+    gallery.value = latest
+    syncForm(latest)
+    orderDirty.value = false
+    pageMetadataDirty.value = false
+    draftConflict.value = false
+    await refreshRevisions()
+    notice.value = 'Latest gallery draft loaded. Local edits were discarded.'
+  }
+  catch (reason: unknown) {
+    error.value = reason instanceof Error ? reason.message : 'Could not reload the latest gallery draft.'
   }
   finally {
     saving.value = false
@@ -181,6 +261,7 @@ async function createNewDraft() {
     gallery.value = await api.createGalleryDraft(current.id, current.version)
     orderDirty.value = false
     pageMetadataDirty.value = false
+    draftConflict.value = false
     syncForm(gallery.value)
     await refreshRevisions()
     notice.value = 'A new editable gallery draft is ready. The finalized revision remains immutable.'
@@ -223,6 +304,18 @@ function movePage(page: GalleryPage, delta: -1 | 1) {
 async function finalize() {
   if (!gallery.value || finalizing.value || gallery.value.status === 'finalized')
     return
+  if (processingPages.value) {
+    error.value = 'Finish or stop page rendering before finalizing the gallery.'
+    return
+  }
+  if (sourceUploading.value) {
+    error.value = 'Wait for the source PDF upload to finish before finalizing the gallery.'
+    return
+  }
+  if (draftDirty.value) {
+    error.value = 'Save the gallery draft before finalizing the revision.'
+    return
+  }
   const incomplete = gallery.value.page_count < 1
     || gallery.value.pages.length !== gallery.value.page_count
     || gallery.value.pages.some(page => page.status !== 'complete' || !page.image_asset_id || !page.thumbnail_asset_id)
@@ -234,6 +327,7 @@ async function finalize() {
   error.value = ''
   try {
     gallery.value = await api.finalizeGallery(gallery.value.id, { version: gallery.value.version })
+    draftConflict.value = false
     syncForm(gallery.value)
     await refreshRevisions()
     notice.value = `Revision ${gallery.value.revision} finalized and locked.`
@@ -246,22 +340,28 @@ async function finalize() {
   }
 }
 
-async function uploadDerivedBlob(blob: Blob, filename: string, width: number, height: number) {
+async function uploadDerivedBlob(blob: Blob, filename: string, width: number, height: number, signal?: AbortSignal) {
+  if (signal?.aborted)
+    throw new Error('Page rendering was cancelled.')
   const file = new File([blob], filename, { type: 'image/webp', lastModified: Date.now() })
-  const started = await api.startUpload({ filename, mime_type: 'image/webp', size: file.size, width, height })
+  const started = await api.startUpload({ filename, mime_type: 'image/webp', size: file.size, width, height }, signal)
   const ranges = []
   for (let offset = 0, part = 1; offset < file.size; offset += 10 * 1024 * 1024, part += 1)
     ranges.push({ part_number: part, start: offset, end: Math.min(file.size, offset + 10 * 1024 * 1024) })
   const parts = []
   for (const range of ranges) {
-    const receipt = await api.putUploadPart(started.upload.id, range.part_number, file.slice(range.start, range.end))
+    if (signal?.aborted)
+      throw new Error('Page rendering was cancelled.')
+    const receipt = await api.putUploadPart(started.upload.id, range.part_number, file.slice(range.start, range.end), signal)
     parts.push(receipt)
   }
-  return (await api.completeUpload(started.upload.id, parts)).asset
+  if (signal?.aborted)
+    throw new Error('Page rendering was cancelled.')
+  return (await api.completeUpload(started.upload.id, parts, signal)).asset
 }
 
 async function renderAndAttachPages() {
-  if (!gallery.value || !upload.task.value?.file || processingPages.value)
+  if (!gallery.value || !upload.task.value?.file || processingPages.value || saving.value || finalizing.value || sourceUploading.value)
     return
   const document = upload.task.value.document
   if (!document) {
@@ -270,6 +370,7 @@ async function renderAndAttachPages() {
   }
   processingPages.value = true
   renderAbortController.value = new AbortController()
+  const signal = renderAbortController.value.signal
   error.value = ''
   notice.value = ''
   try {
@@ -291,9 +392,11 @@ async function renderAndAttachPages() {
         status: 'pending' as const,
       }
       processingPage.value = page.page_number
-      const rendered = await document.renderPagePair(page.page_number, renderAbortController.value.signal)
-      const image = await uploadDerivedBlob(rendered.full.blob, `${gallery.value.id}-page-${page.page_number}.webp`, rendered.full.width, rendered.full.height)
-      const thumb = await uploadDerivedBlob(rendered.thumbnail.blob, `${gallery.value.id}-page-${page.page_number}-thumb.webp`, rendered.thumbnail.width, rendered.thumbnail.height)
+      const rendered = await document.renderPagePair(page.page_number, signal)
+      const image = await uploadDerivedBlob(rendered.full.blob, `${gallery.value.id}-page-${page.page_number}.webp`, rendered.full.width, rendered.full.height, signal)
+      const thumb = await uploadDerivedBlob(rendered.thumbnail.blob, `${gallery.value.id}-page-${page.page_number}-thumb.webp`, rendered.thumbnail.width, rendered.thumbnail.height, signal)
+      if (signal.aborted)
+        throw new Error('Page rendering was cancelled.')
       gallery.value = await api.attachGalleryPage(gallery.value.id, {
         version: gallery.value.version,
         page: {
@@ -305,7 +408,7 @@ async function renderAndAttachPages() {
           asset_id: image.id,
           thumbnail_asset_id: thumb.id,
         },
-      })
+      }, signal)
       existingPages.set(pageNumber, gallery.value.pages.find(item => item.page_number === pageNumber) ?? page)
     }
     notice.value = 'All complete pages are attached. Review the order, then finalize a new immutable revision.'
@@ -323,6 +426,10 @@ async function renderAndAttachPages() {
 function cancelRendering() {
   renderAbortController.value?.abort()
 }
+
+onBeforeUnmount(() => {
+  renderAbortController.value?.abort()
+})
 
 async function openRevision() {
   if (!selectedRevision.value)
@@ -366,17 +473,21 @@ onMounted(load)
         <button v-if="gallery?.status === 'finalized'" type="button" class="blog-button" :disabled="saving || loading" @click="createNewDraft">
           <FileText :size="16" /> {{ saving ? 'Creating…' : 'Edit as new draft' }}
         </button>
-        <button type="button" class="blog-button" :disabled="saving || loading || gallery?.status === 'finalized'" @click="saveDraft">
+        <button type="button" class="blog-button" :disabled="saving || loading || processingPages || sourceUploading || gallery?.status === 'finalized'" @click="saveDraft">
           <Save :size="16" /> {{ saving ? 'Saving…' : 'Save draft' }}
         </button>
-        <button type="button" class="blog-button blog-button--primary" :disabled="finalizing || loading || gallery?.status === 'finalized'" @click="finalize">
+        <button type="button" class="blog-button blog-button--primary" :disabled="finalizing || loading || processingPages || sourceUploading || draftDirty || gallery?.status === 'finalized'" :title="draftDirty ? 'Save the draft before finalizing.' : undefined" @click="finalize">
           <Send :size="16" /> {{ finalizing ? 'Finalizing…' : 'Finalize revision' }}
         </button>
+        <span v-if="draftDirty" class="blog-status" data-status="draft">Save draft before finalizing</span>
       </div>
     </div>
-    <p v-if="error" class="blog-alert blog-alert--error" role="alert">
-      {{ error }}
-    </p>
+    <div v-if="error" class="blog-alert blog-alert--error" role="alert">
+      <span>{{ error }}</span>
+      <button v-if="draftConflict" type="button" class="blog-button blog-button--quiet" :disabled="saving" @click="reloadLatest">
+        Reload latest
+      </button>
+    </div>
     <p v-if="notice" class="blog-alert blog-alert--notice" role="status">
       <Check :size="16" /> {{ notice }}
     </p>
@@ -395,7 +506,7 @@ onMounted(load)
               </p><h2>Gallery details</h2>
             </div><LockKeyhole :size="21" aria-hidden="true" />
           </div>
-          <label class="blog-field"><span>Title</span><input v-model="form.title" maxlength="180" :disabled="gallery.status === 'finalized'"></label>
+          <label class="blog-field"><span>Title</span><input v-model="form.title" maxlength="180" :disabled="gallery.status === 'finalized' || processingPages"></label>
           <p class="blog-panel__note">
             <ShieldCheck :size="15" /> Source PDFs remain owner-only. Edit each page caption and visibility below; the article draft controls when a finalized manifest becomes public.
           </p>
@@ -418,22 +529,28 @@ onMounted(load)
           >
           <div class="gallery-source-actions">
             <button
-              type="button" class="blog-button blog-button--primary" :disabled="gallery.status === 'finalized' || upload.task.value?.status === 'uploading'" @click="sourceInput?.click()"
+              type="button" class="blog-button blog-button--primary" :disabled="gallery.status === 'finalized' || processingPages || saving || finalizing || upload.task.value?.status === 'uploading'" @click="sourceInput?.click()"
             >
               <Upload :size="16" /> Choose PDF
             </button><button
               v-if="upload.task.value?.status === 'uploading' || upload.task.value?.status === 'paused'" type="button" class="
                 blog-button blog-button--quiet
-              " @click="upload.cancel"
+              " :disabled="processingPages || saving || finalizing" @click="upload.cancel"
             >
               Pause
             </button><button
               v-if="upload.task.value?.status === 'error' || upload.task.value?.status === 'paused'" type="button" class="
                 blog-button blog-button--quiet
-              " @click="upload.retry"
+              " :disabled="processingPages || saving || finalizing" @click="upload.retry"
             >
               Retry / resume
             </button>
+          </div>
+          <div v-if="upload.recoverableEntries.value.length" class="blog-panel__note gallery-recovery-note" role="status">
+            <strong>Paused upload available.</strong>
+            <span v-for="entry in upload.recoverableEntries.value" :key="entry.uploadId">
+              {{ entry.filename }} · {{ formatBytes(entry.size) }}. Select the same file to resume.
+            </span>
           </div>
           <div v-if="upload.task.value" class="gallery-upload-status" aria-live="polite">
             <div
@@ -463,7 +580,7 @@ onMounted(load)
               Derived pages
             </p><h2>{{ gallery.pages.length }} page records</h2>
           </div><button
-            type="button" class="blog-button" :disabled="gallery.status === 'finalized' || !upload.task.value?.file" @click="processingPages ? cancelRendering() : renderAndAttachPages()"
+            type="button" class="blog-button" :disabled="gallery.status === 'finalized' || !upload.task.value?.file || saving || finalizing || sourceUploading" @click="processingPages ? cancelRendering() : renderAndAttachPages()"
           >
             <LoaderCircle
               v-if="processingPages" :size="16" class="blog-spin"
@@ -484,17 +601,17 @@ onMounted(load)
             </button>
             <div class="gallery-page-copy">
               <strong>Page {{ page.page_number }}</strong><span>{{ page.width && page.height ? `${page.width} × ${page.height}px` : 'Waiting for render' }} · {{ page.status }}</span>
-              <label class="gallery-page-field"><span>Title</span><input v-model="page.title" maxlength="180" :disabled="gallery.status === 'finalized'" @input="pageMetadataDirty = true"></label>
-              <label class="gallery-page-field"><span>Caption</span><textarea v-model="page.caption" rows="2" maxlength="2000" :disabled="gallery.status === 'finalized'" @input="pageMetadataDirty = true" /></label>
-              <label class="gallery-page-visibility"><input v-model="page.visible" type="checkbox" :disabled="gallery.status === 'finalized'" @change="pageMetadataDirty = true"> Visible in the manifest</label>
+              <label class="gallery-page-field"><span>Title</span><input v-model="page.title" maxlength="180" :disabled="gallery.status === 'finalized' || processingPages" @input="pageMetadataDirty = true"></label>
+              <label class="gallery-page-field"><span>Caption</span><textarea v-model="page.caption" rows="2" maxlength="2000" :disabled="gallery.status === 'finalized' || processingPages" @input="pageMetadataDirty = true" /></label>
+              <label class="gallery-page-visibility"><input v-model="page.visible" type="checkbox" :disabled="gallery.status === 'finalized' || processingPages" @change="pageMetadataDirty = true"> Visible in the manifest</label>
             </div>
             <div class="gallery-page-actions">
               <button
-                type="button" class="blog-icon-button" :disabled="gallery.status === 'finalized'" :aria-label="`Move page ${page.page_number} earlier`" @click="movePage(page, -1)"
+                type="button" class="blog-icon-button" :disabled="gallery.status === 'finalized' || processingPages" :aria-label="`Move page ${page.page_number} earlier`" @click="movePage(page, -1)"
               >
                 <ChevronUp :size="15" />
               </button><button
-                type="button" class="blog-icon-button" :disabled="gallery.status === 'finalized'" :aria-label="`Move page ${page.page_number} later`" @click="movePage(page, 1)"
+                type="button" class="blog-icon-button" :disabled="gallery.status === 'finalized' || processingPages" :aria-label="`Move page ${page.page_number} later`" @click="movePage(page, 1)"
               >
                 <ChevronDown :size="15" />
               </button>

@@ -15,6 +15,8 @@ const error = ref('')
 const notice = ref('')
 const showArchived = ref(false)
 const formErrors = ref<Partial<Record<keyof CalendarEventInput, string>>>({})
+const calendarConflictKind = ref<'event' | 'settings' | null>(null)
+const conflictEventId = ref<string | null>(null)
 
 const settings = reactive<CalendarSettings>({ version: 0, timezone: DEFAULT_CALENDAR_TIMEZONE })
 const form = reactive<CalendarEventInput & { version: number }>({
@@ -49,6 +51,13 @@ const previewTiming = computed(() => {
   return `${formatter.format(new Date(preview.value.start_at))} → ${formatter.format(new Date(preview.value.end_at))} UTC`
 })
 
+function isCasConflict(reason: unknown) {
+  if (!reason || typeof reason !== 'object')
+    return false
+  const candidate = reason as { status?: unknown, statusCode?: unknown, data?: { status?: unknown } }
+  return Number(candidate.status ?? candidate.statusCode ?? candidate.data?.status) === 409
+}
+
 function localInput(value: string | null) {
   if (!value)
     return ''
@@ -67,6 +76,8 @@ function utcValue(value: string) {
 
 function resetForm() {
   selectedId.value = null
+  calendarConflictKind.value = null
+  conflictEventId.value = null
   Object.assign(form, {
     version: 0,
     kind: 'event',
@@ -89,6 +100,8 @@ function resetForm() {
 
 function editEvent(event: CalendarEvent) {
   selectedId.value = event.id
+  calendarConflictKind.value = null
+  conflictEventId.value = null
   Object.assign(form, {
     version: event.version,
     kind: event.kind,
@@ -147,6 +160,8 @@ async function saveEvent() {
   saving.value = true
   error.value = ''
   notice.value = ''
+  calendarConflictKind.value = null
+  conflictEventId.value = null
   try {
     const saved = selectedId.value
       ? await api.updateCalendarEvent(selectedId.value, withCalendarVersion(next, form.version))
@@ -160,7 +175,11 @@ async function saveEvent() {
     notice.value = 'Calendar event saved.'
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'The event changed elsewhere. Refresh and review the conflict.'
+    calendarConflictKind.value = isCasConflict(reason) ? 'event' : null
+    conflictEventId.value = selectedId.value
+    error.value = calendarConflictKind.value
+      ? 'The event changed on the server. Review your edits, or reload the latest event.'
+      : reason instanceof Error ? reason.message : 'Could not save the calendar event.'
   }
   finally {
     saving.value = false
@@ -169,6 +188,8 @@ async function saveEvent() {
 
 async function changeStatus(event: CalendarEvent, status: CalendarEventStatus) {
   error.value = ''
+  calendarConflictKind.value = null
+  conflictEventId.value = null
   try {
     const saved = await api.setCalendarEventStatus(event.id, status, event.version)
     const index = events.value.findIndex(item => item.id === saved.id)
@@ -179,13 +200,19 @@ async function changeStatus(event: CalendarEvent, status: CalendarEventStatus) {
     notice.value = status === 'archived' ? 'Event archived.' : 'Event restored.'
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Could not change the event status.'
+    calendarConflictKind.value = isCasConflict(reason) ? 'event' : null
+    conflictEventId.value = event.id
+    error.value = calendarConflictKind.value
+      ? 'The event changed on the server. Review your edits, or reload the latest event.'
+      : reason instanceof Error ? reason.message : 'Could not change the event status.'
   }
 }
 
 async function saveSettings() {
   savingSettings.value = true
   error.value = ''
+  calendarConflictKind.value = null
+  conflictEventId.value = null
   try {
     const saved = await api.saveCalendarSettings({ version: settings.version, timezone: settings.timezone })
     Object.assign(settings, saved)
@@ -194,10 +221,68 @@ async function saveSettings() {
     notice.value = 'Calendar settings saved.'
   }
   catch (reason: unknown) {
-    error.value = reason instanceof Error ? reason.message : 'Calendar settings changed elsewhere. Refresh and review the conflict.'
+    calendarConflictKind.value = isCasConflict(reason) ? 'settings' : null
+    error.value = calendarConflictKind.value
+      ? 'Calendar settings changed on the server. Review your edits, or reload the latest settings.'
+      : reason instanceof Error ? reason.message : 'Could not save calendar settings.'
   }
   finally {
     savingSettings.value = false
+  }
+}
+
+async function reloadLatest() {
+  if (saving.value || savingSettings.value)
+    return
+  const conflictKind = calendarConflictKind.value
+  if (!conflictKind)
+    return
+  if (conflictKind === 'settings') {
+    savingSettings.value = true
+    error.value = ''
+    notice.value = ''
+    try {
+      const latest = await api.getCalendarSettings()
+      Object.assign(settings, latest)
+      calendarConflictKind.value = null
+      notice.value = 'Latest calendar settings loaded. Local settings edits were discarded.'
+    }
+    catch (reason: unknown) {
+      error.value = reason instanceof Error ? reason.message : 'Could not reload the latest calendar settings.'
+    }
+    finally {
+      savingSettings.value = false
+    }
+    return
+  }
+  saving.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const latest = conflictEventId.value
+      ? await api.getCalendarEvent(conflictEventId.value)
+      : null
+    if (latest) {
+      const index = events.value.findIndex(event => event.id === latest.id)
+      if (index >= 0)
+        events.value[index] = latest
+      else
+        events.value.unshift(latest)
+      editEvent(latest)
+    }
+    else {
+      await load()
+      resetForm()
+    }
+    calendarConflictKind.value = null
+    conflictEventId.value = null
+    notice.value = 'Latest calendar event loaded. Local event edits were discarded.'
+  }
+  catch (reason: unknown) {
+    error.value = reason instanceof Error ? reason.message : 'Could not reload the latest calendar event.'
+  }
+  finally {
+    saving.value = false
   }
 }
 
@@ -224,9 +309,12 @@ onMounted(load)
         ><input v-model="showArchived" type="checkbox"><span>Show archived</span></label>
       </div>
     </div>
-    <p v-if="error" class="blog-alert blog-alert--error" role="alert">
-      {{ error }}
-    </p>
+    <div v-if="error" class="blog-alert blog-alert--error" role="alert">
+      <span>{{ error }}</span>
+      <button v-if="calendarConflictKind" type="button" class="blog-button blog-button--quiet" :disabled="saving || savingSettings" @click="reloadLatest">
+        Reload latest
+      </button>
+    </div>
     <p v-if="notice" class="blog-alert blog-alert--notice" role="status">
       <Check :size="16" /> {{ notice }}
     </p>

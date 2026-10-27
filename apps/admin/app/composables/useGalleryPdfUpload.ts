@@ -38,6 +38,7 @@ export interface GalleryPdfRecoveryEntry {
 }
 
 export const GALLERY_PDF_RECOVERY_KEY = 'akmal-blog-gallery-pdf-recovery-v1'
+export const GALLERY_PDF_MIME_TYPE = 'application/pdf'
 
 export function getGalleryPdfPartRanges(size: number) {
   const partCount = Math.ceil(Math.max(0, size) / GALLERY_SOURCE_PART_SIZE)
@@ -110,7 +111,14 @@ function fileMatches(file: File, entry: GalleryPdfRecoveryEntry) {
   return file.name === entry.filename
     && file.size === entry.size
     && file.lastModified === entry.lastModified
-    && (file.type || 'application/pdf') === entry.mime_type
+    // Older recovery records may have captured an empty or octet-stream MIME
+    // from the browser. The PDF header is validated before this match, and
+    // the source API always receives the canonical PDF MIME below.
+    && (entry.mime_type === GALLERY_PDF_MIME_TYPE || entry.mime_type === file.type || entry.mime_type === 'application/octet-stream' || !entry.mime_type)
+}
+
+export function normalizeGalleryPdfMimeType(_file: File) {
+  return GALLERY_PDF_MIME_TYPE
 }
 
 export function validateGalleryPdf(file: File) {
@@ -161,7 +169,7 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
       galleryId: current.galleryId,
       uploadId: current.uploadId,
       filename: current.filename,
-      mime_type: current.file.type || 'application/pdf',
+      mime_type: normalizeGalleryPdfMimeType(current.file),
       size: current.size,
       lastModified: current.file.lastModified,
       parts: [...current.parts],
@@ -189,7 +197,7 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
         throw new Error('This gallery already has a different source PDF. Select that file to resume its upload.')
       return (await api.getGallerySourceUpload(galleryId.value, existingSource.id)).upload
     }
-    const response = await api.startGallerySourceUpload(galleryId.value, { version: galleryVersion.value, filename: file.name, mime_type: file.type || 'application/pdf', size: file.size, page_count: pageCount })
+    const response = await api.startGallerySourceUpload(galleryId.value, { version: galleryVersion.value, filename: file.name, mime_type: normalizeGalleryPdfMimeType(file), size: file.size, page_count: pageCount })
     if (response.upload?.id)
       return response.upload
     if (response.source?.id)
@@ -226,8 +234,10 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
         }
       }
       await Promise.all(Array.from({ length: Math.min(GALLERY_MAX_CONCURRENT_PARTS, Math.max(1, pending.length)) }, () => worker()))
+      if (controller.signal.aborted)
+        throw abortError()
       if (state.upload.status !== 'completed' && state.source.status !== 'completed')
-        await api.completeGallerySourceUpload(current.galleryId, current.uploadId, current.parts)
+        await api.completeGallerySourceUpload(current.galleryId, current.uploadId, current.parts, controller.signal)
       const updated = await api.getGallery(current.galleryId)
       const pageCount = validateGalleryPageCount(updated.page_count)
       current.gallery = updated
@@ -336,5 +346,5 @@ export function useGalleryPdfUpload(galleryId: Readonly<Ref<string>>, galleryVer
     void task.value?.document?.destroy()
   })
 
-  return { task, progress, recoverable, selectFile, retry, cancel, clear, validate: validateGalleryPdf }
+  return { task, progress, recoverable, recoverableEntries: recoverable, selectFile, retry, cancel, clear, validate: validateGalleryPdf }
 }
