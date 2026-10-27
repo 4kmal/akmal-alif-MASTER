@@ -436,11 +436,13 @@ describe('judging AI runtime contract', () => {
             DB: database,
             AI: {
               run: async () => ({
-                results: [shape === 'wrapped' ? {
-                  id: 0,
-                  success: true,
-                  result: { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` },
-                } : { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }],
+                results: [shape === 'wrapped'
+                  ? {
+                      id: 0,
+                      success: true,
+                      result: { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` },
+                    }
+                  : { response: `<think>private reasoning</think>\n${'```json'}\n${responseFor(evidenceId)}\n${'```'}\n` }],
                 usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
               }),
             },
