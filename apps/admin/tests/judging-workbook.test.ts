@@ -21,7 +21,7 @@ import {
   WORKBOOK_FORMULA_ORACLE,
 } from '../shared/judging/workbook.mjs'
 
-const SOURCE_PATH = 'C:/Users/Admin/Desktop/KRACKEDDEV/Hackathon/sdcHackathon/Scoresheet D1-J04 - Muhammad Akmal Alif bin Azam.xlsx'
+const SOURCE_PATH = process.env.JUDGING_WORKBOOK_SOURCE || 'C:/Users/Admin/Desktop/KRACKEDDEV/Hackathon/sdcHackathon/Scoresheet D1-J04 - Muhammad Akmal Alif bin Azam.xlsx'
 const sourceAvailable = existsSync(SOURCE_PATH)
 
 function review(teamId, scores = [80, 80, 80, 80], repoCheck = 'Yes', extras = {}) {
