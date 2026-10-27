@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Activity, CalendarDays, ChartArea, FolderSync, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
+import { Activity, CalendarDays, ChartArea, ClipboardCheck, FolderSync, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
 import { computed } from 'vue'
 import { useRoute } from '#imports'
 
@@ -94,6 +94,11 @@ export const DASHBOARD_ROUTES = {
     paths: ['/admin/realtime'],
     titleKey: 'Shortlink realtime',
     icon: Activity,
+  },
+  judging: {
+    paths: ['/admin/judging/sdc-2026'],
+    titleKey: 'SDC judging',
+    icon: ClipboardCheck,
   },
   check: {
     paths: ['/admin/check'],

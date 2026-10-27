@@ -118,6 +118,12 @@ const settingsItems = computed<NavItem[]>(() => [
     isActive: isActive('realtime'),
   },
   {
+    title: 'SDC judging',
+    url: '/admin/judging/sdc-2026',
+    icon: DASHBOARD_ROUTES.judging.icon,
+    isActive: isActive('judging'),
+  },
+  {
     title: 'Site settings',
     url: '/admin/blog/settings',
     icon: DASHBOARD_ROUTES.blogSettings.icon,
