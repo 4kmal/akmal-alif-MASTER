@@ -47,7 +47,7 @@ Tests execute the real schema and Worker SQL through Node SQLite. Coverage inclu
 
 ## Private administration
 
-The separate Sink-based Nuxt application lives in `apps/admin`. Its browser interface is served through the portfolio Worker at `https://www.akmalalif.com/admin`. Cloudflare Access and both Workers validate the owner identity. Native short links and bearer-authenticated Sink API/MCP clients use `https://go.akmalalif.com`.
+The separate Sink-based Nuxt application lives in `apps/admin`. Its browser interface is served through the portfolio Worker at `https://www.akmalalif.com/admin`. Better Auth in the portfolio Worker authenticates the approved Google and GitHub identities, then forwards a trusted owner context to the private admin service. Native short links and bearer-authenticated Sink API/MCP clients use `https://go.akmalalif.com`.
 
 The admin service has its own D1 database, KV namespace, private R2 bucket, two Analytics Engine datasets and Workers AI binding. The portfolio's existing content database, lifetime counters and media bucket remain separate. See [the admin app](apps/admin/README.md) for setup and [the Sink parity checklist](docs/admin-sink-parity.md) for feature and release evidence.
 
@@ -62,6 +62,8 @@ pnpm build:admin
 ```
 
 Frontend development at port 3000 continues to block API writes. The admin's local backend workflow uses explicit local settings and local storage; production credentials belong in encrypted Cloudflare secrets.
+
+See [admin authentication](docs/admin-auth.md) for the owner policy, root `.env` setup, provider callbacks, deployment order, and verification requirements. Cloudflare Access remains the rollback gate until the Better Auth production cutover is verified.
 
 Portfolio events use first-party anonymous browser and session identifiers. Reports label visitors as browser estimates and active visitors as active within five minutes. Sessions expire after 30 minutes of inactivity. Detailed records are retained for 90 days and mergeable daily summaries for 13 months. Imported page history is labelled as legacy recorded events, with no invented historical visitors or engagement. Contact interactions measure intent because the public chat is a local simulation.
 

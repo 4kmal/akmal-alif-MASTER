@@ -7,18 +7,21 @@ while adding source-aware portfolio reports.
 
 ## Runtime boundary
 
-- `https://www.akmalalif.com/admin` serves the owner UI and uses Cloudflare Access.
+- `https://www.akmalalif.com/admin` serves the owner UI. Better Auth runs in the portfolio Worker at `/api/auth/*` on that same origin.
 - `https://go.akmalalif.com` serves native shortlink resolution and bearer-only APIs.
-- The public portfolio gateway may call namespaced `/api/admin/*` routes with the
-  `x-portfolio-gateway` secret after Access validation; this worker validates the
-  forwarded Access assertion again and the browser never receives the secret.
+- The portfolio gateway calls namespaced `/api/admin/*` routes after checking the
+  database session and approved provider account. The admin service requires the
+  gateway secret, canonical origin, and injected owner context. Guest login and
+  static-asset requests carry no owner context.
 - Portfolio reports return explicit unavailable states when the analytics worker is not
   configured. They do not render demo or invented values.
 
-Set `ADMIN_EMAIL` explicitly for the owner allow-list, `PORTFOLIO_GATEWAY_TOKEN` as an
-encrypted secret, and `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` (or their `NUXT_`
-runtime aliases) before enabling the production route. `ALLOW_LOCAL_ADMIN=true` is
-reserved for an explicitly configured local gateway.
+Set `ADMIN_EMAIL` explicitly for the owner allow-list and `PORTFOLIO_GATEWAY_TOKEN`
+as an encrypted secret shared with the portfolio Worker. The OAuth credentials and
+`BETTER_AUTH_SECRET` belong to the portfolio Worker, not this service. The existing
+Cloudflare Access configuration supports the compatible rollout and rollback gate.
+`ALLOW_LOCAL_ADMIN=true` is reserved for an explicitly configured local gateway.
+See [the authentication runbook](../../docs/admin-auth.md) for setup and cutover.
 
 ## Local-only workflow
 
@@ -102,7 +105,7 @@ adds the `ADMIN` service binding. The two Workers share the encrypted
 `PORTFOLIO_GATEWAY_TOKEN`; the analytics identity key, machine API token and
 Cloudflare analytics read token remain encrypted admin runtime secrets.
 
-Verify the owner Access login on `www`, bearer-only API/MCP on `go`, fresh Sink
+Verify both owner OAuth providers on `www`, bearer-only API/MCP on `go`, fresh Sink
 storage initialization, public shortlink resolution, provider reports and cron
 registration. Save both Worker version IDs and the Git commit with private
 release evidence before replacing a working deployment. Restore the affected
