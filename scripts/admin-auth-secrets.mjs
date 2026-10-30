@@ -86,7 +86,7 @@ async function main(command) {
   await completed;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (typeof process !== 'undefined' && process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv[2]).catch(error => {
     console.error(error.message);
     process.exitCode = 1;
