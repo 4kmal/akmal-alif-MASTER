@@ -379,7 +379,8 @@ test('GitHub user info reads the verified primary email endpoint without fallbac
     { email: 'iamaleep@gmail.com', primary: true, verified: true },
   ];
   const auth = createPortfolioAuth(runtimeEnv, {
-    fetcher: async (url, init) => {
+    fetcher: async function workerFetch(url, init) {
+      assert.equal(this, undefined);
       calls.push({ url, init });
       if (url.endsWith('/user')) return Response.json({ id: 44127834, login: 'login4kmal', name: 'Akmal' });
       return Response.json(emailRows);

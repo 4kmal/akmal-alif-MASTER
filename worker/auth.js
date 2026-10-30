@@ -159,6 +159,7 @@ function verificationFields() {
 
 function githubUserInfo(config) {
   return async (token) => {
+    const fetcher = config.fetcher;
     const headers = {
       Accept: 'application/vnd.github+json',
       'User-Agent': 'akmalalif-portfolio-auth',
@@ -168,8 +169,8 @@ function githubUserInfo(config) {
     let emailsResponse;
     try {
       [profileResponse, emailsResponse] = await Promise.all([
-        config.fetcher('https://api.github.com/user', { headers }),
-        config.fetcher('https://api.github.com/user/emails', { headers }),
+        fetcher('https://api.github.com/user', { headers }),
+        fetcher('https://api.github.com/user/emails', { headers }),
       ]);
       if (!profileResponse.ok || !emailsResponse.ok) return null;
       const [profile, emails] = await Promise.all([profileResponse.json(), emailsResponse.json()]);
