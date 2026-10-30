@@ -140,8 +140,27 @@ async function signIn(db, runtimeEnv, options, providerId, callbackURL = '/admin
   };
 }
 
+async function beginSignIn(runtimeEnv, options, providerId, callbackURL = '/admin') {
+  const response = await handlePortfolioAuth(new Request(`${origin}/api/auth/sign-in/social`, {
+    method: 'POST',
+    headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: providerId, callbackURL, disableRedirect: true }),
+  }), runtimeEnv, options);
+  assert.equal(response.status, 200);
+  const authorizationURL = new URL((await response.json()).url);
+  const stateCookies = response.headers.getSetCookie();
+  const callbackHeaders = stateCookies.length > 0
+    ? { Cookie: stateCookies.map((value) => value.split(';', 1)[0]).join('; ') }
+    : {};
+  return { authorizationURL, callbackHeaders };
+}
+
 function count(db, table) {
   return db.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+}
+
+function authCounts(db) {
+  return ['auth_user', 'auth_account', 'auth_session'].map((table) => count(db, table));
 }
 
 test('safe admin returns remain same-origin admin paths', () => {
@@ -237,6 +256,67 @@ test('Better Auth OAuth gates before writes, persists encrypted tokens, and maps
   await signIn(db, runtimeEnv, options, 'github');
   assert.equal(count(db, 'auth_user'), 1);
   assert.equal(count(db, 'auth_account'), 2);
+});
+
+test('replaying a successful OAuth callback consumes state without creating another session', async () => {
+  const db = new D1Shim();
+  const runtimeEnv = env(db);
+  const options = authOptions(
+    { id: 'google-owner', email: 'iamaleep@gmail.com', emailVerified: true },
+    { id: '44127834', email: 'private-github@example.com', emailVerified: true },
+  );
+  const { authorizationURL, callbackHeaders } = await beginSignIn(runtimeEnv, options, 'google');
+  const callbackURL = `${origin}/api/auth/callback/google?code=accepted&state=${encodeURIComponent(authorizationURL.searchParams.get('state'))}`;
+
+  const firstCallback = await handlePortfolioAuth(new Request(callbackURL, { headers: callbackHeaders }), runtimeEnv, options);
+  assert.equal(firstCallback.status, 302);
+  const countsAfterSuccess = authCounts(db);
+  assert.deepEqual(countsAfterSuccess, [1, 1, 1]);
+
+  const replay = await handlePortfolioAuth(new Request(callbackURL, { headers: callbackHeaders }), runtimeEnv, options);
+  assert.equal(replay.status, 302);
+  assert.equal(new URL(replay.headers.get('Location'), origin).origin, origin);
+  assert.deepEqual(authCounts(db), countsAfterSuccess);
+});
+
+test('sign-out deletes the DB session and invalidates its old cookie', async () => {
+  const db = new D1Shim();
+  const runtimeEnv = env(db);
+  const options = authOptions(
+    { id: 'google-owner', email: 'iamaleep@gmail.com', emailVerified: true },
+    { id: '44127834', email: 'private-github@example.com', emailVerified: true },
+  );
+  const login = await signIn(db, runtimeEnv, options, 'google');
+  assert.equal(count(db, 'auth_session'), 1);
+  assert.ok(await validateBetterAuthIdentity(new Request(`${origin}/admin`, { headers: { Cookie: login.cookie } }), runtimeEnv, options));
+
+  const signOut = await handlePortfolioAuth(new Request(`${origin}/api/auth/sign-out`, {
+    method: 'POST',
+    headers: { Origin: origin, Cookie: login.cookie, 'Content-Type': 'application/json' },
+    body: '{}',
+  }), runtimeEnv, options);
+  assert.equal(signOut.status, 200);
+  assert.equal(count(db, 'auth_session'), 0);
+  assert.equal(await validateBetterAuthIdentity(new Request(`${origin}/admin`, { headers: { Cookie: login.cookie } }), runtimeEnv, options), null);
+});
+
+test('unapproved and unverified Google identities do not write after an approved GitHub login', async () => {
+  const db = new D1Shim();
+  const googleProfile = { id: 'google-owner', email: 'unapproved@example.com', emailVerified: true };
+  const githubProfile = { id: '44127834', email: 'iamaleep@gmail.com', emailVerified: true };
+  const runtimeEnv = env(db);
+  const options = authOptions(googleProfile, githubProfile);
+  await signIn(db, runtimeEnv, options, 'github');
+  const approvedCounts = authCounts(db);
+  assert.deepEqual(approvedCounts, [1, 1, 1]);
+
+  await signIn(db, runtimeEnv, options, 'google');
+  assert.deepEqual(authCounts(db), approvedCounts);
+
+  googleProfile.email = 'iamaleep@gmail.com';
+  googleProfile.emailVerified = false;
+  await signIn(db, runtimeEnv, options, 'google');
+  assert.deepEqual(authCounts(db), approvedCounts);
 });
 
 test('GitHub requires the immutable approved id and a verified primary email', async () => {
