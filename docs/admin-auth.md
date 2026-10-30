@@ -131,11 +131,18 @@ paths. Leave it unset when running the native admin service directly.
    and `/api/admin/*` on `www.akmalalif.com`.
 7. Verify a fresh browser reaches Better Auth directly, both providers can use the
    dashboard, sign-out blocks further API requests, and public and machine flows
-   still work. Disable the portfolio-specific Access runtime configuration after
-   the cutover is proven.
+   still work. Remove `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` from both Workers'
+   production runtime variables and source configs after the cutover is proven.
+   The admin Worker's `keep_vars=true` preserves dashboard variables, so removing
+   the source keys alone does not remove its deployed values. Keep every other
+   variable, encrypted secret, and binding intact.
 
-If a cutover check fails, restore the Access owner policy before reverting Worker
-versions or selecting Access mode. Retain the additive auth tables during rollback.
+If a cutover check fails, remove the bypass from the application so its retained
+Access owner policy protects all four destinations before reverting Worker versions.
+Restore both saved Worker versions, or restore their saved `CF_ACCESS_TEAM_DOMAIN`
+and `CF_ACCESS_AUD` values before selecting `ADMIN_AUTH_MODE=access`. Selecting
+Access mode alone cannot work after its runtime configuration has been removed.
+Retain the additive auth tables during rollback.
 
 ## Verification record
 
