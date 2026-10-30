@@ -166,6 +166,19 @@ describe('admin authentication route boundaries', () => {
     expect(response.body).toContain('Unauthorized')
   })
 
+  it('does not exempt BetterAuth-shaped paths on the native go host', async () => {
+    await startAuthRoute()
+    for (const path of ['/api/auth', '/api/auth/get-session', '/api/auth/..%2flink%2flist']) {
+      const response = await requestAuth({
+        'host': 'go.akmalalif.com',
+        'x-forwarded-proto': 'https',
+      }, path)
+
+      expect(response.status).toBe(401)
+      expect(response.headers['www-authenticate']).toBe('Bearer')
+    }
+  })
+
   it('rejects a missing owner token when local admin bypass is explicitly disabled', async () => {
     await startAuthRoute()
     const response = await requestAuth({

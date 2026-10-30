@@ -24,9 +24,6 @@ export default eventHandler(async (event) => {
   if (!event.path.startsWith('/api/') && !isAnalyticsIngest && !isRuntimeRequest)
     return
 
-  if (event.path === '/api/auth' || event.path.startsWith('/api/auth/'))
-    return
-
   const adminEmail = getRuntimeString(event, 'adminEmail', 'ADMIN_EMAIL')
   const adminOrigin = getRuntimeString(event, 'portfolioAdminOrigin', 'PORTFOLIO_ADMIN_ORIGIN')
   const gatewaySecret = getRuntimeString(event, 'portfolioGatewayToken', 'PORTFOLIO_GATEWAY_TOKEN')

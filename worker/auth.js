@@ -225,7 +225,6 @@ function providerOptions(config) {
     google: customGoogle ?? {
       clientId: config.googleClientId,
       clientSecret: config.googleClientSecret,
-      accessType: 'offline',
     },
     github: customGithub ?? {
       clientId: config.githubClientId,
