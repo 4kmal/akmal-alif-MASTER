@@ -1,5 +1,17 @@
-const ADMIN_ORIGIN = 'https://www.akmalalif.com';
+import { authMode, CANONICAL_ORIGIN, safeAdminReturnPath, validateBetterAuthIdentity } from './auth.js';
+
+const ADMIN_ORIGIN = CANONICAL_ORIGIN;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const PUBLIC_ADMIN_ASSETS = new Set([
+  '/admin/apple-touch-icon.png',
+  '/admin/favicon.ico',
+  '/admin/icon-192.png',
+  '/admin/manifest.webmanifest',
+  '/admin/robots.txt',
+  '/admin/sink.png',
+  '/admin/surface-grain.svg',
+  '/admin/fonts/inter-latin.woff2',
+]);
 const keys = new Map();
 const encoder = new TextEncoder();
 
@@ -8,12 +20,21 @@ function reply(status, error) {
 }
 
 function adminOrigin(env) {
+  return ADMIN_ORIGIN;
+}
+
+function adminEmail(env) {
+  const email = String(env.ADMIN_EMAIL || '').trim().toLowerCase();
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+$/.test(email) ? email : null;
+}
+
+function localAuthRequest(url, env) {
+  if (env.ALLOW_LOCAL_AUTH !== 'true' || !LOCAL_HOSTS.has(url.hostname)) return false;
   try {
-    const configured = new URL(env.PORTFOLIO_ADMIN_ORIGIN || ADMIN_ORIGIN);
-    if (configured.protocol !== 'https:' || configured.hostname.endsWith('.workers.dev') || configured.username || configured.password) return null;
-    return configured.origin;
+    const configured = new URL(env.BETTER_AUTH_URL || '');
+    return configured.protocol === 'http:' && LOCAL_HOSTS.has(configured.hostname) && configured.origin === url.origin;
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -100,15 +121,17 @@ export async function handleJudgingSyncGateway(request, env) {
   return proxyResponse(await env.ADMIN.fetch(new Request(request, { headers, redirect: 'manual' })));
 }
 
-function trustedHeaders(request, env, analytics = false) {
+function trustedHeaders(request, env, options = {}) {
+  const analytics = options.analytics === true;
+  const owner = options.owner === true;
   const headers = new Headers(request.headers);
   for (const name of [...headers.keys()]) {
     const lower = name.toLowerCase();
     if (lower.startsWith('x-portfolio-') || lower.startsWith('x-forwarded-') || lower === 'authorization' || lower === 'cookie'
       || ['host', 'forwarded', 'x-real-ip', 'true-client-ip', 'x-original-url', 'x-original-host', 'x-rewrite-url', 'x-http-method-override'].includes(lower)
-      || (lower.startsWith('cf-') && lower !== 'cf-access-jwt-assertion')) headers.delete(name);
+      || lower.startsWith('cf-')) headers.delete(name);
   }
-  const origin = new URL(adminOrigin(env) || ADMIN_ORIGIN);
+  const origin = new URL(request.url);
   headers.set('x-portfolio-gateway', env.PORTFOLIO_GATEWAY_TOKEN);
   headers.set('x-forwarded-proto', origin.protocol.slice(0, -1));
   headers.set('x-forwarded-host', origin.host);
@@ -116,14 +139,14 @@ function trustedHeaders(request, env, analytics = false) {
     const cookies = (request.headers.get('Cookie') || '').split(';').map((part) => part.trim())
       .filter((part) => /^__Host-portfolio-(visitor|session)=/.test(part));
     if (cookies.length) headers.set('Cookie', cookies.join('; '));
-  } else {
-    const assertion = tokenFromRequest(request);
-    if (assertion) headers.set('Cf-Access-Jwt-Assertion', assertion);
+  } else if (owner) {
+    headers.set('x-portfolio-admin-id', 'root');
+    headers.set('x-portfolio-admin-email', adminEmail(env) || '');
   }
   return headers;
 }
 
-function proxyResponse(response) {
+function proxyResponse(response, setCookies = []) {
   const headers = new Headers(response.headers);
   headers.set('Cache-Control', 'no-store');
   headers.set('X-Robots-Tag', 'noindex, nofollow');
@@ -133,23 +156,66 @@ function proxyResponse(response) {
   const csp = (headers.get('Content-Security-Policy') || '').split(';').map((directive) => directive.trim()).filter((directive) => directive && !/^frame-ancestors\b/i.test(directive));
   csp.push("frame-ancestors 'none'");
   headers.set('Content-Security-Policy', csp.join('; '));
+  for (const cookie of setCookies) {
+    if (typeof cookie === 'string' && cookie) headers.append('Set-Cookie', cookie);
+  }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function isPublicAdminAsset(pathname) {
+  if (PUBLIC_ADMIN_ASSETS.has(pathname)) return true;
+  return pathname.startsWith('/admin/_nuxt/') || pathname.startsWith('/admin/_i18n/');
+}
+
+function redirectToLogin(url) {
+  const target = safeAdminReturnPath(`${url.pathname}${url.search}`);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: `${url.origin}/admin/login?redirect=${encodeURIComponent(target)}`,
+      'Cache-Control': 'no-store',
+      'X-Robots-Tag': 'noindex, nofollow',
+    },
+  });
 }
 
 export async function handleAdminGateway(request, env, options = {}) {
   const url = new URL(request.url);
-  const local = LOCAL_HOSTS.has(url.hostname) && env.ALLOW_LOCAL_ADMIN === 'true';
+  const mode = authMode(env);
+  const local = mode === 'better-auth'
+    ? localAuthRequest(url, env)
+    : LOCAL_HOSTS.has(url.hostname) && env.ALLOW_LOCAL_ADMIN === 'true';
+  const localAccessBypass = local && mode === 'access' && env.ALLOW_LOCAL_ADMIN === 'true' && adminEmail(env);
   if (url.origin !== adminOrigin(env) && !local) return reply(404, 'Not Found');
   if (!env.ADMIN || !env.PORTFOLIO_GATEWAY_TOKEN) return reply(503, 'Admin service is not configured');
-  if (!local && !await validateAccessIdentity(request, env, options)) return reply(401, 'Cloudflare Access owner sign-in required');
+
+  const apiRequest = url.pathname === '/api/admin' || url.pathname.startsWith('/api/admin/');
+  const publicGuest = ['GET', 'HEAD'].includes(request.method)
+    && (url.pathname === '/admin/login' || isPublicAdminAsset(url.pathname));
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.headers.get('Origin') !== url.origin) return reply(403, 'Cross-origin admin writes are not allowed');
+  let identity = null;
+  if (!publicGuest) {
+    if (!mode) return reply(503, 'Admin authentication mode is invalid');
+    if (localAccessBypass) {
+      identity = { id: 'root', email: adminEmail(env) };
+    } else if (mode === 'access') {
+      identity = await validateAccessIdentity(request, env, options);
+    } else {
+      identity = await (options.validateBetterAuthIdentity
+        ? options.validateBetterAuthIdentity(request, env)
+        : validateBetterAuthIdentity(request, env, options));
+    }
+    if (!identity) return apiRequest ? reply(401, 'Admin sign-in required') : redirectToLogin(url);
+  }
+
   const target = new URL(url);
   if (url.pathname === '/api/admin/overview') target.pathname = '/api/portfolio/overview';
   else if (url.pathname.startsWith('/api/admin/portfolio/')) target.pathname = url.pathname.replace('/api/admin/portfolio/', '/api/portfolio/');
   else if (url.pathname.startsWith('/api/admin/sink/')) target.pathname = url.pathname.replace('/api/admin/sink/', '/api/');
   const upstream = new Request(target, request);
-  const headers = trustedHeaders(request, env);
-  return proxyResponse(await env.ADMIN.fetch(new Request(upstream, { headers, redirect: 'manual' })));
+  const headers = trustedHeaders(request, env, { owner: Boolean(identity) });
+  const response = await env.ADMIN.fetch(new Request(upstream, { headers, redirect: 'manual' }));
+  return proxyResponse(response, identity?.setCookies);
 }
 
 export async function handleAnalyticsGateway(request, env) {
@@ -182,8 +248,7 @@ export async function handleAnalyticsGateway(request, env) {
   for (const chunk of chunks) { bodyBytes.set(chunk, offset); offset += chunk.byteLength; }
   const body = new TextDecoder().decode(bodyBytes);
   if (env.EVENT_RATE_LIMITER && !(await env.EVENT_RATE_LIMITER.limit({ key: request.headers.get('CF-Connecting-IP') || 'unknown' })).success) return reply(429, 'Too many event batches');
-  const headers = trustedHeaders(request, env, true);
-  headers.delete('Cf-Access-Jwt-Assertion');
+  const headers = trustedHeaders(request, env, { analytics: true });
   const cf = request.cf || {};
   headers.set('x-portfolio-meta', JSON.stringify({
     ip: request.headers.get('CF-Connecting-IP') || null,

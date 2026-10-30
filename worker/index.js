@@ -886,6 +886,11 @@ async function handleApi(request, env, url) {
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
 
+  if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) {
+    const { handlePortfolioAuth } = await import('./auth.js');
+    return handlePortfolioAuth(request, env);
+  }
+
   if (url.pathname === '/api/judging-sync/pair' || url.pathname.startsWith('/api/judging-sync/sdc-2026/')) {
     const { handleJudgingSyncGateway } = await import('./admin-gateway.js');
     return handleJudgingSyncGateway(request, env);
