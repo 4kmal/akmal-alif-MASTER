@@ -319,6 +319,33 @@ test('unapproved and unverified Google identities do not write after an approved
   assert.deepEqual(authCounts(db), approvedCounts);
 });
 
+test('approved account insert failure leaves no authorized orphan and a later login recovers', async () => {
+  const db = new D1Shim();
+  const runtimeEnv = env(db);
+  const options = authOptions(
+    { id: 'google-owner', email: 'iamaleep@gmail.com', emailVerified: true },
+    { id: '44127834', email: 'private-github@example.com', emailVerified: true },
+  );
+  db.exec(`
+    CREATE TRIGGER fail_auth_account_insert
+    BEFORE INSERT ON auth_account
+    BEGIN
+      SELECT RAISE(ABORT, 'injected account failure');
+    END;
+  `);
+
+  const failedLogin = await signIn(db, runtimeEnv, options, 'google');
+  assert.equal(new URL(failedLogin.callback.headers.get('Location'), origin).origin, origin);
+  assert.deepEqual(authCounts(db), [1, 0, 0]);
+  assert.equal(await validateBetterAuthIdentity(new Request(`${origin}/admin`, { headers: { Cookie: failedLogin.cookie } }), runtimeEnv, options), null);
+
+  db.exec('DROP TRIGGER fail_auth_account_insert');
+  const recoveredLogin = await signIn(db, runtimeEnv, options, 'google');
+  assert.equal(new URL(recoveredLogin.callback.headers.get('Location'), origin).pathname, '/admin');
+  assert.deepEqual(authCounts(db), [1, 1, 1]);
+  assert.ok(await validateBetterAuthIdentity(new Request(`${origin}/admin`, { headers: { Cookie: recoveredLogin.cookie } }), runtimeEnv, options));
+});
+
 test('GitHub requires the immutable approved id and a verified primary email', async () => {
   const db = new D1Shim();
   const googleProfile = { id: 'google-owner', email: 'iamaleep@gmail.com', emailVerified: true };
