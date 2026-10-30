@@ -22,7 +22,11 @@ caching is disabled so deleted sessions stop authorizing requests immediately.
 
 ## Root environment and providers
 
-Keep the credentials in the ignored repository-root `.env`:
+Keep the credentials in the ignored repository-root `.env`.
+
+The root `.htaccess` denies credential files and private workspace directories when
+XAMPP Apache serves this checkout. Vite also denies environment files, and the
+Cloudflare build excludes them from its assets.
 
 ```dotenv
 BETTER_AUTH_URL=https://www.akmalalif.com
