@@ -62,6 +62,9 @@ Get-Clipboard -Raw | node scripts/admin-auth-secrets.mjs set GOOGLE_CLIENT_SECRE
 
 Use the corresponding allowlisted key for each client ID or secret. The setter
 rejects injected environment lines and preserves other root settings.
+Copy Google's full client ID from the client details; its list view abbreviates
+the ID. Storage and upload reject abbreviated IDs and credentials belonging to
+the other provider.
 
 Create a dedicated Google Web application and GitHub OAuth App named **Akmal Alif
 Admin**. Set the homepage/origin to `https://www.akmalalif.com` and register:

@@ -12,6 +12,20 @@ export const AUTH_SECRET_KEYS = Object.freeze([
   'GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET',
 ]);
 
+const credentialFormats = {
+  GOOGLE_CLIENT_ID: /^\d+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/,
+  GOOGLE_CLIENT_SECRET: /^GOCSPX-[A-Za-z0-9_-]{16,}$/,
+  GITHUB_CLIENT_ID: /^[A-Za-z0-9]{20}$/,
+  GITHUB_CLIENT_SECRET: /^[a-f0-9]{40}$/i,
+};
+
+function validateCredential(key, value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_./:+@=-]+$/.test(value)
+    || (credentialFormats[key] && !credentialFormats[key].test(value))) {
+    throw new Error(`Invalid credential format for ${key}`);
+  }
+}
+
 export function initializeAuthEnv(source, secret = randomBytes(48).toString('base64url')) {
   const env = parseEnv(source);
   const defaults = {
@@ -31,12 +45,13 @@ export function getAuthSecrets(source) {
   const missing = AUTH_SECRET_KEYS.filter(key => !env[key]?.trim());
   if (missing.length) throw new Error(`Missing authentication settings: ${missing.join(', ')}`);
   if (env.BETTER_AUTH_SECRET.length < 32) throw new Error('BETTER_AUTH_SECRET must contain at least 32 characters');
+  for (const key of AUTH_SECRET_KEYS) validateCredential(key, env[key]);
   return Object.fromEntries(AUTH_SECRET_KEYS.map(key => [key, env[key]]));
 }
 
 export function setAuthCredential(source, key, value) {
   if (!AUTH_SECRET_KEYS.includes(key)) throw new Error('Unsupported authentication credential name');
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_./:+@=-]+$/.test(value)) throw new Error(`Invalid credential format for ${key}`);
+  validateCredential(key, value);
   const pattern = new RegExp(`^[\\t ]*(?:export[\\t ]+)?${key}[\\t ]*=.*$`, 'gm');
   const matches = [...source.matchAll(pattern)];
   if (matches.length > 1 || /[\r\n]/.test(parseEnv(source)[key] || '')) throw new Error(`Resolve duplicate or multiline ${key} before replacing it`);
