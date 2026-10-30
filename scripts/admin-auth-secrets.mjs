@@ -47,7 +47,10 @@ export function setAuthCredential(source, key, value) {
 }
 
 async function main(command) {
-  const source = await readFile(envPath, 'utf8');
+  const source = await readFile(envPath, 'utf8').catch(error => {
+    if (command === 'init' && error.code === 'ENOENT') return '';
+    throw error;
+  });
   if (command === 'init') {
     const updated = initializeAuthEnv(source);
     if (updated !== source) await writeFile(envPath, updated, { mode: 0o600 });

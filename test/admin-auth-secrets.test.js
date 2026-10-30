@@ -17,6 +17,7 @@ test('auth initialization generates a sufficiently long secret and handles a mis
   const result = initializeAuthEnv('PORTFOLIO_DEV_BACKEND=https://www.akmalalif.com');
   assert.ok(result.startsWith('PORTFOLIO_DEV_BACKEND=https://www.akmalalif.com\n'));
   assert.match(parseEnv(result).BETTER_AUTH_SECRET, /^[A-Za-z0-9_-]{64}$/);
+  assert.equal(parseEnv(initializeAuthEnv('')).ADMIN_GITHUB_ID, '44127834');
 });
 
 test('secret upload selects only auth credentials from a mixed root environment', () => {
