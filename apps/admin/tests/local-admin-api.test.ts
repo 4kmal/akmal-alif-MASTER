@@ -9,6 +9,13 @@ describe('local owner API routing', () => {
     expect(getAdminApiPath('/api/link/list', 'localhost', 'http://localhost:7466')).toBe('/api/link/list')
   })
 
+  it('opts local portfolio gateway routing in without changing direct native paths', () => {
+    expect(getAdminApiPath('/api/verify', 'localhost', 'http://localhost:8794', true, 'http://localhost:8794')).toBe('/api/admin/sink/verify')
+    expect(getAdminApiPath('/api/link/list', 'localhost', 'http://localhost:8794', true, 'http://localhost:8794')).toBe('/api/admin/sink/link/list')
+    expect(getAdminApiPath('/api/link/list', 'localhost', 'http://localhost:8795', false, 'http://localhost:8795')).toBe('/api/link/list')
+    expect(getAdminApiPath('/api/verify', 'localhost', 'http://localhost:8794', true, 'http://localhost:8795')).toBe('/api/verify')
+  })
+
   it('keeps the owner gateway adapter for the production portfolio origin', () => {
     expect(getAdminApiPath('/api/link/create', 'www.akmalalif.com', 'https://www.akmalalif.com')).toBe('/api/admin/sink/link/create')
     expect(getAdminApiPath('/api/admin/overview', 'www.akmalalif.com', 'https://www.akmalalif.com')).toBe('/api/admin/overview')
@@ -19,5 +26,6 @@ describe('local owner API routing', () => {
     expect(isAuthApiPath('/api/auth/sign-in/social')).toBe(true)
     expect(isAuthApiPath('/api/authentication')).toBe(false)
     expect(getAdminApiPath('/api/auth/get-session', 'www.akmalalif.com', 'https://www.akmalalif.com')).toBe('/api/auth/get-session')
+    expect(getAdminApiPath('/api/auth/get-session', 'localhost', 'http://localhost:8794', true, 'http://localhost:8794')).toBe('/api/auth/get-session')
   })
 })

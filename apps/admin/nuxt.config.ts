@@ -73,7 +73,8 @@ export default defineNuxtConfig({
     webhookSecret: '',
     public: {
       previewMode: (process.env.NUXT_PUBLIC_PREVIEW_MODE || '').trim().toLowerCase() === 'true',
-      adminOrigin: process.env.PORTFOLIO_ADMIN_ORIGIN || 'https://www.akmalalif.com',
+      adminOrigin: process.env.NUXT_PUBLIC_ADMIN_ORIGIN || process.env.PORTFOLIO_ADMIN_ORIGIN || 'https://www.akmalalif.com',
+      adminGateway: process.env.NUXT_PUBLIC_ADMIN_GATEWAY === 'true',
       shortlinkOrigin: process.env.SHORTLINK_ORIGIN || 'https://go.akmalalif.com',
       slugDefaultLength: '6',
       kvBatchLimit: '50',

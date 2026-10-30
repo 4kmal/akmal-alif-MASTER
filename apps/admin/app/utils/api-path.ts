@@ -19,13 +19,36 @@ export function isAuthApiPath(api: string): boolean {
   return path === '/api/auth' || path.startsWith('/api/auth/')
 }
 
-export function getAdminApiPath(api: string, hostname: string, adminOrigin: string): string {
+function isLocalGatewayOrigin(hostname: string, adminOrigin: string, browserOrigin?: string): boolean {
+  if (!isLocalAdminHostname(hostname))
+    return false
+
+  try {
+    const configured = new URL(adminOrigin)
+    if (!isLocalAdminHostname(configured.hostname) || configured.hostname !== hostname)
+      return false
+    if (!browserOrigin)
+      return true
+    return new URL(browserOrigin).origin === configured.origin
+  }
+  catch {
+    return false
+  }
+}
+
+export function getAdminApiPath(
+  api: string,
+  hostname: string,
+  adminOrigin: string,
+  localGateway = false,
+  browserOrigin?: string,
+): string {
   if (isAuthApiPath(api))
     return api
 
   if (
     isWebAdminHostname(hostname, adminOrigin)
-    && !isLocalAdminHostname(hostname)
+    && (!isLocalAdminHostname(hostname) || (localGateway && isLocalGatewayOrigin(hostname, adminOrigin, browserOrigin)))
     && api.startsWith('/api/')
     && !api.startsWith('/api/admin/')
   ) {

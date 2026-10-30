@@ -12,8 +12,9 @@ export async function useAPI(api: string, options?: APIOptions): Promise<unknown
   const { headers, ...fetchOptions } = options ?? {}
   const publicConfig = useRuntimeConfig().public
   const browserHostname = import.meta.client ? window.location.hostname : ''
+  const browserOrigin = import.meta.client ? window.location.origin : ''
   const isWebAdmin = import.meta.client && isWebAdminHostname(browserHostname, publicConfig.adminOrigin)
-  const requestPath = getAdminApiPath(api, browserHostname, publicConfig.adminOrigin)
+  const requestPath = getAdminApiPath(api, browserHostname, publicConfig.adminOrigin, publicConfig.adminGateway, browserOrigin)
   const requestOptions: NitroFetchOptions<NitroFetchRequest> = {
     ...fetchOptions,
     // Keep API requests at the origin root; only browser assets and page
