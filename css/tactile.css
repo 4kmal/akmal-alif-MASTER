@@ -796,23 +796,8 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
 }
 
-/* Drawer and compact profile breakpoint */
+/* Drawer breakpoint */
 @media (max-width: 1279px) {
-  .home-content-wrapper {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    max-width: 800px;
-    padding-top: 8px;
-  }
-
-  #clock-widget-placeholder {
-    display: block;
-    order: -1;
-    width: 100%;
-  }
-
   .clock-widget-panel {
     display: block;
     position: relative;
@@ -821,39 +806,6 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
     max-width: 800px;
     max-height: none;
     padding: 16px !important;
-  }
-
-  .clock-widget-panel .profile-card-container {
-    display: grid;
-    grid-template-columns: 248px minmax(0, 1fr);
-    grid-template-areas: 'focus context';
-    column-gap: 20px;
-    align-items: stretch;
-  }
-
-  .clock-widget-panel .bento-profile-header {
-    grid-area: focus;
-  }
-
-  .clock-widget-panel .profile-context {
-    grid-area: context;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 8px;
-  }
-
-  .clock-widget-panel .profile-stats {
-    min-width: 0;
-    padding: 0 0 0 16px;
-    margin: 0;
-    border-top: 0;
-    border-left: 1px solid var(--portfolio-border);
-  }
-
-  .main-content-column {
-    order: 1;
-    width: 100%;
   }
 
   .tracklist-panel {
@@ -946,7 +898,22 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   }
 }
 
+/* Phones stack the profile rail above the card. */
 @media (max-width: 599px) {
+  .home-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    max-width: 800px;
+    padding-top: 8px;
+  }
+
+  .main-content-column {
+    order: 1;
+    width: 100%;
+  }
+
   .clock-widget-panel .profile-card-container {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -970,6 +937,7 @@ body.dark .typing-effect .dynamic-text li.active-text-item {
   .clock-widget-panel .profile-context {
     grid-area: context;
     display: grid;
+    justify-content: center;
     gap: 8px;
     min-width: 0;
   }
@@ -1393,13 +1361,14 @@ body.tracklist-drawer-open {
   line-height: 1.4;
 }
 
-@media (max-width: 1279px) {
+@media (max-width: 599px) {
   #clock-widget-placeholder {
     width: 100%;
     order: -1;
   }
 
   .calendar-rail {
+    gap: 10px;
     width: 100%;
     max-width: 800px;
     max-height: none;
@@ -1408,22 +1377,91 @@ body.tracklist-drawer-open {
     overflow: visible;
   }
 
-  .calendar-rail .clock-widget-panel,
-  .calendar-rail .my-calendar-card {
-    width: 100%;
-  }
-}
-
-@media (max-width: 599px) {
-  .calendar-rail {
-    gap: 10px;
-  }
-
   .calendar-rail .clock-widget-panel {
     padding: 14px !important;
   }
 
   .my-calendar-card {
     padding: 14px;
+  }
+}
+
+/* Tablets keep the card and the calendar rail side by side. */
+@media (min-width: 600px) and (max-width: 1279px) {
+  .home-content-wrapper {
+    display: grid;
+    grid-template-columns: minmax(0, 800px) clamp(240px, 30vw, 320px);
+    justify-content: center;
+    gap: 16px;
+    max-width: 1136px;
+    padding-top: 8px;
+  }
+
+  .main-content-column {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  /* The placeholder keeps its stretched row height so the rail can stay sticky. */
+  #clock-widget-placeholder {
+    grid-column: 2;
+    grid-row: 1;
+    width: auto;
+  }
+
+  .calendar-rail {
+    width: 100%;
+  }
+
+  .calendar-card-header {
+    flex-wrap: wrap;
+  }
+
+  .clock-skeleton {
+    display: block;
+    min-height: 320px;
+  }
+}
+
+/* Short landscape screens keep the rail in flow instead of a hidden inner scroller. */
+@media (min-width: 600px) and (max-width: 1279px) and (max-height: 599px) {
+  .calendar-rail {
+    max-height: none;
+    position: relative;
+    top: auto;
+    overflow: visible;
+  }
+}
+
+/* Below 768px the card is phone-width, so it borrows the phone typography. */
+@media (min-width: 600px) and (max-width: 767px) {
+  .typing-effect {
+    font-size: 1.3rem;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .typing-effect .static-text {
+    margin-right: 0;
+    margin-bottom: 0.3em;
+  }
+
+  .typing-effect .dynamic-text-wrapper {
+    height: calc(1.3rem * 1.2 * 3);
+    text-align: center;
+  }
+
+  .typing-effect .dynamic-text li {
+    height: calc(1.3rem * 1.2);
+  }
+
+  .links-inner a span {
+    display: none;
+  }
+
+  .links-inner a {
+    min-height: 44px;
+    padding: 12px 16px;
+    gap: 0;
   }
 }
