@@ -14,7 +14,15 @@ export function isWebAdminHostname(hostname: string, adminOrigin: string): boole
   }
 }
 
+export function isAuthApiPath(api: string): boolean {
+  const path = api.split('?', 1)[0] ?? ''
+  return path === '/api/auth' || path.startsWith('/api/auth/')
+}
+
 export function getAdminApiPath(api: string, hostname: string, adminOrigin: string): string {
+  if (isAuthApiPath(api))
+    return api
+
   if (
     isWebAdminHostname(hostname, adminOrigin)
     && !isLocalAdminHostname(hostname)

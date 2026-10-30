@@ -54,6 +54,7 @@ export default defineNuxtConfig({
     portfolioAdminOrigin: process.env.PORTFOLIO_ADMIN_ORIGIN || 'https://www.akmalalif.com',
     shortlinkOrigin: process.env.SHORTLINK_ORIGIN || 'https://go.akmalalif.com',
     portfolioGatewayToken: process.env.PORTFOLIO_GATEWAY_TOKEN || '',
+    allowLocalAuth: process.env.ALLOW_LOCAL_AUTH === 'true',
     allowLocalAdmin: process.env.ALLOW_LOCAL_ADMIN === 'true',
     adminEmail: process.env.NUXT_ADMIN_EMAIL || process.env.ADMIN_EMAIL || '',
     portfolioAnalyticsUrl: process.env.PORTFOLIO_ANALYTICS_URL || '',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getAdminApiPath, isLocalAdminHostname, isWebAdminHostname } from '../app/utils/api-path'
+import { getAdminApiPath, isAuthApiPath, isLocalAdminHostname, isWebAdminHostname } from '../app/utils/api-path'
 
 describe('local owner API routing', () => {
   it('keeps native Sink CRUD paths on an explicitly local origin', () => {
@@ -12,5 +12,12 @@ describe('local owner API routing', () => {
   it('keeps the owner gateway adapter for the production portfolio origin', () => {
     expect(getAdminApiPath('/api/link/create', 'www.akmalalif.com', 'https://www.akmalalif.com')).toBe('/api/admin/sink/link/create')
     expect(getAdminApiPath('/api/admin/overview', 'www.akmalalif.com', 'https://www.akmalalif.com')).toBe('/api/admin/overview')
+  })
+
+  it('keeps BetterAuth on the canonical same-origin auth route', () => {
+    expect(isAuthApiPath('/api/auth')).toBe(true)
+    expect(isAuthApiPath('/api/auth/sign-in/social')).toBe(true)
+    expect(isAuthApiPath('/api/authentication')).toBe(false)
+    expect(getAdminApiPath('/api/auth/get-session', 'www.akmalalif.com', 'https://www.akmalalif.com')).toBe('/api/auth/get-session')
   })
 })

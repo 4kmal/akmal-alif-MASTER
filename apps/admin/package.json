@@ -41,6 +41,9 @@
     "preview:worker:local": "wrangler dev .output/server/index.mjs --assets .output/public --config wrangler.local.jsonc --local --port 8788",
     "postinstall": "nuxt prepare"
   },
+  "dependencies": {
+    "better-auth": "1.7.14"
+  },
   "devDependencies": {
     "@antfu/eslint-config": "^9.1.0",
     "@cloudflare/vitest-pool-workers": "^0.18.4",

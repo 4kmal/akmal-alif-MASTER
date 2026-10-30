@@ -1,4 +1,5 @@
 import { ingestPortfolioEvents } from '../../services/portfolio-analytics'
+import { authoritativeRequestOrigin, normalizePortfolioOrigin } from '../../utils/portfolio-gateway'
 import { getRuntimeString } from '../../utils/runtime-config'
 
 export default eventHandler(async (event) => {
@@ -7,9 +8,8 @@ export default eventHandler(async (event) => {
     throw createError({ status: 401, statusText: 'Analytics gateway authentication failed' })
   }
 
-  const requestUrl = getRequestURL(event)
   const adminOrigin = getRuntimeString(event, 'portfolioAdminOrigin', 'PORTFOLIO_ADMIN_ORIGIN')
-  if (requestUrl.origin !== adminOrigin) {
+  if (authoritativeRequestOrigin(event) !== normalizePortfolioOrigin(adminOrigin)) {
     throw createError({ status: 403, statusText: 'Analytics ingestion is restricted to the portfolio origin' })
   }
 

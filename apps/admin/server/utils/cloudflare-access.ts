@@ -147,12 +147,12 @@ export function isCloudflareAccessConfigured(teamDomain: string, audience: strin
   return !!normalizeCloudflareAccessIssuer(teamDomain) && !!audience.trim()
 }
 
-export function isCloudflareAccessRequestAllowed(event: H3Event): boolean {
+export function isCloudflareAccessRequestAllowed(event: H3Event, requestOrigin = getRequestURL(event).origin): boolean {
   return isCloudflareAccessRequestSafe({
     method: event.method,
     hasAccessCookie: !!getCookie(event, 'CF_Authorization'),
     origin: getHeader(event, 'Origin'),
-    requestOrigin: getRequestURL(event).origin,
+    requestOrigin,
     secFetchSite: getHeader(event, 'Sec-Fetch-Site'),
   })
 }

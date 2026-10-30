@@ -103,6 +103,7 @@ describe('admin authentication route boundaries', () => {
       portfolioGatewayToken: 'gateway-secret',
       shortlinkOrigin: 'https://go.akmalalif.com',
       siteToken: 'public-site-token',
+      allowLocalAuth: false,
       allowLocalAdmin: false,
       cfAccessTeamDomain: 'restless-moon-2787.cloudflareaccess.com',
       cfAccessAud: audience,
@@ -177,6 +178,97 @@ describe('admin authentication route boundaries', () => {
     expect(response.body).toContain('Unauthorized')
   })
 
+  it('accepts only the trusted owner gateway identity at the canonical origin', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      adminEmail: 'iamaleep@gmail.com',
+      // The Node test listener is plain HTTP; the host header models the
+      // configured canonical production host without enabling the localhost
+      // bypass.
+      portfolioAdminOrigin: 'http://www.akmalalif.com',
+      portfolioGatewayToken: 'gateway-secret',
+      shortlinkOrigin: 'https://go.akmalalif.com',
+      siteToken: 'public-site-token',
+      allowLocalAuth: false,
+      allowLocalAdmin: false,
+      cfAccessTeamDomain: '',
+      cfAccessAud: '',
+    }))
+    await startAuthRoute()
+    const headers = {
+      'host': 'www.akmalalif.com',
+      'x-portfolio-gateway': 'gateway-secret',
+      'x-portfolio-admin-id': 'root',
+      'x-portfolio-admin-email': 'iamaleep@gmail.com',
+    }
+
+    const owner = await requestAuth(headers)
+    expect(owner.status).toBe(200)
+
+    const gatewayOnly = await requestAuth({
+      'host': 'www.akmalalif.com',
+      'x-portfolio-gateway': 'gateway-secret',
+    })
+    expect(gatewayOnly.status).toBe(401)
+
+    const missingOwner = await requestAuth({
+      ...headers,
+      'x-portfolio-admin-id': '',
+    })
+    expect(missingOwner.status).toBe(401)
+
+    const wrongOwner = await requestAuth({
+      ...headers,
+      'x-portfolio-admin-email': 'attacker@example.com',
+    })
+    expect(wrongOwner.status).toBe(401)
+
+    const crossOriginWrite = await requestAuth({
+      ...headers,
+      origin: 'https://evil.example',
+    }, '/api/admin/overview', 'POST')
+    expect(crossOriginWrite.status).toBe(403)
+
+    const missingOriginWrite = await requestAuth(headers, '/api/admin/overview', 'POST')
+    expect(missingOriginWrite.status).toBe(403)
+
+    const forwardedSpoof = await requestAuth({
+      ...headers,
+      'x-forwarded-host': 'go.akmalalif.com',
+      'x-forwarded-proto': 'https',
+    })
+    expect(forwardedSpoof.status).toBe(200)
+  })
+
+  it('allows a validated local BetterAuth gateway session only with ALLOW_LOCAL_AUTH', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      adminEmail: 'iamaleep@gmail.com',
+      portfolioAdminOrigin: origin,
+      portfolioGatewayToken: 'gateway-secret',
+      shortlinkOrigin: 'https://go.akmalalif.com',
+      siteToken: '',
+      allowLocalAuth: true,
+      allowLocalAdmin: false,
+      cfAccessTeamDomain: '',
+      cfAccessAud: '',
+    }))
+    await startAuthRoute()
+    const headers = {
+      'host': new URL(origin).host,
+      'x-portfolio-gateway': 'gateway-secret',
+      'x-portfolio-admin-id': 'root',
+      'x-portfolio-admin-email': 'iamaleep@gmail.com',
+    }
+
+    const owner = await requestAuth(headers)
+    expect(owner.status).toBe(200)
+
+    const gatewayOnly = await requestAuth({
+      'host': new URL(origin).host,
+      'x-portfolio-gateway': 'gateway-secret',
+    })
+    expect(gatewayOnly.status).toBe(401)
+  })
+
   it('allows local native Sink APIs only with the explicit bypass and same-origin writes', async () => {
     vi.stubGlobal('useRuntimeConfig', () => ({
       adminEmail: 'iamaleep@gmail.com',
@@ -184,6 +276,7 @@ describe('admin authentication route boundaries', () => {
       portfolioGatewayToken: '',
       shortlinkOrigin: origin,
       siteToken: '',
+      allowLocalAuth: false,
       allowLocalAdmin: true,
       cfAccessTeamDomain: '',
       cfAccessAud: '',

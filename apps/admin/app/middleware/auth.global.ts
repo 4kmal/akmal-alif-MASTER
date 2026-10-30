@@ -1,4 +1,5 @@
 import type { VerifyResponse } from '@/types'
+import { adminLoginURL, safeAdminReturnPath } from '@/utils/auth-redirect'
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (import.meta.server)
@@ -14,11 +15,11 @@ export default defineNuxtRouteMiddleware(async (to) => {
     setAuthSession(response)
 
     if (to.path === '/admin/login')
-      return navigateTo('/admin')
+      return navigateTo(safeAdminReturnPath(to.query.redirect))
   }
   catch {
     clearAuthSession()
     if (to.path !== '/admin/login')
-      return abortNavigation()
+      return navigateTo(adminLoginURL(to.fullPath))
   }
 })

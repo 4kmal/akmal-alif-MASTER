@@ -1,6 +1,13 @@
-import type { H3Event } from 'h3'
 import { timingSafeEqual } from 'node:crypto'
 import { authenticateJudgingDeviceRequest } from '../utils/judging'
+import {
+  authoritativeRequestOrigin,
+  getTrustedPortfolioGatewayIdentity,
+  isLocalHostname,
+  isPortfolioGatewayTokenValid,
+  isSameOriginBrowserRequest,
+  normalizePortfolioOrigin,
+} from '../utils/portfolio-gateway'
 import { getRuntimeBoolean, getRuntimeString } from '../utils/runtime-config'
 
 export default eventHandler(async (event) => {
@@ -17,28 +24,35 @@ export default eventHandler(async (event) => {
   if (!event.path.startsWith('/api/') && !isAnalyticsIngest && !isRuntimeRequest)
     return
 
+  if (event.path === '/api/auth' || event.path.startsWith('/api/auth/'))
+    return
+
   const adminEmail = getRuntimeString(event, 'adminEmail', 'ADMIN_EMAIL')
   const adminOrigin = getRuntimeString(event, 'portfolioAdminOrigin', 'PORTFOLIO_ADMIN_ORIGIN')
   const gatewaySecret = getRuntimeString(event, 'portfolioGatewayToken', 'PORTFOLIO_GATEWAY_TOKEN')
   const shortlinkOrigin = getRuntimeString(event, 'shortlinkOrigin', 'SHORTLINK_ORIGIN')
   const siteToken = getRuntimeString(event, 'siteToken', 'SITE_TOKEN')
+  const allowLocalAuth = getRuntimeBoolean(event, 'allowLocalAuth', 'ALLOW_LOCAL_AUTH')
   const allowLocalAdmin = getRuntimeBoolean(event, 'allowLocalAdmin', 'ALLOW_LOCAL_ADMIN')
-  const requestUrl = getRequestURL(event)
-  const gatewayToken = getHeader(event, 'x-portfolio-gateway')
-  const gatewayAuthorized = !!gatewaySecret
-    && !!gatewayToken
-    && gatewayToken === gatewaySecret
+  const requestOrigin = authoritativeRequestOrigin(event)
+  const requestHostname = hostnameFromOrigin(requestOrigin)
+  const gatewayAuthorized = isPortfolioGatewayTokenValid(event, gatewaySecret)
+  const trustedGatewayIdentity = getTrustedPortfolioGatewayIdentity(event, {
+    adminEmail,
+    adminOrigin,
+    gatewaySecret,
+  })
 
   const shortlinkHost = hostnameFromOrigin(shortlinkOrigin)
-  const isShortlinkHost = shortlinkHost && requestUrl.hostname === shortlinkHost
+  const isShortlinkHost = shortlinkHost && requestHostname === shortlinkHost
   const token = getHeader(event, 'Authorization')?.replace(/^Bearer\s+/, '')
-  const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(requestUrl.hostname)
+  const isLocal = isLocalHostname(requestHostname)
 
   if (isAnalyticsIngest) {
     if (!gatewayAuthorized) {
       throw createError({ status: 401, statusText: 'Analytics gateway authentication failed' })
     }
-    if (!isLocal && requestUrl.origin !== adminOrigin) {
+    if (!isLocal && requestOrigin !== normalizePortfolioOrigin(adminOrigin)) {
       throw createError({ status: 403, statusText: 'Analytics ingestion is restricted to the portfolio origin' })
     }
     if (!getHeader(event, 'x-portfolio-meta')) {
@@ -50,7 +64,13 @@ export default eventHandler(async (event) => {
     return
   }
 
-  if (gatewayAuthorized && isLocal && allowLocalAdmin) {
+  // Local BetterAuth QA still requires the validated gateway identity and a
+  // separate opt-in; ALLOW_LOCAL_ADMIN remains the native local bypass.
+  if (trustedGatewayIdentity && (!isLocal || allowLocalAuth)) {
+    const writeRequest = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(event.method)
+    if (writeRequest && !isSameOriginBrowserRequest(event, requestOrigin)) {
+      throw createError({ status: 403, statusText: 'Admin requests must use the same origin' })
+    }
     event.context.authMethod = 'portfolio-gateway'
     event.context.userID = 'root'
     event.context.userEmail = adminEmail
@@ -64,14 +84,11 @@ export default eventHandler(async (event) => {
     || event.path === '/api/internal'
     || event.path.startsWith('/api/internal/')
     || isRuntimeRequest
-  const isJudgingOwnerRoute = event.path === '/api/admin/judging'
-    || event.path.startsWith('/api/admin/judging/')
-
   // Local browser QA uses an explicit opt-in and never reaches a production
   // origin. Keep the local path useful without putting a bearer token in the
   // dashboard bundle or localStorage.
   if (isLocal && allowLocalAdmin && (event.path.startsWith('/api/') || isRuntimeRequest)) {
-    if (!isLocalRequestAllowed(event, requestUrl)) {
+    if (!isSameOriginBrowserRequest(event, requestOrigin)) {
       throw createError({ status: 403, statusText: 'Local admin requests must use the same origin' })
     }
 
@@ -84,7 +101,7 @@ export default eventHandler(async (event) => {
   if (isShortlinkHost && !isOwnerOnlyRoute && await verifySiteToken(token, siteToken)) {
     event.context.authMethod = 'site-token'
     event.context.userID = 'root'
-    event.context.userEmail = `root@${requestUrl.hostname}`
+    event.context.userEmail = `root@${requestHostname}`
     return
   }
 
@@ -102,11 +119,11 @@ export default eventHandler(async (event) => {
 
   const accessIdentity = await verifyCloudflareAccess(event)
   if (accessIdentity?.kind === 'user' && adminEmail && accessIdentity.userEmail.toLowerCase() === adminEmail.toLowerCase()) {
-    if (isCloudflareAccessRequestAllowed(event)) {
-      const mappedIdentity = mapCloudflareAccessIdentity(accessIdentity, requestUrl.hostname)
+    if (isCloudflareAccessRequestAllowed(event, requestOrigin)) {
+      const mappedIdentity = mapCloudflareAccessIdentity(accessIdentity, requestHostname)
       Object.assign(
         event.context,
-        gatewayAuthorized && !isJudgingOwnerRoute ? { ...mappedIdentity, authMethod: 'portfolio-gateway' } : mappedIdentity,
+        mappedIdentity,
       )
       return
     }
@@ -132,17 +149,6 @@ export default eventHandler(async (event) => {
   })
 })
 
-function isLocalRequestAllowed(event: H3Event, requestUrl: URL): boolean {
-  if (getHeader(event, 'Sec-Fetch-Site') === 'cross-site')
-    return false
-
-  const origin = getHeader(event, 'Origin')
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(event.method))
-    return origin === requestUrl.origin
-
-  return !origin || origin === requestUrl.origin
-}
-
 function hostnameFromOrigin(origin: string): string {
   try {
     return new URL(origin).hostname
@@ -151,7 +157,6 @@ function hostnameFromOrigin(origin: string): string {
     return ''
   }
 }
-
 async function verifySiteToken(provided: string | undefined, expected: string): Promise<boolean> {
   if (!provided || !expected)
     return false

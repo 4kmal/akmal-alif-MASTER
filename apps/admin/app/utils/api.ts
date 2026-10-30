@@ -1,5 +1,6 @@
 import type { NitroFetchOptions, NitroFetchRequest } from 'nitropack'
 import { getAdminApiPath, isWebAdminHostname } from '@/utils/api-path'
+import { adminLoginURL } from '@/utils/auth-redirect'
 import { getAuthToken, removeAuthToken } from '@/utils/auth-token'
 
 type APIOptions = Omit<NitroFetchOptions<NitroFetchRequest>, 'headers'> & {
@@ -42,7 +43,7 @@ export async function useAPI(api: string, options?: APIOptions): Promise<unknown
     if (typeof error === 'object' && error !== null && 'status' in error && error.status === 401) {
       removeAuthToken()
       if (import.meta.client && window.location.pathname !== '/admin/login')
-        window.location.assign('/admin/login')
+        window.location.assign(adminLoginURL(`${window.location.pathname}${window.location.search}${window.location.hash}`))
     }
     throw error
   }

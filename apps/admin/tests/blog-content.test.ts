@@ -3,7 +3,7 @@ import { blogActor } from '../server/services/blog-studio'
 import { renderTiptapDocument, sanitizeLegacyBlogHtml } from '../server/utils/blog-content'
 
 beforeAll(() => {
-  vi.stubGlobal('useRuntimeConfig', () => ({}))
+  vi.stubGlobal('useRuntimeConfig', () => ({ adminEmail: 'iamaleep@gmail.com' }))
   vi.stubGlobal('createError', ({ statusCode, statusMessage }: { statusCode: number, statusMessage: string }) => {
     const error = new Error(statusMessage) as Error & { statusCode: number, statusMessage: string }
     error.statusCode = statusCode
@@ -124,6 +124,11 @@ describe('blog author authorization', () => {
   it('accepts owner sessions and denies site and service tokens', () => {
     expect(blogActor({ context: { authMethod: 'access-user', userID: 'owner' } } as never)).toBe('owner')
     expect(blogActor({ context: { authMethod: 'local-admin', userID: '' } } as never)).toBe('root')
+    expect(blogActor({ context: {
+      authMethod: 'portfolio-gateway',
+      userID: 'root',
+      userEmail: 'iamaleep@gmail.com',
+    } } as never)).toBe('root')
     for (const authMethod of ['site-token', 'access-service', 'portfolio-gateway', '']) {
       expect(() => blogActor({ context: { authMethod, userID: 'forged' } } as never)).toThrowError(/Owner sign-in/)
     }
