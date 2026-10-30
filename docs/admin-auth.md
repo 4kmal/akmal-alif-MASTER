@@ -20,6 +20,13 @@ protected request. Cookies are host-only, HttpOnly, Secure in production, and
 SameSite=Lax; sessions expire after 24 hours and refresh hourly. Cookie session
 caching is disabled so deleted sessions stop authorizing requests immediately.
 
+Better Auth's native D1 adapter does not use interactive transactions. If an
+approved login fails while inserting its account, a user row can remain without
+an account or session. That row cannot authorize requests; a fresh approved login
+reuses it and completes provisioning. A fault-injection regression covers this
+recovery. Investigate repeated provisioning failures rather than deleting users
+or changing the owner allowlist.
+
 ## Root environment and providers
 
 Keep the credentials in the ignored repository-root `.env`.
@@ -97,6 +104,13 @@ judging devices, and opt-in localhost admin workflow keep their own boundaries.
 The Vite preview at port 3000 continues to forward public reads only. Test auth
 against an isolated local Worker with provider mocks rather than forwarding OAuth
 writes to production from Vite.
+
+For local browser QA through the portfolio Worker, set `ALLOW_LOCAL_AUTH=true`
+and `ALLOW_LOCAL_ADMIN=false` on both Workers, use the same local gateway origin
+for `BETTER_AUTH_URL` and `PORTFOLIO_ADMIN_ORIGIN`, and set
+`NUXT_PUBLIC_ADMIN_ORIGIN` to that origin plus `NUXT_PUBLIC_ADMIN_GATEWAY=true`
+on the admin Worker. The last flag opts the localhost client into gateway API
+paths. Leave it unset when running the native admin service directly.
 
 ## Deployment and rollback
 
