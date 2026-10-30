@@ -1,0 +1,9 @@
+<FilesMatch "(?i)^(?:\.env(?:\..*)?|\.dev\.vars(?:\..*)?)$">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(?:\.git|\.wrangler|repo-reference)(?:/|$) - [F,L,NC]
+    RewriteRule ^events/judging(?:/|$) - [F,L,NC]
+</IfModule>
