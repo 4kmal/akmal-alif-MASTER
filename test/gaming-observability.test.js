@@ -70,6 +70,12 @@ function eventRequest(events, cookies = '') {
   });
 }
 
+function responseCookies(response) {
+  return (response.headers.getSetCookie?.() || [])
+    .map(cookie => cookie.split(';', 1)[0])
+    .join('; ');
+}
+
 test('gaming lifecycle events are segregated, deduplicated, and keep website counts unchanged', async () => {
   const { database, env } = environment();
   const response = await ingestEvents(eventRequest([
@@ -151,12 +157,15 @@ test('gaming maintenance prunes raw timeline while retaining bounded daily summa
 test('authoritative room summaries backfill early links and protect verified results from later browser retries', async () => {
   const { database, env } = environment();
   const token = await issueCorrelationToken(env, 'match-backfill', '1', now + 3600_000);
-  const cookies = '__Host-portfolio-visitor=v; __Host-portfolio-session=s';
   const link = await ingestEvents(eventRequest([{
     id: 'backfill-link', type: 'gaming_identity_link', path: '/video-games/exepert/', game_id: 'exepert',
     run_id: 'backfill-run', match_id: 'match-backfill', correlation_token: token,
-  }], cookies), env);
+  }]), env);
   assert.equal(link.status, 200);
+  const cookies = responseCookies(link);
+  assert.ok(cookies.includes('__Host-portfolio-visitor='));
+  assert.ok(cookies.includes('__Host-portfolio-session='));
+  assert.equal(database.prepare('SELECT count(*) AS count FROM gaming_sessions').get().count, 1);
   const summary = await ingestGamingSummary({
     source: 'exepert-room', match_id: 'match-backfill', game_id: 'exepert', mode: 'uplink', sector: 'full',
     started_at: now - 10_000, ended_at: now, status: 'completed', result: { winner: 0, captures: 3, contests: 2 },
@@ -184,6 +193,7 @@ test('authoritative room summaries backfill early links and protect verified res
   assert.equal(stillVerified.deaths, 1);
   assert.equal(stillVerified.assists, 2);
   assert.equal(stillVerified.status, 'completed');
+  assert.equal(database.prepare('SELECT count(*) AS count FROM gaming_sessions').get().count, 1);
 });
 
 test('report aggregates cover all sessions while the session list stays cursor paginated', async () => {
