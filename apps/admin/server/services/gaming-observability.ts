@@ -41,6 +41,7 @@ interface WorkerReportData {
     completions?: number
     abandoned?: number
     active?: number
+    activePlayers?: number
     serverVerified?: number
     playSeconds?: number
     returningPlayers?: number | null
@@ -128,9 +129,13 @@ function unavailableReport(range: number, now: number, reason: string): GamingRe
     },
     coverage: [{ source: 'admin-d1:gaming', status: 'unavailable', checkedAt, reason }],
     overview: [
+      metric('active_players', 'Active players now', null),
       metric('starts', 'Game starts', null),
       metric('players', 'Pseudonymous players', null),
       metric('completions', 'Completed sessions', null),
+      metric('server_verified', 'Server verified sessions', null),
+      metric('abandoned', 'Abandoned sessions', null),
+      metric('returning_players', 'Returning players', null),
       metric('play_seconds', 'Play time', null, 'seconds'),
       metric('events', 'Gaming events', null),
     ],
@@ -227,6 +232,7 @@ export async function readGamingReport(event: H3Event): Promise<GamingReport> {
       ...(data.historicalAggregates ? { reason: 'Older activity uses daily summaries. Unique and returning players cannot be deduplicated after session details expire at 90 days.' } : {}),
     }],
     overview: [
+      metric('active_players', 'Active players now', Number(aggregate.activePlayers ?? 0), 'count', 'Tracked players with an active game heartbeat in the last 90 seconds.'),
       metric('starts', 'Game starts', Number(aggregate.starts ?? sessions.length)),
       metric('players', 'Pseudonymous players', data.historicalAggregates ? null : Number(data.playersCount ?? 0)),
       metric('completions', 'Completed sessions', completed),

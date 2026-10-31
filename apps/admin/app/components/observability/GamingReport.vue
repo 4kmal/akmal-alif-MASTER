@@ -116,11 +116,8 @@ const overviewMetrics = computed<ObservabilityMetric[]>(() => {
   const report = data.value
   if (!report)
     return []
-  const keys = new Set(['starts', 'players', 'completions', 'abandoned', 'play_seconds', 'returning_players', 'server_verified'])
-  return [
-    { key: 'active_players', label: 'Active players now', value: report.live.players, unit: 'count', detail: report.live.status === 'live' ? 'Confirmed room heartbeats' : `Online presence ${report.live.status}` },
-    ...report.overview.filter(metric => keys.has(metric.key)),
-  ]
+  const keys = new Set(['active_players', 'starts', 'players', 'completions', 'abandoned', 'play_seconds', 'returning_players', 'server_verified'])
+  return report.overview.filter(metric => keys.has(metric.key))
 })
 const onlineMetrics = computed(() => data.value?.performance || [])
 const activeHumans = computed(() => data.value?.live.players ?? null)
