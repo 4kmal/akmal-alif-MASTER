@@ -103,7 +103,8 @@ export class Game {
     if (m.t !== 's') return;
     const now = performance.now() / 1000, sample = m.T - now;
     if (this.offset == null || Math.abs(sample - this.offset) > 0.4) this.offset = sample; else this.offset += (sample - this.offset) * 0.05;
-    this.phase = m.ph; this.timeLeft = m.tl; this.modeHud = m.m; this.extra = m.x; this.result = m.res || null;
+    this.phase = m.ph; this.timeLeft = m.tl; this.modeHud = m.m; this.result = m.res || null;
+    if (m.x) this.modeData = Object.assign(this.modeData || {}, m.x);
     if (m.ro) this.updateRoster(m.ro);
     const seen = new Set();
     for (const row of m.p){
@@ -121,6 +122,8 @@ export class Game {
   }
 
   setMode(id, sector){
+    if (this.mode) MODE_UI[this.mode.id]?.dispose?.(this);
+    this.modeData = null; this.deployPick = null;
     this.mode = getMode(id); this.sector = this.world.sectors[sector] || null;
     this.worldRender.setSector(this.sector);
   }
@@ -239,6 +242,10 @@ export class Game {
       if (ev.doubleJumped || ev.wallJumped) this.audio.jump(null, true);
       if (ev.dashed){ this.audio.dash(null); this.dashFov = 1; }
       if (ev.landed) this.audio.land(ev.landed);
+      if (ev.landed > 25){ // drop pod touchdown
+        this.fx.spark(this.me.x, this.me.y + 0.2, this.me.z, 50, 0x9fe8ff, 12);
+        this.audio.boom([this.me.x, this.me.y, this.me.z]); this.shake = 1.2;
+      }
       if (ev.mantled) this.audio.jump(null, false);
       if (ev.slid) this.audio.dash(null);
       this.pending.push(f);
@@ -253,6 +260,7 @@ export class Game {
       if (performance.now() - this.lastSend > 50) this.flush();
       if (performance.now() - this.lastPing > 2000){ this.lastPing = performance.now(); this.send({t:'ping', c:performance.now(), rtt:Math.round(this.rtt)}); }
     }
+    MODE_UI[this.mode.id]?.input?.(this, inp);
     if (inp.edges.has('view')) this.third = !this.third;
     this.scoreHeld = (this.input.held.has('score') || this.input.padHeldScore) && this.myId != null;
     if (inp.edges.has('pause')) this.onEvent({type:'pause'});
@@ -415,6 +423,7 @@ export class Game {
       reload:this.meState?.rl > 0 ? 1 - this.meState.rl / (w.reload || 1) : 0, dyaw:0, dpitch:0, dead:!this.meAlive || this.third || this.phase === 'post'});
 
     this.fx.update(dt, this.world);
+    MODE_UI[this.mode.id]?.update?.(this, dt);
     this.worldRender.update(this.time, this.camera);
     this.audio.listener(this.camera.position.x, this.camera.position.y, this.camera.position.z, this.yaw);
     this.composer.render(dt);

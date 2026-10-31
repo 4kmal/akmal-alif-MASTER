@@ -162,3 +162,37 @@ test('a full minute of bots fighting runs well inside the tick budget', () => {
   const shots = [...room.players.values()].reduce((s, p) => s + p.kills + p.deaths, 0);
   assert.ok(shots > 0, 'bots found and fought each other');
 });
+
+test('uplink relays flip when one side holds them and the outnumbered side bleeds tickets', () => {
+  const { room } = makeRoom({ mode:'uplink', bots:0 });
+  const a = room.join({ name:'alpha' });
+  const b = room.join({ name:'bravo' });
+  assert.equal(room.sector, 'full');
+  assert.equal(room.ms.points.length, 7);
+  const c = room.ms.points[2];
+  const attacker = a.team === 0 ? a : b;
+  const idle = attacker === a ? b : a;
+  for (let i = 0; i < 20 * 15; i++){
+    attacker.m.x = c.x; attacker.m.z = c.z; attacker.m.y = c.y; attacker.m.vy = 0;
+    idle.m.x = room.ms.bases[idle.team].x; idle.m.z = room.ms.bases[idle.team].z;
+    room.tick();
+  }
+  assert.equal(c.owner, attacker.team, 'the relay belongs to the side standing on it');
+  const before = room.ms.tickets[idle.team];
+  for (let i = 0; i < 20 * 7; i++) room.tick();
+  assert.ok(room.ms.tickets[idle.team] < before, 'the side holding fewer relays bleeds');
+});
+
+test('uplink deploys onto a held relay by drop pod and ends when tickets run out', () => {
+  const { room } = makeRoom({ mode:'uplink', bots:0 });
+  const p = room.join({ name:'alpha' });
+  const home = room.ms.points[p.team === 0 ? 0 : 6];
+  room.handle(p.id, { t:'deploy', at:home.i });
+  room.spawn(p);
+  assert.ok(p.m.y > room.world.ground(p.m.x, p.m.z) + 40, 'arrives from the sky');
+  assert.ok(Math.hypot(p.m.x - home.x, p.m.z - home.z) < 45, 'lands at the chosen relay');
+  room.ms.tickets[1 - p.team] = 0;
+  room.tick();
+  assert.equal(room.phase, 'post');
+  assert.equal(room.result.winner, p.team);
+});

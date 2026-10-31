@@ -5,7 +5,8 @@ import { settings } from './settings.js';
 const KEYS = {
   KeyW:'f', ArrowUp:'f', KeyS:'b', ArrowDown:'b', KeyA:'l', ArrowLeft:'l', KeyD:'r', ArrowRight:'r',
   Space:'jump', ShiftLeft:'sprint', ShiftRight:'sprint', KeyC:'crouch', ControlLeft:'crouch', KeyQ:'dash',
-  KeyR:'reload', KeyG:'nade', KeyE:'use', KeyF:'use', Digit1:'w1', Digit2:'w2', KeyZ:'ping', KeyV:'view', Tab:'score', KeyM:'map'
+  KeyR:'reload', KeyG:'nade', KeyE:'use', KeyF:'use', Digit1:'w1', Digit2:'w2', KeyZ:'ping', KeyV:'view', Tab:'score', KeyM:'map',
+  Digit3:'n3', Digit4:'n4', Digit5:'n5', Digit6:'n6', Digit7:'n7', KeyB:'base', KeyN:'auto'
 };
 
 export class Input {

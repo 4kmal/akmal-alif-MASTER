@@ -210,7 +210,7 @@ export class Room {
   }
 
   spawn(p, at = null){
-    const s = at || this.chooseSpawn(p);
+    const s = at || this.mode.spawnPoint?.(this, p) || this.chooseSpawn(p);
     const S = this.world.sectors[this.sector] || {x:0, z:0};
     const yaw = Math.atan2(-(S.x - s.x), -(S.z - s.z));
     p.m = createMover(s.x, s.y, s.z, yaw);
@@ -238,6 +238,7 @@ export class Room {
       case 'config': if (pid === this.hostId && this.phase !== 'live') this.configure(msg); break;
       case 'start': if (pid === this.hostId && this.phase === 'lobby'){ this.phase = 'live'; this.resetMatch(); this.events.push({e:'phase', ph:'live'}); } break;
       case 'name': { const n = sanitizeName(msg.name); if (n) p.name = n; break; }
+      case 'deploy': this.mode.onDeploy?.(this, p, msg.at); break;
     }
   }
 
