@@ -389,7 +389,7 @@ function billingUsageValue(value: number | null, unit: string) {
 
         <article v-if="activeTab === 'billing'" class="observability-card observability-card--full">
           <div class="observability-card__header">
-            <div><h2>Billing cycle</h2><p>Billing dates stay separate from the report range.</p></div>
+            <div><h2>Account billing</h2><p>Account-wide costs and shared allowances use the subscription cycle. Resource filters do not split shared charges.</p></div>
             <span class="observability-status" :data-state="data.billing.status">{{ data.billing.status }}</span>
           </div>
           <div class="observability-grid">
@@ -402,10 +402,10 @@ function billingUsageValue(value: number | null, unit: string) {
           <p v-if="data.billing.reason" class="observability-card__hint">{{ data.billing.reason }}</p>
           <div class="observability-table-wrap">
             <table class="observability-table">
-              <thead><tr><th>Usage</th><th>Consumed</th><th>Included</th><th>Billable</th><th>Estimate</th><th>Attribution</th></tr></thead>
+              <thead><tr><th>Usage</th><th>Consumed</th><th>Included</th><th>Billable</th><th>Estimated overage</th><th>Provider cost</th><th>Attribution</th></tr></thead>
               <tbody>
-                <tr v-for="usage in data.billing.usage" :key="usage.key"><th scope="row">{{ usage.label }}</th><td>{{ billingUsageValue(usage.consumed, usage.unit) }}</td><td>{{ billingUsageValue(usage.included, usage.unit) }}</td><td>{{ billingUsageValue(usage.billable, usage.unit) }}</td><td>{{ billingValue(usage.actualCost ?? usage.estimatedCost, data.billing.currency) }}</td><td>{{ usage.attribution }}</td></tr>
-                <tr v-if="data.billing.usage.length === 0"><td colspan="6" class="observability-table__muted">No billing usage rows returned.</td></tr>
+                <tr v-for="usage in data.billing.usage" :key="usage.key"><th scope="row">{{ usage.label }}</th><td>{{ billingUsageValue(usage.consumed, usage.unit) }}</td><td>{{ billingUsageValue(usage.included, usage.unit) }}</td><td>{{ billingUsageValue(usage.billable, usage.unit) }}</td><td>{{ billingValue(usage.estimatedCost, data.billing.currency) }}</td><td>{{ billingValue(usage.actualCost ?? null, data.billing.currency) }}</td><td>{{ usage.attribution }}</td></tr>
+                <tr v-if="data.billing.usage.length === 0"><td colspan="7" class="observability-table__muted">No billing usage rows returned.</td></tr>
               </tbody>
             </table>
           </div>
