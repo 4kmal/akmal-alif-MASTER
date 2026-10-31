@@ -587,24 +587,6 @@ onBeforeUnmount(() => detailController?.abort())
               {{ metricReason(metric) }}
             </p>
           </article>
-          <article class="observability-card observability-card--metric">
-            <h2>Active humans</h2><span
-              class="observability-value" :data-unavailable="activeHumans === null"
-            >{{ formatObservabilityNumber(activeHumans) }}</span><p
-              class="observability-card__hint"
-            >
-              Current player presence
-            </p>
-          </article>
-          <article class="observability-card observability-card--metric">
-            <h2>Active bots</h2><span
-              class="observability-value" :data-unavailable="activeBots === null"
-            >{{ formatObservabilityNumber(activeBots) }}</span><p
-              class="observability-card__hint"
-            >
-              Bots kept separate from humans
-            </p>
-          </article>
         </div>
 
         <article
@@ -641,7 +623,7 @@ onBeforeUnmount(() => detailController?.abort())
           "
         >
           <div class="observability-card__header">
-            <div><h2>Anonymous journey starts</h2><p>Daily counts are returned by the gaming source.</p></div>
+            <div><h2>Game starts over time</h2><p>Daily starts across the selected games and modes.</p></div>
           </div>
           <ObservabilityLineChart :points="dailyPoints" empty-label="No daily gaming series returned." />
         </article>
