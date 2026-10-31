@@ -1,12 +1,13 @@
 import type { ObservabilitySummary } from '#shared/types/observability'
 import { readCloudflareReport } from '../../../services/cloudflare-observability'
 import { readGamingReport } from '../../../services/gaming-observability'
+import { withGamingPresence } from '../../../services/gaming-presence'
 
 export default eventHandler(async (event): Promise<ObservabilitySummary> => {
   setHeader(event, 'Cache-Control', 'no-store')
   const [cloudflare, gaming] = await Promise.all([
     readCloudflareReport(event),
-    readGamingReport(event),
+    readGamingReport(event).then(report => withGamingPresence(event, report)),
   ])
 
   return {

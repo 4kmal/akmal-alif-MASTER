@@ -56,6 +56,36 @@ test('quick play puts two runners in the same public room', async () => {
   assert.equal(body.open, 1);
 });
 
+test('confirmed presence excludes quick-play reservations and expires old room heartbeats', async () => {
+  const env = makeEnv();
+  const { code } = await (await post(env, '/api/exepert/quickplay', { mode:'tdm' })).json();
+  let status = await (await call(env, '/api/exepert/status')).json();
+  assert.equal(status.players, 1);
+  assert.equal(status.confirmed.players, 0);
+  assert.equal(status.confirmed.rooms, 0);
+  const actualLobby = [...env.EXEPERT_LOBBY.instances.values()][0];
+  await actualLobby.fetch(new Request('https://lobby/report', {
+    method:'POST', body:JSON.stringify({ code, mode:'tdm', humans:1, bots:7, max:8, phase:'live' }),
+  }));
+  await post(env, '/api/exepert/quickplay', { mode:'tdm' });
+  status = await (await call(env, '/api/exepert/status')).json();
+  assert.equal(status.players, 2);
+  assert.equal(status.confirmed.players, 1);
+  assert.equal(status.confirmed.bots, 7);
+  assert.equal(status.confirmed.rooms, 1);
+  assert.ok(status.confirmed.oldestHeartbeatAt);
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 36_000;
+    status = await (await call(env, '/api/exepert/status')).json();
+    assert.equal(status.confirmed.players, 0);
+    assert.equal(status.confirmed.rooms, 0);
+    assert.equal(status.confirmed.status, 'live');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('rooms from other sites, bad codes and unknown rooms are refused', async () => {
   const env = makeEnv();
   assert.equal((await post(env, '/api/exepert/rooms', { mode:'tdm' }, { Origin:'https://evil.example' })).status, 403);
