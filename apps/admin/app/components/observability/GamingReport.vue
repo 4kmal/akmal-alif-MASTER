@@ -261,6 +261,23 @@ function sessionLabel(session: GamingSession) {
   return session.playerLabel || session.playerId || 'Anonymous player'
 }
 
+function detailLabel(value: string) {
+  const label = value.replace(/^gaming_/, '').replaceAll('_', ' ')
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+function timelineDetail(value?: string) {
+  if (!value)
+    return '—'
+  try {
+    const details = objectValue(JSON.parse(value))
+    if (details)
+      return Object.entries(details).map(([key, item]) => `${detailLabel(key)}: ${item ?? '—'}`).join(' · ')
+  }
+  catch {}
+  return value
+}
+
 function gameLabel(id: string) {
   return data.value?.games.find(item => item.id === id)?.label || id
 }
@@ -448,8 +465,12 @@ onBeforeUnmount(() => detailController?.abort())
   <section class="observability-page" aria-labelledby="gaming-report-title">
     <header class="observability-heading">
       <div>
-        <p class="portfolio-eyebrow">Gaming observability</p>
-        <h1 id="gaming-report-title">Gaming</h1>
+        <p class="portfolio-eyebrow">
+          Gaming observability
+        </p>
+        <h1 id="gaming-report-title">
+          Gaming
+        </h1>
         <p>Anonymous journeys, sessions, game modes, and online performance with verification labels.</p>
       </div>
     </header>
@@ -507,9 +528,9 @@ onBeforeUnmount(() => detailController?.abort())
     <div class="observability-tabs" role="tablist" aria-label="Gaming report sections">
       <button
         v-for="(tab, index) in tabs"
+        :id="`gaming-tab-${tab.id}`"
         :key="tab.id"
         class="observability-tab"
-        :id="`gaming-tab-${tab.id}`"
         type="button"
         role="tab"
         :aria-selected="activeTab === tab.id"
@@ -518,15 +539,29 @@ onBeforeUnmount(() => detailController?.abort())
         :data-active="activeTab === tab.id"
         @keydown="handleTabKeydown($event, index)"
         @click="activeTab = tab.id"
-      >{{ tab.label }}</button>
+      >
+        {{ tab.label }}
+      </button>
     </div>
 
-    <p v-if="stale" class="observability-stale" role="status">The selected filters are still pending or failed. Showing the last successful gaming response from {{ formatDateTime(data?.meta?.from) }} to {{ formatDateTime(data?.meta?.to) }}.</p>
-    <p v-if="error" class="observability-error" role="alert">{{ error }}</p>
-    <p v-if="exportError" class="observability-error" role="alert">{{ exportError }}</p>
-    <p v-else-if="loading && !data" class="observability-empty" aria-live="polite">Loading gaming report…</p>
-    <p v-else-if="!data" class="observability-empty">No gaming report returned for this range.</p>
-    <p v-if="range === '13m'" class="observability-meta">Session and player drilldowns cover the last 90 days; older totals use daily summaries.</p>
+    <p v-if="stale" class="observability-stale" role="status">
+      The selected filters are still pending or failed. Showing the last successful gaming response from {{ formatDateTime(data?.meta?.from) }} to {{ formatDateTime(data?.meta?.to) }}.
+    </p>
+    <p v-if="error" class="observability-error" role="alert">
+      {{ error }}
+    </p>
+    <p v-if="exportError" class="observability-error" role="alert">
+      {{ exportError }}
+    </p>
+    <p v-else-if="loading && !data" class="observability-empty" aria-live="polite">
+      Loading gaming report…
+    </p>
+    <p v-else-if="!data" class="observability-empty">
+      No gaming report returned for this range.
+    </p>
+    <p v-if="range === '13m'" class="observability-meta">
+      Session and player drilldowns cover the last 90 days; older totals use daily summaries.
+    </p>
 
     <template v-if="data">
       <div id="gaming-panel" class="observability-panel" role="tabpanel" :aria-labelledby="`gaming-tab-${activeTab}`" tabindex="0">
@@ -535,116 +570,298 @@ onBeforeUnmount(() => detailController?.abort())
             <div><h2>Source coverage</h2><p>Server verified and client reported data remain distinguishable below.</p></div>
             <ObservabilityCoverage :coverage="data.coverage" />
           </div>
-          <p class="observability-meta">{{ formatDateTime(data.meta.from) }} → {{ formatDateTime(data.meta.to) }} · checked {{ formatDateTime(data.meta.checkedAt) }}</p>
+          <p class="observability-meta">
+            {{ formatDateTime(data.meta.from) }} → {{ formatDateTime(data.meta.to) }} · checked {{ formatDateTime(data.meta.checkedAt) }}
+          </p>
         </div>
 
         <div v-if="activeTab === 'overview'" class="observability-grid">
-          <article v-for="metric in overviewMetrics" :key="metric.key" class="observability-card observability-card--metric">
+          <article
+            v-for="metric in overviewMetrics" :key="metric.key" class="
+              observability-card observability-card--metric
+            "
+          >
             <h2>{{ metric.label }}</h2>
             <span class="observability-value" :title="observabilityMetricTitle(metric)" :data-unavailable="metric.value === null">{{ formatObservabilityMetric(metric) }}</span>
-            <p v-if="metricReason(metric)" class="observability-card__hint">{{ metricReason(metric) }}</p>
+            <p v-if="metricReason(metric)" class="observability-card__hint">
+              {{ metricReason(metric) }}
+            </p>
           </article>
-          <article class="observability-card observability-card--metric"><h2>Active humans</h2><span class="observability-value" :data-unavailable="activeHumans === null">{{ formatObservabilityNumber(activeHumans) }}</span><p class="observability-card__hint">Current player presence</p></article>
-          <article class="observability-card observability-card--metric"><h2>Active bots</h2><span class="observability-value" :data-unavailable="activeBots === null">{{ formatObservabilityNumber(activeBots) }}</span><p class="observability-card__hint">Bots kept separate from humans</p></article>
+          <article class="observability-card observability-card--metric">
+            <h2>Active humans</h2><span
+              class="observability-value" :data-unavailable="activeHumans === null"
+            >{{ formatObservabilityNumber(activeHumans) }}</span><p
+              class="observability-card__hint"
+            >
+              Current player presence
+            </p>
+          </article>
+          <article class="observability-card observability-card--metric">
+            <h2>Active bots</h2><span
+              class="observability-value" :data-unavailable="activeBots === null"
+            >{{ formatObservabilityNumber(activeBots) }}</span><p
+              class="observability-card__hint"
+            >
+              Bots kept separate from humans
+            </p>
+          </article>
         </div>
 
-        <article v-if="activeTab === 'games' && authorityMetrics.length" class="observability-card observability-card--full">
-          <div class="observability-card__header"><div><h2>Server verified mode stats</h2><p>Authoritative counters are shown when the arcade telemetry source returns them.</p></div></div>
+        <article
+          v-if="activeTab === 'games' && authorityMetrics.length" class="
+            observability-card observability-card--full
+          "
+        >
+          <div class="observability-card__header">
+            <div><h2>Server verified mode stats</h2><p>Authoritative counters are shown when the arcade telemetry source returns them.</p></div>
+          </div>
           <div class="observability-table-wrap">
             <table class="observability-table">
               <thead><tr><th>Metric</th><th>Value</th><th>Source detail</th></tr></thead>
               <tbody>
-                <tr v-for="metric in authorityMetrics" :key="metric.key"><th scope="row">{{ metric.label }}</th><td :title="observabilityMetricTitle(metric)">{{ formatObservabilityMetric(metric) }}</td><td class="observability-table__muted">{{ metric.detail || 'Server verified' }}</td></tr>
+                <tr v-for="metric in authorityMetrics" :key="metric.key">
+                  <th scope="row">
+                    {{ metric.label }}
+                  </th><td :title="observabilityMetricTitle(metric)">
+                    {{ formatObservabilityMetric(metric) }}
+                  </td><td
+                    class="observability-table__muted"
+                  >
+                    {{ metric.detail || 'Server verified' }}
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
         </article>
 
-        <article v-if="activeTab === 'overview'" class="observability-card observability-card--wide">
-          <div class="observability-card__header"><div><h2>Anonymous journey starts</h2><p>Daily counts are returned by the gaming source.</p></div></div>
+        <article
+          v-if="activeTab === 'overview'" class="
+            observability-card observability-card--wide
+          "
+        >
+          <div class="observability-card__header">
+            <div><h2>Anonymous journey starts</h2><p>Daily counts are returned by the gaming source.</p></div>
+          </div>
           <ObservabilityLineChart :points="dailyPoints" empty-label="No daily gaming series returned." />
         </article>
 
         <div v-if="activeTab === 'overview'" class="observability-grid">
           <article class="observability-card">
-            <div class="observability-card__header"><div><h2>Journey funnel</h2><p>Entry, play, and completion counts for the selected window.</p></div></div>
+            <div class="observability-card__header">
+              <div><h2>Journey funnel</h2><p>Entry, play, and completion counts for the selected window.</p></div>
+            </div>
             <div class="observability-bars">
-              <div v-for="stage in data.funnel" :key="stage.stage" class="observability-bar">
-                <div class="observability-bar__label"><span>{{ stage.stage }}</span><strong>{{ stage.count }}</strong></div>
-                <div class="observability-bar__track"><div class="observability-bar__value" :style="{ width: `${data.funnel[0]?.count ? Math.min(100, stage.count / data.funnel[0].count * 100) : 0}%` }" /></div>
+              <div
+                v-for="stage in data.funnel" :key="stage.stage" class="
+                  observability-bar
+                "
+              >
+                <div class="observability-bar__label">
+                  <span>{{ stage.stage }}</span><strong>{{ stage.count }}</strong>
+                </div>
+                <div class="observability-bar__track">
+                  <div
+                    class="observability-bar__value" :style="{ width: `${data.funnel[0]?.count ? Math.min(100, stage.count / data.funnel[0].count * 100) : 0}%` }"
+                  />
+                </div>
               </div>
-              <p v-if="data.funnel.length === 0" class="observability-empty">No funnel data returned.</p>
+              <p v-if="data.funnel.length === 0" class="observability-empty">
+                No funnel data returned.
+              </p>
             </div>
           </article>
           <article class="observability-card">
-            <div class="observability-card__header"><div><h2>Games</h2><p>Starts and completion counts by game.</p></div></div>
+            <div class="observability-card__header">
+              <div><h2>Games</h2><p>Starts and completion counts by game.</p></div>
+            </div>
             <ul class="observability-inline-list">
-              <li v-for="item in data.games.slice(0, 6)" :key="item.id"><span>{{ item.label }}</span><strong>{{ item.starts }}</strong></li>
-              <li v-if="data.games.length === 0" class="observability-table__muted">No game breakdown returned.</li>
+              <li v-for="item in data.games.slice(0, 6)" :key="item.id">
+                <span>{{ item.label }}</span><strong>{{ item.starts }}</strong>
+              </li>
+              <li
+                v-if="data.games.length === 0" class="
+                  observability-table__muted
+                "
+              >
+                No game breakdown returned.
+              </li>
             </ul>
           </article>
         </div>
 
         <div v-if="activeTab === 'games'" class="observability-grid">
           <article class="observability-card observability-card--full">
-            <div class="observability-card__header"><div><h2>Games & modes</h2><p>Per-game and mode stats, including RELAY RUN distance and Kessler interactions where returned.</p></div></div>
+            <div class="observability-card__header">
+              <div><h2>Games & modes</h2><p>Per-game and mode stats, including RELAY RUN distance and Kessler interactions where returned.</p></div>
+            </div>
             <div class="observability-table-wrap">
               <table class="observability-table">
-                <thead><tr><th>Game</th><th>Starts</th><th>Players</th><th>Completions</th><th>Play time</th><th>Score</th><th v-for="field in visibleBreakdownFields" :key="`game-head-${field.key}`">{{ field.label }}</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Game</th><th>Starts</th><th>Players</th><th>Completions</th><th>Play time</th><th>Score</th><th v-for="field in visibleBreakdownFields" :key="`game-head-${field.key}`">
+                      {{ field.label }}
+                    </th>
+                  </tr>
+                </thead>
                 <tbody>
-                  <tr v-for="item in data.games" :key="item.id"><th scope="row">{{ item.label }}</th><td :title="observabilityNumberTitle(item.starts)">{{ formatObservabilityNumber(item.starts) }}</td><td :title="observabilityNumberTitle(item.players)">{{ formatObservabilityNumber(item.players) }}</td><td :title="observabilityNumberTitle(item.completions)">{{ formatObservabilityNumber(item.completions) }}</td><td :title="observabilityNumberTitle(item.playSeconds, 's')">{{ formatObservabilityNumber(item.playSeconds, 's') }}</td><td :title="observabilityNumberTitle(item.score)">{{ formatObservabilityNumber(item.score) }}</td><td v-for="field in visibleBreakdownFields" :key="`${item.id}-${field.key}`">{{ formatBreakdownValue(item, field) }}</td></tr>
-                  <tr v-if="data.games.length === 0"><td :colspan="6 + visibleBreakdownFields.length" class="observability-table__muted">No game rows returned.</td></tr>
+                  <tr v-for="item in data.games" :key="item.id">
+                    <th scope="row">
+                      {{ item.label }}
+                    </th><td :title="observabilityNumberTitle(item.starts)">
+                      {{ formatObservabilityNumber(item.starts) }}
+                    </td><td :title="observabilityNumberTitle(item.players)">
+                      {{ formatObservabilityNumber(item.players) }}
+                    </td><td :title="observabilityNumberTitle(item.completions)">
+                      {{ formatObservabilityNumber(item.completions) }}
+                    </td><td :title="observabilityNumberTitle(item.playSeconds, 's')">
+                      {{ formatObservabilityNumber(item.playSeconds, 's') }}
+                    </td><td :title="observabilityNumberTitle(item.score)">
+                      {{ formatObservabilityNumber(item.score) }}
+                    </td><td v-for="field in visibleBreakdownFields" :key="`${item.id}-${field.key}`">
+                      {{ formatBreakdownValue(item, field) }}
+                    </td>
+                  </tr>
+                  <tr v-if="data.games.length === 0">
+                    <td
+                      :colspan="6 + visibleBreakdownFields.length" class="
+                        observability-table__muted
+                      "
+                    >
+                      No game rows returned.
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
           </article>
           <article class="observability-card observability-card--full">
-            <div class="observability-card__header"><div><h2>Modes</h2><p>Mode-level counts for the selected filters.</p></div></div>
+            <div class="observability-card__header">
+              <div><h2>Modes</h2><p>Mode-level counts for the selected filters.</p></div>
+            </div>
             <div class="observability-table-wrap">
               <table class="observability-table">
-                <thead><tr><th>Mode</th><th>Starts</th><th>Players</th><th>Completions</th><th>Play time</th><th>Score</th><th v-for="field in visibleBreakdownFields" :key="`mode-head-${field.key}`">{{ field.label }}</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Mode</th><th>Starts</th><th>Players</th><th>Completions</th><th>Play time</th><th>Score</th><th v-for="field in visibleBreakdownFields" :key="`mode-head-${field.key}`">
+                      {{ field.label }}
+                    </th>
+                  </tr>
+                </thead>
                 <tbody>
-                  <tr v-for="item in data.modes" :key="item.id"><th scope="row">{{ item.label }}</th><td :title="observabilityNumberTitle(item.starts)">{{ formatObservabilityNumber(item.starts) }}</td><td :title="observabilityNumberTitle(item.players)">{{ formatObservabilityNumber(item.players) }}</td><td :title="observabilityNumberTitle(item.completions)">{{ formatObservabilityNumber(item.completions) }}</td><td :title="observabilityNumberTitle(item.playSeconds, 's')">{{ formatObservabilityNumber(item.playSeconds, 's') }}</td><td :title="observabilityNumberTitle(item.score)">{{ formatObservabilityNumber(item.score) }}</td><td v-for="field in visibleBreakdownFields" :key="`${item.id}-${field.key}`">{{ formatBreakdownValue(item, field) }}</td></tr>
-                  <tr v-if="data.modes.length === 0"><td :colspan="6 + visibleBreakdownFields.length" class="observability-table__muted">No mode rows returned.</td></tr>
+                  <tr v-for="item in data.modes" :key="item.id">
+                    <th scope="row">
+                      {{ item.label }}
+                    </th><td :title="observabilityNumberTitle(item.starts)">
+                      {{ formatObservabilityNumber(item.starts) }}
+                    </td><td :title="observabilityNumberTitle(item.players)">
+                      {{ formatObservabilityNumber(item.players) }}
+                    </td><td :title="observabilityNumberTitle(item.completions)">
+                      {{ formatObservabilityNumber(item.completions) }}
+                    </td><td :title="observabilityNumberTitle(item.playSeconds, 's')">
+                      {{ formatObservabilityNumber(item.playSeconds, 's') }}
+                    </td><td :title="observabilityNumberTitle(item.score)">
+                      {{ formatObservabilityNumber(item.score) }}
+                    </td><td v-for="field in visibleBreakdownFields" :key="`${item.id}-${field.key}`">
+                      {{ formatBreakdownValue(item, field) }}
+                    </td>
+                  </tr>
+                  <tr v-if="data.modes.length === 0">
+                    <td
+                      :colspan="6 + visibleBreakdownFields.length" class="
+                        observability-table__muted
+                      "
+                    >
+                      No mode rows returned.
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
           </article>
-          <article v-if="sectorRows.length" class="observability-card observability-card--full">
-            <div class="observability-card__header"><div><h2>Sector popularity</h2><p>Sector-level starts, players, completions, and play time.</p></div></div>
+          <article
+            v-if="sectorRows.length" class="
+              observability-card observability-card--full
+            "
+          >
+            <div class="observability-card__header">
+              <div><h2>Sector popularity</h2><p>Sector-level starts, players, completions, and play time.</p></div>
+            </div>
             <div class="observability-table-wrap">
               <table class="observability-table">
                 <thead><tr><th>Sector</th><th>Starts</th><th>Players</th><th>Completions</th><th>Play time</th><th>Score</th></tr></thead>
                 <tbody>
-                  <tr v-for="item in sectorRows" :key="item.id"><th scope="row">{{ item.label }}</th><td>{{ formatObservabilityNumber(item.starts) }}</td><td>{{ formatObservabilityNumber(item.players) }}</td><td>{{ formatObservabilityNumber(item.completions) }}</td><td>{{ formatObservabilityNumber(item.playSeconds, 's') }}</td><td>{{ formatObservabilityNumber(item.score) }}</td></tr>
-                  <tr v-if="sectorRows.length === 0"><td colspan="6" class="observability-table__muted">No sector rows returned.</td></tr>
+                  <tr v-for="item in sectorRows" :key="item.id">
+                    <th scope="row">
+                      {{ item.label }}
+                    </th><td>{{ formatObservabilityNumber(item.starts) }}</td><td>{{ formatObservabilityNumber(item.players) }}</td><td>{{ formatObservabilityNumber(item.completions) }}</td><td>{{ formatObservabilityNumber(item.playSeconds, 's') }}</td><td>{{ formatObservabilityNumber(item.score) }}</td>
+                  </tr>
+                  <tr v-if="sectorRows.length === 0">
+                    <td
+                      colspan="6" class="observability-table__muted"
+                    >
+                      No sector rows returned.
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
           </article>
-          <article v-if="relayRows.length || relayEndReasons.length" class="observability-card observability-card--full">
-            <div class="observability-card__header"><div><h2>RELAY RUN telemetry</h2><p>Distance and end reasons stay separate from completion counts.</p></div></div>
+          <article
+            v-if="relayRows.length || relayEndReasons.length" class="
+              observability-card observability-card--full
+            "
+          >
+            <div class="observability-card__header">
+              <div><h2>RELAY RUN telemetry</h2><p>Distance and end reasons stay separate from completion counts.</p></div>
+            </div>
             <div v-if="relayRows.length" class="observability-table-wrap">
               <table class="observability-table">
                 <thead><tr><th>Breakdown</th><th>Distance</th><th>End reasons</th></tr></thead>
                 <tbody>
-                  <tr v-for="item in relayRows" :key="`relay-${item.id}`"><th scope="row">{{ item.label }}</th><td>{{ formatBreakdownValue(item, distanceBreakdownField) }}</td><td>{{ formatBreakdownValue(item, endReasonsBreakdownField) }}</td></tr>
+                  <tr v-for="item in relayRows" :key="`relay-${item.id}`">
+                    <th scope="row">
+                      {{ item.label }}
+                    </th><td>{{ formatBreakdownValue(item, distanceBreakdownField) }}</td><td>{{ formatBreakdownValue(item, endReasonsBreakdownField) }}</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
-            <div v-if="relayEndReasons.length" class="observability-table-wrap observability-table-wrap--spaced">
+            <div
+              v-if="relayEndReasons.length" class="
+                observability-table-wrap observability-table-wrap--spaced
+              "
+            >
               <table class="observability-table">
                 <thead><tr><th>Game</th><th>End reason</th><th>Count</th></tr></thead>
-                <tbody><tr v-for="item in relayEndReasons" :key="`${item.gameId}-${item.reason}`"><th scope="row">{{ item.gameId }}</th><td>{{ item.reason }}</td><td>{{ formatObservabilityNumber(item.count) }}</td></tr></tbody>
+                <tbody>
+                  <tr v-for="item in relayEndReasons" :key="`${item.gameId}-${item.reason}`">
+                    <th scope="row">
+                      {{ item.gameId }}
+                    </th><td>{{ item.reason }}</td><td>{{ formatObservabilityNumber(item.count) }}</td>
+                  </tr>
+                </tbody>
               </table>
             </div>
           </article>
-          <article v-if="kesslerInteractions.length" class="observability-card observability-card--full">
-            <div class="observability-card__header"><div><h2>Kessler interactions</h2><p>Interaction events returned for the selected game and mode filters.</p></div></div>
+          <article
+            v-if="kesslerInteractions.length" class="
+              observability-card observability-card--full
+            "
+          >
+            <div class="observability-card__header">
+              <div><h2>Kessler interactions</h2><p>Interaction events returned for the selected game and mode filters.</p></div>
+            </div>
             <div class="observability-table-wrap">
               <table class="observability-table">
                 <thead><tr><th>Game</th><th>Interaction</th><th>Count</th></tr></thead>
-                <tbody><tr v-for="item in kesslerInteractions" :key="`${item.gameId}-${item.label}`"><th scope="row">{{ item.gameId }}</th><td>{{ item.label }}</td><td>{{ formatObservabilityNumber(item.count) }}</td></tr></tbody>
+                <tbody>
+                  <tr v-for="item in kesslerInteractions" :key="`${item.gameId}-${item.label}`">
+                    <th scope="row">
+                      {{ item.gameId }}
+                    </th><td>{{ item.label }}</td><td>{{ formatObservabilityNumber(item.count) }}</td>
+                  </tr>
+                </tbody>
               </table>
             </div>
           </article>
@@ -652,25 +869,69 @@ onBeforeUnmount(() => detailController?.abort())
 
         <div v-if="activeTab === 'players'" class="observability-grid">
           <article class="observability-card observability-card--full">
-            <div class="observability-card__header"><div><h2>Players</h2><p>Anonymous and returning players can be opened for session history.</p></div></div>
+            <div class="observability-card__header">
+              <div><h2>Players</h2><p>Anonymous and returning players can be opened for session history.</p></div>
+            </div>
             <div class="observability-table-wrap">
               <table class="observability-table">
                 <thead><tr><th>Player</th><th>Sessions</th><th>Play time</th><th>First seen</th><th>Last seen</th><th>Journey</th><th /></tr></thead>
                 <tbody>
-                  <tr v-for="player in data.players" :key="player.id"><th scope="row">{{ player.label }}</th><td>{{ player.sessions }}</td><td>{{ formatObservabilityNumber(player.playSeconds, 's') }}</td><td>{{ formatDateTime(player.firstSeenAt) }}</td><td>{{ formatDateTime(player.lastSeenAt) }}</td><td>{{ player.returning ? 'Returning' : 'New' }}</td><td><button type="button" class="observability-table__action" @click="openPlayer(player, $event)">Inspect</button></td></tr>
-                  <tr v-if="data.players.length === 0"><td colspan="7" class="observability-table__muted">No player rows returned.</td></tr>
+                  <tr v-for="player in data.players" :key="player.id">
+                    <th scope="row">
+                      {{ player.label }}
+                    </th><td>{{ player.sessions }}</td><td>{{ formatObservabilityNumber(player.playSeconds, 's') }}</td><td>{{ formatDateTime(player.firstSeenAt) }}</td><td>{{ formatDateTime(player.lastSeenAt) }}</td><td>{{ player.returning ? 'Returning' : 'New' }}</td><td>
+                      <button
+                        type="button" class="observability-table__action" @click="openPlayer(player, $event)"
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                  <tr v-if="data.players.length === 0">
+                    <td
+                      colspan="7" class="observability-table__muted"
+                    >
+                      No player rows returned.
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
           </article>
           <article class="observability-card observability-card--full">
-            <div class="observability-card__header"><div><h2>Sessions</h2><p>Verification is displayed per session: server verified or client reported.</p></div></div>
+            <div class="observability-card__header">
+              <div><h2>Sessions</h2><p>Verification is displayed per session: server verified or client reported.</p></div>
+            </div>
             <div class="observability-table-wrap">
               <table class="observability-table">
                 <thead><tr><th>Player</th><th>Game / mode</th><th>Transport</th><th>Started</th><th>Duration</th><th>Score</th><th>Verification</th><th /></tr></thead>
                 <tbody>
-                  <tr v-for="session in data.sessions" :key="session.id"><th scope="row">{{ sessionLabel(session) }}</th><td>{{ gameLabel(session.gameId) }}<span v-if="session.mode" class="observability-table__muted"> · {{ session.mode }}</span></td><td>{{ session.transport }}</td><td>{{ formatDateTime(session.startedAt) }}</td><td>{{ formatObservabilityNumber(session.durationSeconds, 's') }}</td><td>{{ formatObservabilityNumber(session.score) }}</td><td><span class="observability-status" :data-state="session.verification === 'server_verified' ? 'live' : 'partial'">{{ session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</span></td><td><button type="button" class="observability-table__action" @click="openSession(session, $event)">Inspect</button></td></tr>
-                  <tr v-if="data.sessions.length === 0"><td colspan="8" class="observability-table__muted">No session rows returned.</td></tr>
+                  <tr v-for="session in data.sessions" :key="session.id">
+                    <th scope="row">
+                      {{ sessionLabel(session) }}
+                    </th><td>
+                      {{ gameLabel(session.gameId) }}<span
+                        v-if="session.mode" class="observability-table__muted"
+                      > · {{ session.mode }}</span>
+                    </td><td>{{ session.transport }}</td><td>{{ formatDateTime(session.startedAt) }}</td><td>{{ formatObservabilityNumber(session.durationSeconds, 's') }}</td><td>{{ formatObservabilityNumber(session.score) }}</td><td>
+                      <span
+                        class="observability-status" :data-state="session.verification === 'server_verified' ? 'live' : 'partial'"
+                      >{{ session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</span>
+                    </td><td>
+                      <button
+                        type="button" class="observability-table__action" @click="openSession(session, $event)"
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                  <tr v-if="data.sessions.length === 0">
+                    <td
+                      colspan="8" class="observability-table__muted"
+                    >
+                      No session rows returned.
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -678,11 +939,57 @@ onBeforeUnmount(() => detailController?.abort())
         </div>
 
         <div v-if="activeTab === 'online'" class="observability-grid">
-          <article class="observability-card observability-card--metric"><h2>Active humans</h2><span class="observability-value" :data-unavailable="activeHumans === null">{{ formatObservabilityNumber(activeHumans) }}</span><p class="observability-card__hint">Checked {{ formatDateTime(data.live.checkedAt) }}</p></article>
-          <article class="observability-card observability-card--metric"><h2>Active bots</h2><span class="observability-value" :data-unavailable="activeBots === null">{{ formatObservabilityNumber(activeBots) }}</span><p class="observability-card__hint">Kept separate from human presence</p></article>
-          <article class="observability-card observability-card--metric"><h2>Rooms</h2><span class="observability-value" :data-unavailable="data.live.rooms === null">{{ formatObservabilityNumber(data.live.rooms) }}</span><p class="observability-card__hint">Live source status: {{ data.live.status }}</p></article>
-          <article v-for="metric in onlineMetrics" :key="metric.key" class="observability-card observability-card--metric"><h2>{{ metric.label }}</h2><span class="observability-value" :data-unavailable="metric.value === null">{{ formatObservabilityMetric(metric) }}</span><p v-if="metricReason(metric)" class="observability-card__hint">{{ metricReason(metric) }}</p></article>
-          <article v-if="onlineMetrics.length === 0" class="observability-card observability-card--full"><p class="observability-empty">No performance metrics returned.</p></article>
+          <article class="observability-card observability-card--metric">
+            <h2>Active humans</h2><span
+              class="observability-value" :data-unavailable="activeHumans === null"
+            >{{ formatObservabilityNumber(activeHumans) }}</span><p
+              class="observability-card__hint"
+            >
+              Checked {{ formatDateTime(data.live.checkedAt) }}
+            </p>
+          </article>
+          <article class="observability-card observability-card--metric">
+            <h2>Active bots</h2><span
+              class="observability-value" :data-unavailable="activeBots === null"
+            >{{ formatObservabilityNumber(activeBots) }}</span><p
+              class="observability-card__hint"
+            >
+              Kept separate from human presence
+            </p>
+          </article>
+          <article class="observability-card observability-card--metric">
+            <h2>Rooms</h2><span
+              class="observability-value" :data-unavailable="data.live.rooms === null"
+            >{{ formatObservabilityNumber(data.live.rooms) }}</span><p
+              class="observability-card__hint"
+            >
+              Live source status: {{ data.live.status }}
+            </p>
+          </article>
+          <article
+            v-for="metric in onlineMetrics" :key="metric.key" class="
+              observability-card observability-card--metric
+            "
+          >
+            <h2>{{ metric.label }}</h2><span
+              class="observability-value" :data-unavailable="metric.value === null"
+            >{{ formatObservabilityMetric(metric) }}</span><p
+              v-if="metricReason(metric)" class="observability-card__hint"
+            >
+              {{ metricReason(metric) }}
+            </p>
+          </article>
+          <article
+            v-if="onlineMetrics.length === 0" class="
+              observability-card observability-card--full
+            "
+          >
+            <p
+              class="observability-empty"
+            >
+              No performance metrics returned.
+            </p>
+          </article>
         </div>
       </div>
     </template>
@@ -691,43 +998,174 @@ onBeforeUnmount(() => detailController?.abort())
       <article ref="detailPanel" class="observability-drawer__panel" tabindex="-1">
         <header class="observability-drawer__header">
           <div>
-            <h2 id="gaming-detail-title">{{ detailKind === 'session' ? 'Session detail' : 'Player detail' }}</h2>
-            <p v-if="sessionDetail">{{ sessionLabel(sessionDetail.session) }} · {{ gameLabel(sessionDetail.session.gameId) }}</p>
-            <p v-else-if="playerDetail">{{ playerDetail.player.label }}</p>
+            <h2 id="gaming-detail-title">
+              {{ detailKind === 'session' ? 'Session detail' : 'Player detail' }}
+            </h2>
+            <p v-if="sessionDetail">
+              {{ sessionLabel(sessionDetail.session) }} · {{ gameLabel(sessionDetail.session.gameId) }}
+            </p>
+            <p v-else-if="playerDetail">
+              {{ playerDetail.player.label }}
+            </p>
           </div>
-          <button class="observability-button" type="button" aria-label="Close detail" @click="clearDetail"><X :size="15" aria-hidden="true" /></button>
+          <button class="observability-button" type="button" aria-label="Close detail" @click="clearDetail">
+            <X :size="15" aria-hidden="true" />
+          </button>
         </header>
-        <p v-if="detailLoading" class="observability-empty">Loading detail…</p>
-        <p v-else-if="detailError" class="observability-error">{{ detailError }}</p>
+        <p v-if="detailLoading" class="observability-empty">
+          Loading detail…
+        </p>
+        <p v-else-if="detailError" class="observability-error">
+          {{ detailError }}
+        </p>
         <template v-else-if="sessionDetail">
           <div class="observability-grid">
-            <article class="observability-card observability-card--metric"><h3>Verification</h3><span class="observability-value">{{ sessionDetail.session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</span></article>
-            <article class="observability-card observability-card--metric"><h3>Duration</h3><span class="observability-value">{{ formatObservabilityNumber(sessionDetail.session.durationSeconds, 's') }}</span></article>
-            <article class="observability-card observability-card--metric"><h3>Score</h3><span class="observability-value">{{ formatObservabilityNumber(sessionDetail.session.score) }}</span></article>
+            <article class="observability-card observability-card--metric">
+              <h3>Verification</h3><span
+                class="observability-value"
+              >{{ sessionDetail.session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</span>
+            </article>
+            <article class="observability-card observability-card--metric">
+              <h3>Duration</h3><span
+                class="observability-value"
+              >{{ formatObservabilityNumber(sessionDetail.session.durationSeconds, 's') }}</span>
+            </article>
+            <article class="observability-card observability-card--metric">
+              <h3>Score</h3><span
+                class="observability-value"
+              >{{ formatObservabilityNumber(sessionDetail.session.score) }}</span>
+            </article>
+            <article
+              v-if="sessionDetail.session.kills != null" class="
+                observability-card observability-card--metric
+              "
+            >
+              <h3>Kills</h3><span
+                class="observability-value"
+              >{{ formatObservabilityNumber(sessionDetail.session.kills) }}</span>
+            </article>
+            <article
+              v-if="sessionDetail.session.deaths != null" class="
+                observability-card observability-card--metric
+              "
+            >
+              <h3>Deaths</h3><span
+                class="observability-value"
+              >{{ formatObservabilityNumber(sessionDetail.session.deaths) }}</span>
+            </article>
+            <article
+              v-if="sessionDetail.session.assists != null" class="
+                observability-card observability-card--metric
+              "
+            >
+              <h3>Assists</h3><span
+                class="observability-value"
+              >{{ formatObservabilityNumber(sessionDetail.session.assists) }}</span>
+            </article>
           </div>
-          <div v-if="sessionDetail.session.details" class="observability-card"><div class="observability-card__header"><h3>Game details</h3></div><ul class="observability-inline-list"><li v-for="(value, key) in sessionDetail.session.details" :key="key"><span>{{ key }}</span><strong>{{ value ?? '—' }}</strong></li></ul></div>
+          <div v-if="sessionDetail.session.details" class="observability-card">
+            <div
+              class="observability-card__header"
+            >
+              <h3>Game details</h3>
+            </div><ul
+              class="observability-inline-list"
+            >
+              <li v-for="(value, key) in sessionDetail.session.details" :key="key">
+                <span>{{ detailLabel(key) }}</span><strong>{{ value ?? '—' }}</strong>
+              </li>
+            </ul>
+          </div>
           <div class="observability-card">
             <div class="observability-card__header">
               <div><h3>Timeline</h3><p>{{ sessionDetail.timeline.length }}<span v-if="sessionDetailWithExtras?.timelineTotal"> of {{ sessionDetailWithExtras?.timelineTotal }}</span> events loaded<span v-if="sessionDetailWithExtras?.timelineTruncated && !sessionDetailWithExtras?.timelineNextCursor"> · provider limit reached</span></p></div>
-              <button v-if="sessionDetailWithExtras?.timelineNextCursor" class="observability-button" type="button" :disabled="detailMoreLoading" @click="loadMoreSessionTimeline">{{ detailMoreLoading ? 'Loading…' : 'Load more' }}</button>
+              <button
+                v-if="sessionDetailWithExtras?.timelineNextCursor" class="
+                  observability-button
+                " type="button" :disabled="detailMoreLoading" @click="loadMoreSessionTimeline"
+              >
+                {{ detailMoreLoading ? 'Loading…' : 'Load more' }}
+              </button>
             </div>
-            <ul class="observability-inline-list"><li v-for="item in sessionDetail.timeline" :key="item.id"><span>{{ formatDateTime(item.at) }} · {{ item.kind }}</span><strong>{{ item.detail || '—' }}</strong></li><li v-if="sessionDetail.timeline.length === 0" class="observability-table__muted">No timeline events returned.</li></ul>
-            <p v-if="detailMoreError" class="observability-error" role="alert">{{ detailMoreError }}</p>
+            <ul class="observability-inline-list">
+              <li v-for="item in sessionDetail.timeline" :key="item.id">
+                <span>{{ formatDateTime(item.at) }} · {{ detailLabel(item.kind) }}</span><strong>{{ timelineDetail(item.detail) }}</strong>
+              </li><li
+                v-if="sessionDetail.timeline.length === 0" class="
+                  observability-table__muted
+                "
+              >
+                No timeline events returned.
+              </li>
+            </ul>
+            <p v-if="detailMoreError" class="observability-error" role="alert">
+              {{ detailMoreError }}
+            </p>
           </div>
           <div class="observability-card">
-            <div class="observability-card__header"><div><h3>Participants</h3><p>{{ sessionDetail.participants.length }}<span v-if="sessionDetailWithExtras?.participantsTotal"> of {{ sessionDetailWithExtras?.participantsTotal }}</span> participants shown<span v-if="sessionDetailWithExtras?.participantsTruncated"> · provider limit reached</span></p></div></div>
-            <ul class="observability-inline-list"><li v-for="item in sessionDetail.participants" :key="item.label"><span>{{ item.label }}{{ item.bot ? ' · bot' : ' · human' }}</span><strong>{{ item.score ?? '—' }}</strong></li><li v-if="sessionDetail.participants.length === 0" class="observability-table__muted">No participant rows returned.</li></ul>
+            <div class="observability-card__header">
+              <div><h3>Participants</h3><p>{{ sessionDetail.participants.length }}<span v-if="sessionDetailWithExtras?.participantsTotal"> of {{ sessionDetailWithExtras?.participantsTotal }}</span> participants shown<span v-if="sessionDetailWithExtras?.participantsTruncated"> · provider limit reached</span></p></div>
+            </div>
+            <ul class="observability-inline-list">
+              <li v-for="item in sessionDetail.participants" :key="item.label">
+                <span>{{ item.label }}{{ item.bot ? ' · bot' : ' · human' }}</span><strong>{{ item.score ?? '—' }}</strong>
+              </li><li
+                v-if="sessionDetail.participants.length === 0" class="
+                  observability-table__muted
+                "
+              >
+                No participant rows returned.
+              </li>
+            </ul>
           </div>
         </template>
         <template v-else-if="playerDetail">
-          <div class="observability-grid"><article class="observability-card observability-card--metric"><h3>Sessions</h3><span class="observability-value">{{ playerDetail.player.sessions }}</span></article><article class="observability-card observability-card--metric"><h3>Play time</h3><span class="observability-value">{{ formatObservabilityNumber(playerDetail.player.playSeconds, 's') }}</span></article><article class="observability-card observability-card--metric"><h3>Journey</h3><span class="observability-value">{{ playerDetail.player.returning ? 'Returning' : 'New' }}</span></article></div>
+          <div class="observability-grid">
+            <article
+              class="observability-card observability-card--metric"
+            >
+              <h3>Sessions</h3><span
+                class="observability-value"
+              >{{ playerDetail.player.sessions }}</span>
+            </article><article
+              class="observability-card observability-card--metric"
+            >
+              <h3>Play time</h3><span
+                class="observability-value"
+              >{{ formatObservabilityNumber(playerDetail.player.playSeconds, 's') }}</span>
+            </article><article
+              class="observability-card observability-card--metric"
+            >
+              <h3>Journey</h3><span
+                class="observability-value"
+              >{{ playerDetail.player.returning ? 'Returning' : 'New' }}</span>
+            </article>
+          </div>
           <div class="observability-card">
             <div class="observability-card__header">
               <div><h3>Sessions</h3><p>{{ playerDetail.sessions.length }}<span v-if="playerDetailWithExtras?.sessionsTotal"> of {{ playerDetailWithExtras?.sessionsTotal }}</span> sessions loaded<span v-if="playerDetailWithExtras?.sessionsTruncated && !playerDetailWithExtras?.sessionsNextCursor"> · provider limit reached</span></p></div>
-              <button v-if="playerDetailWithExtras?.sessionsNextCursor" class="observability-button" type="button" :disabled="detailMoreLoading" @click="loadMorePlayerSessions">{{ detailMoreLoading ? 'Loading…' : 'Load more' }}</button>
+              <button
+                v-if="playerDetailWithExtras?.sessionsNextCursor" class="
+                  observability-button
+                " type="button" :disabled="detailMoreLoading" @click="loadMorePlayerSessions"
+              >
+                {{ detailMoreLoading ? 'Loading…' : 'Load more' }}
+              </button>
             </div>
-            <ul class="observability-inline-list"><li v-for="session in playerDetail.sessions" :key="session.id"><span>{{ gameLabel(session.gameId) }} · {{ formatDateTime(session.startedAt) }}</span><strong>{{ session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</strong></li><li v-if="playerDetail.sessions.length === 0" class="observability-table__muted">No sessions returned.</li></ul>
-            <p v-if="detailMoreError" class="observability-error" role="alert">{{ detailMoreError }}</p>
+            <ul class="observability-inline-list">
+              <li v-for="session in playerDetail.sessions" :key="session.id">
+                <span>{{ gameLabel(session.gameId) }} · {{ formatDateTime(session.startedAt) }}</span><strong>{{ session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</strong>
+              </li><li
+                v-if="playerDetail.sessions.length === 0" class="
+                  observability-table__muted
+                "
+              >
+                No sessions returned.
+              </li>
+            </ul>
+            <p v-if="detailMoreError" class="observability-error" role="alert">
+              {{ detailMoreError }}
+            </p>
           </div>
         </template>
       </article>

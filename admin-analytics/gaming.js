@@ -1195,6 +1195,16 @@ export async function readGamingData(env = {}, options = {}) {
   }
 }
 
+function timelineDetail(item) {
+  if (item.event_type === 'gaming_performance') {
+    const values = [['FPS', item.fps, ''], ['RTT', item.rtt_ms, 'ms'], ['Load', item.load_ms, 'ms']]
+      .filter(([, value]) => value != null && Number.isFinite(Number(value)))
+      .map(([label, value, unit]) => `${label} ${Math.round(Number(value) * 100) / 100}${unit}`);
+    if (values.length) return values.join(' · ');
+  }
+  return item.details_json || item.action || item.subject || undefined;
+}
+
 export async function readGamingSession(env = {}, sessionId, options = {}) {
   const db = dbFor(env);
   if (!db || !id(sessionId)) return null;
@@ -1207,7 +1217,7 @@ export async function readGamingSession(env = {}, sessionId, options = {}) {
     timelineClauses.push('(event_at > ? OR (event_at = ? AND event_id > ?))');
     timelineBinds.push(timelineCursor.timestamp, timelineCursor.timestamp, timelineCursor.sessionId);
   }
-  const timelineRows = rowsFromResult(await db.prepare(`SELECT event_id, event_at, event_type, action, subject, details_json
+  const timelineRows = rowsFromResult(await db.prepare(`SELECT event_id, event_at, event_type, action, subject, details_json, fps, rtt_ms, load_ms
     FROM gaming_events WHERE ${timelineClauses.join(' AND ')} ORDER BY event_at ASC, event_id ASC LIMIT ${MAX_TIMELINE_ROWS + 1}`).bind(...timelineBinds).all());
   const timelineTruncated = timelineRows.length > MAX_TIMELINE_ROWS;
   if (timelineTruncated) timelineRows.pop();
@@ -1219,7 +1229,7 @@ export async function readGamingSession(env = {}, sessionId, options = {}) {
   const participantsTotal = numeric((await db.prepare('SELECT COUNT(*) AS count FROM gaming_participants WHERE match_id = ?').bind(row.match_id || '').first())?.count);
   return {
     session: sessionResponse(row),
-    timeline: timelineRows.map(item => ({ id: item.event_id, at: iso(item.event_at), kind: item.event_type, detail: item.details_json || item.action || item.subject || undefined })),
+    timeline: timelineRows.map(item => ({ id: item.event_id, at: iso(item.event_at), kind: item.event_type, detail: timelineDetail(item) })),
     timelineTotal,
     timelineLimit: MAX_TIMELINE_ROWS,
     timelineTruncated,
