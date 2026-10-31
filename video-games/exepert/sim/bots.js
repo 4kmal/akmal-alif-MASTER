@@ -20,12 +20,12 @@ export function botLoadout(rng){
 }
 
 function perceive(room, p, B, D){
-  const m = p.m, ey = m.y + eyeHeight(m);
+  const m = p.m, ey = m.y + eyeHeight(m), range = Math.min(D.range, p.botRange || Infinity);
   let best = null, bd = Infinity;
   for (const o of room.players.values()){
     if (o === p || !o.alive || !room.isEnemy(p, o) || o.cloak > 0) continue;
     const dx = o.m.x - m.x, dz = o.m.z - m.z, d = Math.hypot(dx, dz);
-    if (d > D.range || d >= bd) continue;
+    if (d > range || d >= bd) continue;
     const ang = Math.abs(wrap(yawTo(dx, dz) - m.yaw));
     const heard = o.firingT > 0 && d < 40;
     if (ang > D.fov / 2 && d > 9 && !heard && B.target !== o.id) continue;

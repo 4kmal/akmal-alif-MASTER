@@ -2,8 +2,9 @@
    init, onKill, tick, result, hud, plus optional spawn, deploy, snapshot and bot hints. */
 import { tdm, ffa } from './deathmatch.js';
 import { uplink } from './uplink.js';
+import { extraction } from './extraction.js';
 
-export const MODES = { tdm, ffa, uplink };
+export const MODES = { tdm, ffa, uplink, extraction };
 export const MODE_IDS = Object.keys(MODES);
 
 export function registerMode(mode){ MODES[mode.id] = mode; if (!MODE_IDS.includes(mode.id)) MODE_IDS.push(mode.id); }

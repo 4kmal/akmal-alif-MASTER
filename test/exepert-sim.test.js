@@ -196,3 +196,41 @@ test('uplink deploys onto a held relay by drop pod and ends when tickets run out
   assert.equal(room.phase, 'post');
   assert.equal(room.result.winner, p.team);
 });
+
+test('extraction: hold use to loot, die and drop the pack, or ride a lift out to bank it', () => {
+  const { room } = makeRoom({ mode:'extraction', bots:0 });
+  const p = room.join({ name:'runner' });
+  assert.equal(room.mode.teams, 4);
+  assert.ok([...room.players.values()].some((q) => q.sentinel), 'sentinels guard the hot zones');
+  for (const q of room.players.values()) if (q.sentinel) q.alive = false; // keep this test about looting
+  const log = room.ms.loot.find((l) => l.kind === 'log');
+  const stand = (x, y, z) => { p.m.x = x; p.m.y = y; p.m.z = z; p.m.vx = p.m.vz = p.m.vy = 0; p.m.ground = true; };
+  stand(log.x, log.y, log.z);
+  let seq = p.seq;
+  for (let i = 0; i < 20; i++) room.handle(p.id, { t:'in', f:[{ s:++seq, dt:0.05, mx:0, mz:0, yaw:0, pitch:0, b:BTN.USE, e:0 }] }), (p.budget = 1), stand(log.x, log.y, log.z);
+  assert.ok(log.taken, 'the data log was taken');
+  assert.equal(p.pack.value, log.value);
+
+  // ride a lift: call it, wait, stand in the zone when it lands
+  const ex = room.ms.exfils[0];
+  stand(ex.x, ex.y, ex.z);
+  for (let i = 0; i < 30; i++){ room.handle(p.id, { t:'in', f:[{ s:++seq, dt:0.05, mx:0, mz:0, yaw:0, pitch:0, b:BTN.USE, e:0 }] }); p.budget = 1; stand(ex.x, ex.y, ex.z); }
+  assert.equal(ex.state, 'called');
+  for (let i = 0; i < 20 * 61 && ex.state === 'called'; i++){ room.tick(); stand(ex.x, ex.y, ex.z); }
+  room.tick();
+  assert.equal(room.ms.bank[p.team], log.value, 'the haul is banked for the crew');
+  assert.equal(p.pack.value, 0);
+
+  // dying with loot drops a pack anyone can take
+  const crate = room.ms.loot.find((l) => l.kind === 'crate' && !l.taken);
+  p.alive = true; p.protect = 0; p.pack = { items:2, value:900 };
+  stand(crate.x, crate.y, crate.z);
+  room.damage(p, 999, null, 'fall');
+  const pack = room.ms.loot.find((l) => l.kind === 'pack');
+  assert.ok(pack && pack.value === 900 && !pack.taken);
+
+  room.matchTime = room.timeLimit;
+  room.tick();
+  assert.equal(room.phase, 'post');
+  assert.equal(room.result.winner, p.team);
+});

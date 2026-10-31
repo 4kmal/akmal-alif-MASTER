@@ -29,6 +29,19 @@ export const TEAMS = [
   { id:0, name:'VANGUARD', short:'VAN', color:'#2ad4ff' },
   { id:1, name:'SYNDICATE', short:'SYN', color:'#ff2a8a' }
 ];
+export const CREWS = [
+  { name:'CREW AZURE', color:'#2ad4ff' }, { name:'CREW ROSE', color:'#ff2a8a' },
+  { name:'CREW LIME', color:'#d4ff3a' }, { name:'CREW AMBER', color:'#ffb02a' }
+];
+export const SENTINEL_TEAM = 90;
+export const SENTINEL_COLOR = '#ff4466';
+
+/* Display name and colour of a team in any mode (two sides, crews, or sentinels). */
+export function teamInfo(team, mode){
+  if (team === SENTINEL_TEAM) return { name:'SENTINELS', color:SENTINEL_COLOR };
+  if (mode && mode.teams > 2) return CREWS[team] || { name:`CREW ${team + 1}`, color:'#e6edf7' };
+  return TEAMS[team] || { name:'', color:'#e6edf7' };
+}
 export const FFA_COLORS = ['#2ad4ff', '#ff2a8a', '#d4ff3a', '#ffb02a', '#b07bff', '#3affc4', '#ff5a3a', '#f4f4ff', '#6a8cff', '#ff7ad9', '#9aff3a', '#3ad1ff'];
 
 export const BOT_NAMES = [

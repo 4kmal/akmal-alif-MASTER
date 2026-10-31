@@ -142,24 +142,30 @@ export class Room {
     this.balanceTeams();
   }
 
+  /* Teams are 0..mode.teams-1 (two sides, or several crews). Sentinels keep their own team. */
+  teamCounts(except = null){
+    const n = new Array(this.mode.teams).fill(0);
+    for (const q of this.players.values()) if (q !== except && !q.sentinel && q.team >= 0 && q.team < n.length) n[q.team]++;
+    return n;
+  }
+
   assignTeam(p){
+    if (p.sentinel) return;
     if (this.mode.teams === 0){ p.team = -1; return; }
-    const n = [0, 0];
-    for (const q of this.players.values()) if (q !== p && q.team >= 0) n[q.team]++;
-    p.team = n[0] <= n[1] ? 0 : 1;
+    const n = this.teamCounts(p);
+    p.team = n.indexOf(Math.min(...n));
   }
 
   /* Keep teams even by moving bots (never humans) across. */
   balanceTeams(){
-    if (this.mode.teams === 0){ for (const p of this.players.values()) p.team = -1; return; }
-    for (const p of this.players.values()) if (p.team < 0) this.assignTeam(p);
-    const count = t => [...this.players.values()].filter(p => p.team === t).length;
-    for (let guard = 0; guard < 16; guard++){
-      const a = count(0), b = count(1);
-      if (Math.abs(a - b) <= 1) break;
-      const from = a > b ? 0 : 1, bot = [...this.players.values()].find(p => p.bot && p.team === from);
+    if (this.mode.teams === 0){ for (const p of this.players.values()) if (!p.sentinel) p.team = -1; return; }
+    for (const p of this.players.values()) if (!p.sentinel && (p.team < 0 || p.team >= this.mode.teams)) this.assignTeam(p);
+    for (let guard = 0; guard < 24; guard++){
+      const n = this.teamCounts(), hi = n.indexOf(Math.max(...n)), lo = n.indexOf(Math.min(...n));
+      if (n[hi] - n[lo] <= 1) break;
+      const bot = [...this.players.values()].find(p => p.bot && !p.sentinel && p.team === hi);
       if (!bot) break;
-      bot.team = 1 - from;
+      bot.team = lo;
     }
   }
 
@@ -167,7 +173,7 @@ export class Room {
     const humans = this.humans().filter(p => !p.away).length;
     const want = this.botSetting === 'auto' ? Math.max(this.mode.fill - humans, 0) : this.botSetting;
     const target = clamp(want, 0, Math.max(this.mode.maxPlayers - humans, 0));
-    const bots = [...this.players.values()].filter(p => p.bot);
+    const bots = [...this.players.values()].filter(p => p.bot && !p.sentinel);
     while (bots.length > target){ const b = bots.pop(); this.players.delete(b.id); this.events.push({e:'leave', p:b.id}); }
     const used = new Set(bots.map(b => b.name));
     while (bots.length < target){
@@ -234,7 +240,7 @@ export class Room {
       case 'loadout': if (Array.isArray(msg.l)) this.setLoadout(p, msg.l.slice(0, 2)); break;
       case 'ping': this.direct(p, {t:'pong', c:msg.c, T:r3(this.time)}); p.ping = clamp(fin(msg.rtt), 0, 2000) | 0; break;
       case 'mark': if (this.phase !== 'post') this.events.push({e:'mark', p:p.id, x:r2(fin(msg.x)), y:r2(fin(msg.y)), z:r2(fin(msg.z)), team:p.team}); break;
-      case 'team': if (this.mode.teams && this.phase === 'lobby' && (msg.team === 0 || msg.team === 1)){ p.team = msg.team; this.balanceTeams(); } break;
+      case 'team': if (this.mode.teams && this.phase === 'lobby' && Number.isInteger(msg.team) && msg.team >= 0 && msg.team < this.mode.teams){ p.team = msg.team; this.balanceTeams(); } break;
       case 'config': if (pid === this.hostId && this.phase !== 'live') this.configure(msg); break;
       case 'start': if (pid === this.hostId && this.phase === 'lobby'){ this.phase = 'live'; this.resetMatch(); this.events.push({e:'phase', ph:'live'}); } break;
       case 'name': { const n = sanitizeName(msg.name); if (n) p.name = n; break; }
@@ -258,6 +264,7 @@ export class Room {
       if (f.e & BTN.RELOAD) this.reload(p);
       if (f.e & BTN.NADE) this.throwNade(p);
       if (f.e & BTN.USE) this.mode.onUse?.(this, p);
+      this.mode.onUseHeld?.(this, p, f.b & BTN.USE ? f.dt : 0);
       p.held = f.b;
     }
   }

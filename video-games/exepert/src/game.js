@@ -145,6 +145,7 @@ export class Game {
 
   reconcile(me){
     this.meState = me;
+    this.personalData = me.x || null;
     const respawned = me.sp !== this.spawns;
     if (respawned || !!me.al !== this.meAlive){
       this.spawns = me.sp; this.meAlive = !!me.al;

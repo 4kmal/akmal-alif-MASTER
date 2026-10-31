@@ -2,7 +2,7 @@
 import { buildWorld } from '../../kessler-world/world.js';
 import { MODES, MODE_IDS } from '../sim/modes/index.js';
 import { WEAPONS, WEAPON_IDS } from '../sim/weapons.js';
-import { TEAMS, sanitizeName } from '../sim/constants.js';
+import { TEAMS, sanitizeName, teamInfo } from '../sim/constants.js';
 import { Game } from './game.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
@@ -163,7 +163,7 @@ function act(a, b){
   if (a === 'leave') return leave();
   if (a === 'exit') return exitToArcade();
   if (a === 'start') return game?.send({t:'start'});
-  if (a === 'swapTeam') return game?.send({t:'team', team:game.myTeam === 0 ? 1 : 0});
+  if (a === 'swapTeam') return game?.send({t:'team', team:game.mode.teams ? (game.myTeam + 1) % game.mode.teams : 0});
   if (a === 'lobbyView') return go('lobby');
   if (a === 'copy'){
     const url = `${location.origin}/video-games/exepert/?room=${game?.code || ''}`;
@@ -235,7 +235,8 @@ function showPost(r){
   let title, sub;
   if (mode.teams){
     title = r.winner === -1 ? 'DRAW' : r.winner === mine ? 'VICTORY' : 'DEFEAT';
-    sub = r.winner >= 0 ? `${TEAMS[r.winner].name} WINS · ${r.reason}` : r.reason;
+    sub = r.winner >= 0 ? `${teamInfo(r.winner, mode).name} WINS · ${r.reason}` : r.reason;
+    if (r.bank) sub += ` · ${r.bank.map((v, i) => `${teamInfo(i, mode).name.replace('CREW ', '')} $${v.toLocaleString('en-US')}`).join(' · ')}`;
   } else {
     const w = game.roster.get(r.winner);
     title = r.winner === game.myId ? 'YOU WIN' : `${esc(w?.name || 'NOBODY')} WINS`;
@@ -264,8 +265,8 @@ function renderLobby(){
   const list = [...game.roster.values()];
   const li = r => `<li class="${r.id === game.myId ? 'me' : ''}"><span>${esc(r.name)}${r.bot ? ' · BOT' : ''}${r.host ? ' · HOST' : ''}</span><span>${r.bot ? '' : r.ping + 'ms'}</span></li>`;
   $('lobbyList').innerHTML = game.mode.teams
-    ? [0, 1].map(t => `<div><h3 style="color:${TEAMS[t].color}">${TEAMS[t].name}</h3><ul>${list.filter(r => r.team === t).map(li).join('')}</ul></div>`).join('')
-    : `<div><h3>RUNNERS</h3><ul>${list.map(li).join('')}</ul></div>`;
+    ? Array.from({length:game.mode.teams}, (_, t) => t).map(t => { const info = teamInfo(t, game.mode); return `<div><h3 style="color:${info.color}">${info.name}</h3><ul>${list.filter(r => r.team === t).map(li).join('')}</ul></div>`; }).join('')
+    : `<div><h3>RUNNERS</h3><ul>${list.filter(r => r.team !== 90).map(li).join('')}</ul></div>`;
 }
 
 function onLock(locked){

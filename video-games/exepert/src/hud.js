@@ -1,6 +1,6 @@
 /* EXEPERT HUD: DOM instruments over the canvas (compass, minimap, feed, vitals, weapon, markers, scoreboard). */
 import { WEAPONS } from '../sim/weapons.js';
-import { TEAMS, FFA_COLORS } from '../sim/constants.js';
+import { TEAMS, FFA_COLORS, teamInfo, SENTINEL_TEAM } from '../sim/constants.js';
 import { FLAG } from '../sim/room-core.js';
 
 const $ = id => document.getElementById(id);
@@ -10,8 +10,9 @@ const CARD = {0:'N', 45:'NE', 90:'E', 135:'SE', 180:'S', 225:'SW', 270:'W', 315:
 
 export function playerColor(p, mode){
   if (!p) return '#e6edf7';
+  if (p.team === SENTINEL_TEAM) return teamInfo(p.team, mode).color;
   if (mode && mode.teams === 0) return FFA_COLORS[p.id % FFA_COLORS.length];
-  return p.team === 0 ? TEAMS[0].color : p.team === 1 ? TEAMS[1].color : '#e6edf7';
+  return teamInfo(p.team, mode).color;
 }
 
 export class Hud {
@@ -211,9 +212,13 @@ export class Hud {
     const rows = list => list.map(r => `<tr class="${r.id === myId ? 'me' : ''}${r.alive ? '' : ' dead'}"><td>${esc(r.name)}${r.bot ? '<span class="bot">BOT</span>' : ''}${r.host ? '<span class="bot">HOST</span>' : ''}</td><td class="n">${r.kills}</td><td class="n">${r.deaths}</td><td class="n">${r.assists}</td><td class="n">${r.score}</td><td class="n">${r.bot ? '' : r.ping}</td></tr>`).join('');
     const table = list => `<table class="sb"><thead><tr><th>RUNNER</th><th class="n">K</th><th class="n">D</th><th class="n">A</th><th class="n">SCORE</th><th class="n">PING</th></tr></thead><tbody>${rows(list)}</tbody></table>`;
     let body;
+    const people = roster.filter(r => r.team !== SENTINEL_TEAM);
     if (mode.teams){
-      body = [0, 1].map(t => `<div class="sb-team" style="color:${TEAMS[t].color}">${TEAMS[t].name}</div>${table(roster.filter(r => r.team === t).sort((a, b) => b.score - a.score))}`).join('');
-    } else body = table([...roster].sort((a, b) => b.kills - a.kills || b.score - a.score));
+      body = Array.from({length:mode.teams}, (_, t) => t).filter(t => people.some(r => r.team === t)).map(t => {
+        const info = teamInfo(t, mode);
+        return `<div class="sb-team" style="color:${info.color}">${info.name}</div>${table(people.filter(r => r.team === t).sort((a, b) => b.score - a.score))}`;
+      }).join('');
+    } else body = table([...people].sort((a, b) => b.kills - a.kills || b.score - a.score));
     this.el.sbIn.innerHTML = `<div class="sb-head"><span>${esc(mode.name)}</span><span>${head || ''}</span></div>${body}`;
   }
 }
