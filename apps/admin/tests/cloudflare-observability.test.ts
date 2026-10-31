@@ -188,6 +188,49 @@ describe('cloudflare observability provider boundaries', () => {
     }
   })
 
+  it('keeps billing consumption and allowances account-wide for project-filtered reports', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/graphql')) {
+        const body = JSON.parse(String(init?.body)) as { query?: string }
+        const accountRow = {
+          sum: { requests: 12, errors: 0, subrequests: 0, cpuTimeUs: 1, duration: 1, wallTime: 1 },
+          quantiles: { cpuTimeP50: 1, cpuTimeP90: 1, cpuTimeP99: 1, cpuTimeP999: 1, memoryUsageBytesP50: 1, memoryUsageBytesP90: 1, memoryUsageBytesP99: 1, memoryUsageBytesP999: 1, wallTimeP50: 1, wallTimeP99: 1, wallTimeP999: 1, durationP50: 1, durationP99: 1 },
+          dimensions: { datetimeHour: '2026-10-31T12:00:00Z', scriptName: 'other-worker' },
+        }
+        const projectRow = {
+          ...accountRow,
+          sum: { ...accountRow.sum, requests: 3 },
+          dimensions: { ...accountRow.dimensions, scriptName: 'akmalalif-admin' },
+        }
+        const account: Record<string, unknown> = body.query?.includes('workersAggregate')
+          ? { workersAggregate: [accountRow], workersByScript: [projectRow], workersSeries: [accountRow, projectRow] }
+          : {}
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [account] } } }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
+    }))
+    const env = { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test' }
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.parse('2026-10-31T12:00:00.000Z'))
+    try {
+      const accountReport = await readCloudflareReport(eventWithPath('/api/admin/observability/cloudflare?range=24h&scope=account', env))
+      const projectReport = await readCloudflareReport(eventWithPath('/api/admin/observability/cloudflare?range=24h&scope=akmalalif', env))
+      const accountUsage = accountReport.billing.usage.find(item => item.key === 'workers_requests')
+      const projectUsage = projectReport.billing.usage.find(item => item.key === 'workers_requests')
+      expect(accountReport.compute.find(item => item.key === 'workers.requests')?.value).toBe(12)
+      expect(projectReport.compute.find(item => item.key === 'workers.requests')?.value).toBe(3)
+      expect(accountUsage).toMatchObject({ consumed: 12, included: 10_000_000, billable: 0 })
+      expect(projectUsage).toMatchObject({ consumed: 12, included: 10_000_000, billable: 0 })
+      expect(projectReport.billing.estimatedCharges).toBe(accountReport.billing.estimatedCharges)
+      expect(projectReport.billing.reason).toContain('account-wide')
+      expect(projectReport.billing.reason).toContain('unattributed')
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('deduplicates quarter snapshots, aggregates additive daily metrics, and reads old daily history', async () => {
     const memory = createMemoryDb()
     let billingMetricRequests = 0
@@ -242,6 +285,15 @@ describe('cloudflare observability provider boundaries', () => {
     const firstReport = await collectCloudflareObservability(env, firstAt)
     expect(firstReport.series.some(item => item.metric === 'workers.requests')).toBe(true)
     expect(firstReport.series.some(item => item.metric === 'workers.errors')).toBe(true)
+    expect(firstReport.billing.status).toBe('unavailable')
+    expect(firstReport.billing.actualCharges).toBeNull()
+    expect(firstReport.billing.estimatedCharges).toBeNull()
+    expect(firstReport.billing.fixedFees).toBeNull()
+    expect(firstReport.billing.forecast).toBeNull()
+    expect(firstReport.billing.reason).toContain('Billing is loaded separately')
+    const persistedReports = [...memory.snapshots.values()].map(value => JSON.parse(String((value as { report: unknown }).report)) as { billing: { actualCharges: number | null, estimatedCharges: number | null, fixedFees: number | null, forecast: number | null } })
+    expect(persistedReports).toHaveLength(2)
+    expect(persistedReports.every(item => item.billing.actualCharges === null && item.billing.estimatedCharges === null && item.billing.fixedFees === null && item.billing.forecast === null)).toBe(true)
     const billingRequestsAfterFirst = billingMetricRequests
     await collectCloudflareObservability(env, firstAt + 90 * 1000)
     expect(billingMetricRequests).toBe(billingRequestsAfterFirst)
@@ -306,6 +358,48 @@ describe('cloudflare observability provider boundaries', () => {
       expect(second.compute.find(item => item.key === 'workers.requests')?.value).toBe(15)
       expect(second.series.filter(item => item.metric === 'workers.requests')).toHaveLength(2)
       expect(second.coverage.some(item => item.status === 'partial')).toBe(true)
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps latest storage as current size and leaves unpriced operation totals unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/graphql')) {
+        const body = JSON.parse(String(init?.body)) as { query?: string }
+        const account: Record<string, unknown> = {}
+        if (body.query?.includes('d1StorageAdaptiveGroups')) {
+          account.d1StorageAdaptiveGroups = [{
+            max: { databaseSizeBytes: 1024 ** 3 },
+            dimensions: { datetimeFifteenMinutes: '2026-10-31T12:00:00Z', databaseId: 'db-1' },
+          }]
+        }
+        if (body.query?.includes('r2OperationsAdaptiveGroups')) {
+          account.r2OperationsAdaptiveGroups = [{
+            sum: { requests: 4, responseBytes: 0, responseObjectSize: 0 },
+            dimensions: { datetimeFifteenMinutes: '2026-10-31T12:00:00Z', bucketName: 'external-bucket', actionType: 'unknown' },
+          }]
+        }
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [account] } } }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
+    }))
+    const event = { context: { cloudflare: { env: { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test' } } } } as never
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.parse('2026-10-31T12:00:00.000Z'))
+    try {
+      const report = await readCloudflareReport(eventWithPath('/api/admin/observability/cloudflare?range=24h', event.context.cloudflare.env))
+      const d1Storage = report.billing.usage.find(item => item.key === 'd1_storage')
+      const r2Operations = report.billing.usage.find(item => item.key === 'r2_operations')
+      expect(d1Storage).toMatchObject({ consumed: 1, unit: 'GiB', billable: null, estimatedCost: null })
+      expect(d1Storage?.label).toContain('current size')
+      expect(r2Operations).toMatchObject({ consumed: 4, billable: null, estimatedCost: null })
+      expect(report.billing.fixedFees).toBe(5)
+      expect(report.billing.estimatedCharges).toBeNull()
+      expect(report.billing.forecast).toBeNull()
+      expect(report.billing.reason).toContain('aggregate estimate and forecast are withheld')
     }
     finally {
       vi.useRealTimers()

@@ -27,6 +27,7 @@ export const DAILY_RETENTION_MONTHS = 13
 export const PRICING_VERSION = 'docs-2026-10-31'
 export const PRICING_AS_OF = 'docs-2026-10-31'
 const MAX_BILLING_METRIC_CACHE_ENTRIES = 32
+const ACCOUNT_BILLING_SCOPE_REASON = 'Billing consumption and allowances are account-wide; project views reuse shared account metrics and may include unattributed costs.'
 
 const WORKER_NAMES = new Set(['akmalalif-admin', 'akmalalif-portfolio'])
 const D1_NAMES = new Set(['akmalalif-admin', 'akmalalif-portfolio'])
@@ -1660,7 +1661,7 @@ async function readBuilds(env: CloudflareEnvironment, token: string, query: Clou
   return { coverage: coverage('builds', capReason ? 'partial' : 'live', checkedAt, capReason, true), metrics, series }
 }
 
-async function readBillingMetrics(env: CloudflareEnvironment, token: string, cycle: { from: string, to: string }, scope: CloudflareQuery['scope'], now: number): Promise<BillingMetricsResult> {
+async function readBillingMetrics(env: CloudflareEnvironment, token: string, cycle: { from: string, to: string }, scope: 'account', now: number): Promise<BillingMetricsResult> {
   const cycleFrom = new Date(cycle.from).getTime()
   const cycleTo = Math.min(new Date(cycle.to).getTime(), now)
   const retentionFrom = now - LIVE_GRAPHQL_RETENTION_MS
@@ -1889,8 +1890,10 @@ function billingUsage(
 ): BillingUsage {
   if (consumed === null)
     return { key, label, consumed: null, included, billable: null, unit, estimatedCost: null, actualCost: null, attribution }
+  if (ratePerUnit === null)
+    return { key, label, consumed, included, billable: null, unit, estimatedCost: null, actualCost: null, attribution }
   const allowance = applyAllowance(consumed, included ?? 0, ratePerUnit ?? 0)
-  return { key, label, consumed, included, billable: allowance.billable, unit, estimatedCost: ratePerUnit === null ? null : allowance.estimatedCost, actualCost: null, attribution }
+  return { key, label, consumed, included, billable: allowance.billable, unit, estimatedCost: allowance.estimatedCost, actualCost: null, attribution }
 }
 
 function getBillingMetricsCoverage(cycle: { from: string, to: string }, now: number): { complete: boolean, reason?: string } {
@@ -1930,21 +1933,21 @@ function buildBilling(metrics: ObservabilityMetric[], now: number, actual: Actua
     billingUsage('workers_cpu_ms', 'Workers CPU time', workersCpuMs, 30_000_000, 'cpu_ms', 0.02 / 1_000_000),
     billingUsage('d1_rows_read', 'D1 rows read', d1RowsRead, 25_000_000_000, 'rows', 0.001 / 1_000_000),
     billingUsage('d1_rows_written', 'D1 rows written', d1RowsWritten, 50_000_000, 'rows', 1 / 1_000_000),
-    billingUsage('d1_storage', 'D1 storage', d1Storage === null ? null : d1Storage / (1024 ** 3), 5, 'GB-month', 0.75),
+    billingUsage('d1_storage', 'D1 current size', d1Storage === null ? null : d1Storage / (1024 ** 3), null, 'GiB', null),
     ...(kvReadRequests !== null || kvWriteRequests !== null
       ? [
           billingUsage('kv_read_requests', 'KV read requests', kvReadRequests, 10_000_000, 'requests', 0.50 / 1_000_000),
           billingUsage('kv_write_requests', 'KV write requests', kvWriteRequests, 1_000_000, 'requests', 5 / 1_000_000),
         ]
       : [billingUsage('kv_requests', 'KV requests (operation split unavailable)', kvRequests, null, 'requests', null)]),
-    billingUsage('kv_storage', 'KV storage', kvStorage === null ? null : kvStorage / (1024 ** 3), 1, 'GB-month', 0.50),
-    billingUsage('r2_storage', 'R2 storage', r2Storage === null ? null : r2Storage / (1024 ** 3), 10, 'GB-month', 0.015),
+    billingUsage('kv_storage', 'KV current size', kvStorage === null ? null : kvStorage / (1024 ** 3), null, 'GiB', null),
+    billingUsage('r2_storage', 'R2 current payload size', r2Storage === null ? null : r2Storage / (1024 ** 3), null, 'GiB', null),
     ...(r2ClassA !== null || r2ClassB !== null
       ? [
           billingUsage('r2_class_a_operations', 'R2 Class A operations', r2ClassA, 1_000_000, 'operations', 4.50 / 1_000_000),
           billingUsage('r2_class_b_operations', 'R2 Class B operations', r2ClassB, 10_000_000, 'operations', 0.36 / 1_000_000),
         ]
-      : [billingUsage('r2_operations', 'R2 operations', r2Requests, 10_000_000, 'operations', 0.36 / 1_000_000)]),
+      : [billingUsage('r2_operations', 'R2 operations (Class A/B split unavailable)', r2Requests, null, 'operations', null)]),
     billingUsage('durable_objects_requests', 'Durable Objects requests including one shared WebSocket allowance', doRequests === null && doWebsocketBillable === null ? null : (doRequests ?? 0) + (doWebsocketBillable ?? 0), 1_000_000, 'requests', 0.15 / 1_000_000),
     billingUsage('durable_objects_duration', 'Durable Objects duration', doDuration, 400_000, 'GB*s', 12.50 / 1_000_000),
     billingUsage('queues_operations', 'Queues operations', queueOperations, 1_000_000, 'operations', 0.40 / 1_000_000),
@@ -1955,28 +1958,30 @@ function buildBilling(metrics: ObservabilityMetric[], now: number, actual: Actua
   const variableEstimate = usage.reduce((sum, item) => sum + (item.estimatedCost ?? 0), 0)
   const fallbackFixedFees = 5
   const fixedFees = actual?.fixedFees ?? fallbackFixedFees
-  const estimatedCharges = metricsCoverage.complete && usage.length ? fixedFees + variableEstimate : null
+  const hasUnpricedUsage = usage.some(item => (item.consumed ?? 0) > 0 && item.estimatedCost === null)
+  const estimatedCharges = metricsCoverage.complete && usage.length && !hasUnpricedUsage ? fixedFees + variableEstimate : null
   const cycleFrom = new Date(cycle.from).getTime()
   const cycleTo = new Date(cycle.to).getTime()
   const elapsed = Math.max(1, now - cycleFrom)
   const duration = Math.max(1, cycleTo - cycleFrom)
   const projectedVariable = variableEstimate * (duration / elapsed)
-  const forecast = metricsCoverage.complete && usage.length ? fixedFees + projectedVariable : null
+  const forecast = metricsCoverage.complete && usage.length && !hasUnpricedUsage ? fixedFees + projectedVariable : null
   const actualCharges = actual?.charges ?? null
-  const hasUnpricedUsage = usage.some(item => (item.consumed ?? 0) > 0 && item.estimatedCost === null)
   const status: SourceStatus = !metricsCoverage.complete || hasUnpricedUsage
     ? 'partial'
     : actualCharges !== null && usage.length ? 'live' : usage.length ? 'partial' : actual?.reason ? 'partial' : 'unavailable'
   const reason = actualCharges !== null
     ? [
         'Provider billable usage is reported as current-cycle provider-rated metered usage charges, not a full invoice total; fixed subscription fees, current-cycle estimates, and forecast are kept separate.',
-        hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so the estimate and forecast are partial.' : undefined,
+        ACCOUNT_BILLING_SCOPE_REASON,
+        hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so aggregate estimate and forecast are withheld; per-line estimates remain available where rates are known.' : undefined,
         metricsCoverage.reason,
         actual?.reason,
       ].filter(Boolean).join(' ')
     : [
         `Actual Cloudflare billing is unavailable. Fallback estimate uses published rates under ${PRICING_VERSION}; fixed fees remain separate from usage overage and forecast.`,
-        hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so the estimate and forecast are partial.' : undefined,
+        ACCOUNT_BILLING_SCOPE_REASON,
+        hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so aggregate estimate and forecast are withheld; per-line estimates remain available where rates are known.' : undefined,
         metricsCoverage.reason,
         actual?.reason,
       ].filter(Boolean).join(' ')
@@ -2091,25 +2096,26 @@ async function buildReport(env: CloudflareEnvironment, token: string, query: Clo
       sourceData.set(source, result.value)
     sourceCoverage.push(sourceCoverageForResult(result, source, checkedAt))
   }
-  const allMetrics = [...sourceData.values()].flatMap(data => data.metrics)
   const allSeries = [...sourceData.values()].flatMap(data => data.series)
   const resources = inventoryResourcesForScope(inventory, query, scopedEnv)
   const billingCycle = actualBilling?.cycle ?? getBillingCycle(now)
-  const billingMetricsResult: BillingMetricsResult = allowBilling
-    ? await readBillingMetrics(scopedEnv, token, billingCycle, query.scope, now)
-    : { metrics: allMetrics, complete: true }
-  const metricsCoverage = allowBilling
-    ? { complete: billingMetricsResult.complete, reason: billingMetricsResult.reason }
-    : getBillingMetricsCoverage(billingCycle, now)
-  const billingMetrics = billingMetricsResult.metrics
-  const billing = buildBilling(billingMetrics, now, actualBilling, metricsCoverage)
-  if (actualBilling) {
-    sourceCoverage.push(coverage(
-      'billing',
-      billing.status,
-      checkedAt,
-      billing.reason,
-    ))
+  let billing: CloudflareBilling
+  if (allowBilling) {
+    const billingMetricsResult = await readBillingMetrics(scopedEnv, token, billingCycle, 'account', now)
+    const metricsCoverage = { complete: billingMetricsResult.complete, reason: billingMetricsResult.reason }
+    // Billing is intentionally account-wide even when the report itself is project-filtered.
+    billing = buildBilling(billingMetricsResult.metrics, now, actualBilling, metricsCoverage)
+    if (actualBilling) {
+      sourceCoverage.push(coverage(
+        'billing',
+        billing.status,
+        checkedAt,
+        billing.reason,
+      ))
+    }
+  }
+  else {
+    billing = unavailableBilling('Billing is loaded separately from 15-minute observability collection snapshots; account-wide shared and unattributed costs are not estimated from this window.', now)
   }
   const report: CloudflareReport = {
     meta: {
@@ -2642,7 +2648,7 @@ export async function collectCloudflareObservability(env: CloudflareEnvironment,
   }
   const token = tokenFromEnvironment(env)
   const report = token
-    ? await buildReport(env, token, query, now)
+    ? await buildReport(env, token, query, now, false)
     : emptyReport(query, now, 'Cloudflare observability credentials are unavailable; no demo values are used.')
   try {
     await persistReport(env, report, now)
@@ -2660,7 +2666,7 @@ export async function collectCloudflareObservability(env: CloudflareEnvironment,
       preset: true,
     }
     try {
-      const scopedReport = await buildReport(env, token, scopedQuery, now)
+      const scopedReport = await buildReport(env, token, scopedQuery, now, false)
       await persistReport(env, scopedReport, now)
     }
     catch {
