@@ -63,6 +63,17 @@ describe('observability report helpers', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(currentQuery).toEqual({ range: '13m' })
+
+    querySync.patchQuery({ range: '7d' })
+    querySync.patchQuery({ range: '13m' })
+    resolvers.shift()?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(writes.at(-1)).toEqual({ range: '13m' })
+    resolvers.shift()?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(currentQuery).toEqual({ range: '13m' })
   })
 
   it('keeps unavailable provider values visible instead of converting them to zero', () => {

@@ -116,7 +116,7 @@ export function createObservabilityQuerySync(
   function patchQuery(patch: ObservabilityQueryPatch) {
     const routeQuery = getRouteQuery()
     const next = applyQueryPatch(desiredQuery || routeQuery, patch)
-    if (sameQuery(next, routeQuery))
+    if (sameQuery(next, routeQuery) && !desiredQuery && !flushing)
       return
 
     externalQuery = null
