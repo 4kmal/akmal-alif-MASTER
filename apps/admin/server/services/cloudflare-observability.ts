@@ -19,8 +19,11 @@ export const CLOUDFLARE_BILLING_URL = `https://dash.cloudflare.com/${CLOUDFLARE_
 export const OBSERVABILITY_TIMEZONE = 'UTC'
 export const OBSERVABILITY_CACHE_MS = 5 * 60 * 1000
 export const INVENTORY_CACHE_MS = 60 * 60 * 1000
+export const MAX_REPORT_CACHE_ENTRIES = 32
 export const LIVE_GRAPHQL_RETENTION_MS = 31 * 24 * 60 * 60 * 1000
 export const MAX_QUERY_RANGE_MS = 13 * 31 * 24 * 60 * 60 * 1000
+export const SNAPSHOT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000
+export const DAILY_RETENTION_MONTHS = 13
 export const PRICING_VERSION = 'docs-2026-10-31'
 export const PRICING_AS_OF = 'docs-2026-10-31'
 
@@ -59,6 +62,7 @@ export interface CloudflareQuery {
   scope: 'account' | 'akmalalif'
   range: string
   historical: boolean
+  preset?: boolean
 }
 
 interface ProviderErrorInit {
@@ -95,6 +99,7 @@ interface CloudflareApiResponse extends JsonRecord {
 interface InventoryResult {
   resources: CloudflareResource[]
   deployments: CloudflareReport['deployments']
+  serviceResources: CloudflareResource[]
   coverage: SourceCoverage[]
   verifiedBindings: VerifiedBindings
 }
@@ -147,9 +152,23 @@ interface CachedBillingMetrics {
   metrics: ObservabilityMetric[]
 }
 
+interface ActualBillingResult {
+  charges: number | null
+  fixedFees: number | null
+  cycle: { from: string, to: string, source: string } | null
+  currency?: string
+  reason?: string
+}
+
+interface CachedActualBilling {
+  expiresAt: number
+  result: ActualBillingResult
+}
+
 const reportCache = new Map<string, CachedReport>()
 const inventoryCache = new Map<string, CachedInventory>()
 const billingMetricCache = new Map<string, CachedBillingMetrics>()
+const actualBillingCache = new Map<string, CachedActualBilling>()
 
 const GRAPHQL_QUERIES = {
   durableObjectsInvocations: `
@@ -548,6 +567,14 @@ function asArray(value: unknown): JsonRecord[] {
   return Array.isArray(value) ? value.filter(item => asRecord(item) !== null) as JsonRecord[] : []
 }
 
+function resultRows(value: unknown, resultKey?: string): JsonRecord[] {
+  const direct = asArray(value)
+  if (direct.length || Array.isArray(value))
+    return direct
+  const record = asRecord(value)
+  return resultKey ? asArray(record?.[resultKey]) : []
+}
+
 function iso(value: Date | number): string {
   return new Date(value).toISOString()
 }
@@ -595,6 +622,7 @@ export function parseCloudflareQuery(query: Record<string, QueryValue> = {}, now
     scope: scopeValue,
     range: rangeValue,
     historical: to.getTime() < now - LIVE_GRAPHQL_RETENTION_MS,
+    preset: !fromValue && !toValue,
   }
 }
 
@@ -867,7 +895,7 @@ function addSeries(target: CloudflareReport['series'], rows: MetricRow[], fieldG
     const timestamp = timestampFromRow(row)
     if (value === null || !timestamp)
       continue
-    target.push({ timestamp, metric: `${key}.${unit}`, value, ...(rowResourceId(row, resourceFields) ? { resourceId: rowResourceId(row, resourceFields) } : {}) })
+    target.push({ timestamp, metric: `${key}.${field}`, value, ...(rowResourceId(row, resourceFields) ? { resourceId: rowResourceId(row, resourceFields) } : {}) })
   }
 }
 
@@ -958,6 +986,7 @@ export async function paginateCloudflareRest<T extends JsonRecord>(
   path: string,
   source: string,
   limit = 1000,
+  resultKey?: string,
 ): Promise<T[]> {
   const result: T[] = []
   const firstUrl = cloudflareUrl(env, path)
@@ -969,7 +998,7 @@ export async function paginateCloudflareRest<T extends JsonRecord>(
     const pageUrl = page === 1 ? firstUrl : new URL(firstUrl.toString())
     pageUrl.searchParams.set('page', String(page))
     const body = await cloudflareRest(env, token, `${pageUrl.pathname}${pageUrl.search}`, source)
-    result.push(...asArray(body.result) as T[])
+    result.push(...resultRows(body.result, resultKey) as T[])
     const info = asRecord(body.result_info)
     totalPages = Math.min(50, Math.max(page, asFiniteNumber(info?.total_pages) ?? page))
     page += 1
@@ -1009,10 +1038,35 @@ async function graphqlRequest(env: CloudflareEnvironment, token: string, query: 
   return body
 }
 
-async function inventoryEndpoint(env: CloudflareEnvironment, token: string, path: string, source: string, kind: string, paginate = true): Promise<{ resources: CloudflareResource[], deployments: CloudflareReport['deployments'] }> {
+function resourceDashboardUrl(kind: string, id: string, name: string): string | undefined {
+  const account = CLOUDFLARE_ACCOUNT_ID
+  const encodedId = encodeURIComponent(id)
+  const encodedName = encodeURIComponent(name)
+  switch (kind) {
+    case 'worker':
+    case 'worker_service':
+      return `https://dash.cloudflare.com/${account}/workers/services/view/${encodedName}/production`
+    case 'pages':
+      return `https://dash.cloudflare.com/${account}/pages/view/${encodedName}`
+    case 'd1':
+      return `https://dash.cloudflare.com/${account}/workers/d1/databases/${encodedId}`
+    case 'r2':
+      return `https://dash.cloudflare.com/${account}/r2/default/buckets/${encodedName}`
+    case 'kv':
+      return `https://dash.cloudflare.com/${account}/workers/kv/namespaces/${encodedId}`
+    case 'durable_object':
+      return `https://dash.cloudflare.com/${account}/workers/durable-objects`
+    case 'zone':
+      return `https://dash.cloudflare.com/${account}/${encodedName}`
+    default:
+      return undefined
+  }
+}
+
+async function inventoryEndpoint(env: CloudflareEnvironment, token: string, path: string, source: string, kind: string, paginate = true, resultKey?: string): Promise<{ resources: CloudflareResource[], deployments: CloudflareReport['deployments'] }> {
   const rows = paginate
-    ? await paginateCloudflareRest<JsonRecord>(env, token, path, source)
-    : asArray((await cloudflareRest(env, token, path, source)).result)
+    ? await paginateCloudflareRest<JsonRecord>(env, token, path, source, 1000, resultKey)
+    : resultRows((await cloudflareRest(env, token, path, source)).result, resultKey)
   const resources: CloudflareResource[] = []
   const deployments: CloudflareReport['deployments'] = []
   for (const row of rows) {
@@ -1021,7 +1075,7 @@ async function inventoryEndpoint(env: CloudflareEnvironment, token: string, path
     if (!id && !name)
       continue
     const project = projectForResource(kind, id, name, env)
-    resources.push({ id, name, kind, project })
+    resources.push({ id, name, kind, project, url: resourceDashboardUrl(kind, id, name) })
     const createdAt = typeof row.created_on === 'string'
       ? row.created_on
       : typeof row.created_at === 'string' ? row.created_at : undefined
@@ -1043,6 +1097,21 @@ async function workerBindingEndpoint(env: CloudflareEnvironment, token: string, 
   return bindings
 }
 
+function dedupeInventoryResources(resources: CloudflareResource[]): CloudflareResource[] {
+  const byKey = new Map<string, CloudflareResource>()
+  for (const resource of resources) {
+    const normalizedName = resource.name.trim().toLowerCase()
+    const normalizedId = resource.id.trim().toLowerCase()
+    const key = resource.kind === 'worker' || resource.kind === 'worker_service'
+      ? `worker:${normalizedName || normalizedId}`
+      : `${resource.kind}:${normalizedId || normalizedName}`
+    const previous = byKey.get(key)
+    if (!previous || (previous.kind === 'worker_service' && resource.kind === 'worker'))
+      byKey.set(key, resource)
+  }
+  return [...byKey.values()]
+}
+
 async function readInventory(env: CloudflareEnvironment, token: string, now: number): Promise<InventoryResult> {
   const cached = inventoryCache.get(CLOUDFLARE_ACCOUNT_ID)
   if (cached && cached.expiresAt > now)
@@ -1050,16 +1119,16 @@ async function readInventory(env: CloudflareEnvironment, token: string, now: num
 
   const checkedAt = iso(now)
   const endpoints = [
-    ['inventory.workers', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts`, 'worker'],
-    ['inventory.pages', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects`, 'pages'],
-    ['inventory.d1', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database`, 'd1'],
-    ['inventory.r2', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2/buckets`, 'r2'],
-    ['inventory.kv', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces`, 'kv'],
-    ['inventory.durable_objects', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/durable_objects/namespaces`, 'durable_object'],
-    ['inventory.services', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/services`, 'worker_service'],
-    ['inventory.zones', `/zones?account.id=${CLOUDFLARE_ACCOUNT_ID}`, 'zone'],
+    ['inventory.workers', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts`, 'worker', undefined],
+    ['inventory.pages', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects`, 'pages', undefined],
+    ['inventory.d1', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database`, 'd1', undefined],
+    ['inventory.r2', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2/buckets`, 'r2', 'buckets'],
+    ['inventory.kv', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces`, 'kv', undefined],
+    ['inventory.durable_objects', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/durable_objects/namespaces`, 'durable_object', undefined],
+    ['inventory.services', `/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/services`, 'worker_service', undefined],
+    ['inventory.zones', `/zones?account.id=${CLOUDFLARE_ACCOUNT_ID}`, 'zone', undefined],
   ] as const
-  const settled = await Promise.allSettled(endpoints.map(([source, path, kind]) => inventoryEndpoint(env, token, path, source, kind, source !== 'inventory.pages')))
+  const settled = await Promise.allSettled(endpoints.map(([source, path, kind, resultKey]) => inventoryEndpoint(env, token, path, source, kind, source !== 'inventory.pages', resultKey)))
   const bindingWorkers = [...WORKER_NAMES]
   const bindingSettled = await Promise.allSettled(bindingWorkers.map(scriptName => workerBindingEndpoint(env, token, scriptName)))
   const resources: CloudflareResource[] = []
@@ -1073,6 +1142,7 @@ async function readInventory(env: CloudflareEnvironment, token: string, now: num
     }
     return coverage(source, providerStatus(result.reason), checkedAt, providerReason(result.reason))
   })
+  const serviceResources = resources.filter(resource => resource.kind === 'worker_service')
   const verifiedBindings = emptyVerifiedBindings()
   let bindingSuccesses = 0
   let bindingFailure: unknown
@@ -1093,7 +1163,9 @@ async function readInventory(env: CloudflareEnvironment, token: string, now: num
   const scopedEnv = withVerifiedBindings(env, verifiedBindings)
   for (const resource of resources)
     resource.project = projectForResource(resource.kind, resource.id, resource.name, scopedEnv)
-  const result = { resources, deployments, coverage: sourceCoverage, verifiedBindings }
+  for (const resource of serviceResources)
+    resource.project = projectForResource(resource.kind, resource.id, resource.name, scopedEnv)
+  const result = { resources: dedupeInventoryResources(resources), deployments, serviceResources, coverage: sourceCoverage, verifiedBindings }
   inventoryCache.set(CLOUDFLARE_ACCOUNT_ID, { expiresAt: now + INVENTORY_CACHE_MS, result })
   return result
 }
@@ -1605,14 +1677,6 @@ async function readBillingMetrics(env: CloudflareEnvironment, token: string, cyc
   return metrics
 }
 
-interface ActualBillingResult {
-  charges: number | null
-  fixedFees: number | null
-  cycle: { from: string, to: string, source: string } | null
-  currency?: string
-  reason?: string
-}
-
 function metricValue(metrics: ObservabilityMetric[], key: string): number | null {
   const found = metrics.find(item => item.key === key)
   return found?.value ?? null
@@ -1716,6 +1780,10 @@ function providerHistoryCharges(rows: JsonRecord[], cycle: { from: string, to: s
 }
 
 async function readActualBilling(env: CloudflareEnvironment, token: string): Promise<ActualBillingResult> {
+  const now = Date.now()
+  const cached = actualBillingCache.get(CLOUDFLARE_ACCOUNT_ID)
+  if (cached && cached.expiresAt > now)
+    return cached.result
   const endpoints = [
     [`/accounts/${CLOUDFLARE_ACCOUNT_ID}/billing/history`, 'billing.history'],
     [`/accounts/${CLOUDFLARE_ACCOUNT_ID}/billing/profile`, 'billing.profile'],
@@ -1725,7 +1793,9 @@ async function readActualBilling(env: CloudflareEnvironment, token: string): Pro
   const successful = settled.filter((result): result is PromiseFulfilledResult<CloudflareApiResponse> => result.status === 'fulfilled')
   if (!successful.length) {
     const error = normalizeProviderError(rejectedReason(settled[0]), 'billing')
-    return { charges: null, fixedFees: null, cycle: null, reason: error.status === 403 ? `Cloudflare billing endpoints returned HTTP 403; using the labeled ${PRICING_VERSION} estimate.` : providerReason(error) }
+    const result = { charges: null, fixedFees: null, cycle: null, reason: error.status === 403 ? `Cloudflare billing endpoints returned HTTP 403; using the labeled ${PRICING_VERSION} estimate.` : providerReason(error) }
+    actualBillingCache.set(CLOUDFLARE_ACCOUNT_ID, { expiresAt: now + INVENTORY_CACHE_MS, result })
+    return result
   }
   const amounts = successful.map(result => billingResponseAmount(result.value)).filter((value): value is number => value !== null)
   const historyResult = settled[0]
@@ -1737,13 +1807,15 @@ async function readActualBilling(env: CloudflareEnvironment, token: string): Pro
   const subscriptions = subscriptionRows(subscription)
   const cycle = providerCycleFromSubscriptions(subscriptions) ?? findCycle(history?.result) ?? findCycle(profile?.result) ?? findCycle(subscription?.result)
   const historyCharges = providerHistoryCharges(billingHistoryRows(history), cycle)
-  return {
+  const result = {
     charges: historyCharges.amount ?? (amounts.length ? amounts[0]! : null),
     fixedFees: providerFixedFees(subscriptions) ?? (profile ? billingResponseAmount(profile) : null),
     cycle,
     currency: historyCharges.currency ?? (typeof subscriptions.find(row => typeof row.currency === 'string')?.currency === 'string' ? String(subscriptions.find(row => typeof row.currency === 'string')?.currency).toUpperCase() : undefined),
     reason: historyCharges.amount !== null || amounts.length ? undefined : 'Cloudflare billing access succeeded but returned no numeric invoice amount.',
   }
+  actualBillingCache.set(CLOUDFLARE_ACCOUNT_ID, { expiresAt: now + INVENTORY_CACHE_MS, result })
+  return result
 }
 
 function billingUsage(
@@ -1823,13 +1895,20 @@ function buildBilling(metrics: ObservabilityMetric[], now: number, actual: Actua
   const projectedVariable = variableEstimate * (duration / elapsed)
   const forecast = usage.length ? fixedFees + projectedVariable : null
   const actualCharges = actual?.charges ?? null
-  const status: SourceStatus = actualCharges !== null && usage.length ? 'live' : usage.length ? 'partial' : actual?.reason ? 'partial' : 'unavailable'
+  const hasUnpricedUsage = usage.some(item => (item.consumed ?? 0) > 0 && item.estimatedCost === null)
+  const status: SourceStatus = hasUnpricedUsage
+    ? 'partial'
+    : actualCharges !== null && usage.length ? 'live' : usage.length ? 'partial' : actual?.reason ? 'partial' : 'unavailable'
   const reason = actualCharges !== null
     ? [
         'Provider billing history is reported as actual billed charges; rated usage and forecast are calculated separately from current-cycle analytics.',
+        hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so the estimate and forecast are partial.' : undefined,
         actual?.reason,
       ].filter(Boolean).join(' ')
-    : `Actual Cloudflare billing is unavailable. Fallback estimate uses published rates under ${PRICING_VERSION}; fixed fees remain separate from usage overage and forecast.`
+    : [
+        `Actual Cloudflare billing is unavailable. Fallback estimate uses published rates under ${PRICING_VERSION}; fixed fees remain separate from usage overage and forecast.`,
+        hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so the estimate and forecast are partial.' : undefined,
+      ].filter(Boolean).join(' ')
   return {
     status,
     cycle,
@@ -1894,11 +1973,14 @@ function inventoryResourcesForScope(inventory: InventoryResult, query: Cloudflar
   return inventory.resources.filter(resource => resourceAllowed(resource, query.scope, env))
 }
 
-function serviceInventoryMetrics(resources: CloudflareResource[], scope: CloudflareQuery['scope']): ObservabilityMetric[] {
+function serviceInventoryMetrics(resources: CloudflareResource[], scope: CloudflareQuery['scope'], serviceResources: CloudflareResource[] = []): ObservabilityMetric[] {
   const active = scope === 'account' ? resources : resources.filter(resource => resource.project === 'akmalalif')
   const byKind = new Map<string, number>()
   for (const resource of active)
     byKind.set(resource.kind, (byKind.get(resource.kind) ?? 0) + 1)
+  const activeServices = scope === 'account' ? serviceResources : serviceResources.filter(resource => resource.project === 'akmalalif')
+  if (activeServices.length)
+    byKind.set('worker_service', activeServices.length)
   return [...byKind.entries()].map(([kind, count]) => metric(`services.${kind}_count`, `${kind} services`, count, 'services', { detail: 'Inventory count from the Cloudflare API.' }))
 }
 
@@ -1976,7 +2058,7 @@ async function buildReport(env: CloudflareEnvironment, token: string, query: Clo
       ...(sourceData.get('r2')?.metrics.filter(item => item.key === 'r2.requests' || item.key === 'r2.responseBytes') ?? []),
     ],
     services: [
-      ...serviceInventoryMetrics(resources, query.scope),
+      ...serviceInventoryMetrics(resources, query.scope, inventory.serviceResources),
       ...(sourceData.get('analytics_engine')?.metrics ?? []),
       ...(sourceData.get('ai')?.metrics ?? []),
       ...(sourceData.get('queues')?.metrics ?? []),
@@ -1985,7 +2067,7 @@ async function buildReport(env: CloudflareEnvironment, token: string, query: Clo
     ],
     billing: buildBilling(billingMetrics, now, actualBilling),
     series: allSeries,
-    deployments: inventory.deployments.filter(deployment => resources.some(resource => resource.id === deployment.id)),
+    deployments: inventory.deployments.filter(deployment => resources.some(resource => resource.id === deployment.id || resource.name.toLowerCase() === deployment.resourceName.toLowerCase())),
   }
   return report
 }
@@ -1994,12 +2076,21 @@ function database(env: CloudflareEnvironment): D1Like | undefined {
   return env.DB
 }
 
+function dailyMetricIsGauge(item: ObservabilityMetric): boolean {
+  const key = item.key.toLowerCase()
+  return item.unit === 'ratio'
+    || /p(?:50|90|99|999)$/.test(key)
+    || /storage_bytes|stored_bytes|payloadsize|metadatasize|objectcount|keycount|memory|backlog|concurrency/.test(key)
+    || key.startsWith('services.')
+}
+
 async function persistReport(env: CloudflareEnvironment, report: CloudflareReport, capturedAt: number): Promise<void> {
   const db = database(env)
   if (!db)
     return
   const scope = report.meta.scope ?? 'account'
-  const id = `${scope}:${floorQuarter(capturedAt)}`
+  const snapshotAt = floorQuarter(capturedAt)
+  const id = `${scope}:${snapshotAt}`
   const snapshot = db.prepare(`
     INSERT OR REPLACE INTO cloudflare_observability_snapshots
       (snapshot_id, scope, captured_at, from_at, to_at, status, report_json, created_at)
@@ -2007,7 +2098,7 @@ async function persistReport(env: CloudflareEnvironment, report: CloudflareRepor
   `).bind(
     id,
     scope,
-    capturedAt,
+    snapshotAt,
     report.meta.from,
     report.meta.to,
     report.coverage.some(item => item.status === 'unavailable') ? 'partial' : 'live',
@@ -2027,15 +2118,125 @@ async function persistReport(env: CloudflareEnvironment, report: CloudflareRepor
   for (const item of metrics) {
     if (item.value === null)
       continue
+    const resourceId = item.resourceId ?? ''
+    const existingStatement = db.prepare(`
+      SELECT value, updated_at
+      FROM cloudflare_observability_daily
+      WHERE day = ? AND scope = ? AND metric_key = ? AND resource_id = ?
+      LIMIT 1
+    `).bind(day, scope, item.key, resourceId)
+    const existing = existingStatement.first
+      ? await existingStatement.first<{ value?: unknown, updated_at?: unknown }>()
+      : null
+    const existingAt = asFiniteNumber(existing?.updated_at)
+    if (existingAt !== null && existingAt >= snapshotAt)
+      continue
+    const previousValue = asFiniteNumber(existing?.value)
+    const value = !dailyMetricIsGauge(item) && previousValue !== null
+      ? previousValue + item.value
+      : item.value
     const daily = db.prepare(`
       INSERT INTO cloudflare_observability_daily
         (day, scope, metric_key, resource_id, unit, value, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(day, scope, metric_key, resource_id)
       DO UPDATE SET value = excluded.value, unit = excluded.unit, updated_at = excluded.updated_at
-    `).bind(day, scope, item.key, item.resourceId ?? '', item.unit, item.value, capturedAt)
+    `).bind(day, scope, item.key, resourceId, item.unit, value, snapshotAt)
     if (daily.run)
       await daily.run()
+  }
+}
+
+interface DailyMetricRow {
+  [key: string]: unknown
+  day?: unknown
+  metric_key?: unknown
+  resource_id?: unknown
+  unit?: unknown
+  value?: unknown
+}
+
+function historicalMetricBucket(key: string): 'compute' | 'durableObjects' | 'storage' | 'traffic' | 'services' {
+  if (key.startsWith('workers.'))
+    return 'compute'
+  if (key.startsWith('durable_objects.'))
+    return 'durableObjects'
+  if (key.startsWith('d1.') || key.startsWith('kv.') || key.startsWith('r2.') || key === 'durable_objects.stored_bytes')
+    return 'storage'
+  if (key.startsWith('zones.') || key === 'r2.requests' || key === 'r2.responseBytes')
+    return 'traffic'
+  return 'services'
+}
+
+async function readDailyHistoricalReport(env: CloudflareEnvironment, query: CloudflareQuery, now: number): Promise<CloudflareReport | null> {
+  const db = database(env)
+  if (!db)
+    return null
+  const fromDay = query.from.toISOString().slice(0, 10)
+  const toDay = query.to.toISOString().slice(0, 10)
+  const statement = db.prepare(`
+    SELECT day, metric_key, resource_id, unit, value
+    FROM cloudflare_observability_daily
+    WHERE scope = ? AND day >= ? AND day <= ?
+    ORDER BY day ASC, metric_key ASC, resource_id ASC
+  `).bind(query.scope, fromDay, toDay)
+  if (!statement.all)
+    return null
+  const result = await statement.all<DailyMetricRow>()
+  const rows = result.results ?? []
+  if (!rows.length)
+    return null
+  const checkedAt = iso(now)
+  const compute: ObservabilityMetric[] = []
+  const durableObjects: ObservabilityMetric[] = []
+  const storage: ObservabilityMetric[] = []
+  const traffic: ObservabilityMetric[] = []
+  const services: ObservabilityMetric[] = []
+  const series: CloudflareReport['series'] = []
+  for (const row of rows) {
+    const key = typeof row.metric_key === 'string' ? row.metric_key : ''
+    const day = typeof row.day === 'string' ? row.day : ''
+    const unit = typeof row.unit === 'string' ? row.unit : 'unknown'
+    const value = asFiniteNumber(row.value)
+    if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(day) || value === null)
+      continue
+    const resourceId = typeof row.resource_id === 'string' && row.resource_id ? row.resource_id : undefined
+    const item = metric(key, key, value, unit, resourceId ? { resourceId, resourceName: resourceId } : {})
+    const bucket = historicalMetricBucket(key)
+    if (bucket === 'compute')
+      compute.push(item)
+    else if (bucket === 'durableObjects')
+      durableObjects.push(item)
+    else if (bucket === 'storage')
+      storage.push(item)
+    else if (bucket === 'traffic')
+      traffic.push(item)
+    else
+      services.push(item)
+    series.push({ timestamp: `${day}T00:00:00.000Z`, metric: key, value, ...(resourceId ? { resourceId } : {}) })
+  }
+  if (!compute.length && !durableObjects.length && !storage.length && !traffic.length && !services.length)
+    return null
+  const reason = 'Historical Cloudflare daily aggregates; live retention and billing data were not re-read.'
+  return {
+    meta: {
+      from: query.from.toISOString(),
+      to: query.to.toISOString(),
+      checkedAt,
+      timezone: OBSERVABILITY_TIMEZONE,
+      trackingStartedAt: null,
+      scope: query.scope,
+    },
+    coverage: emptyCoverageSources.map(source => coverage(source, 'stale', checkedAt, reason)),
+    resources: [],
+    compute,
+    durableObjects,
+    storage,
+    traffic,
+    services,
+    billing: unavailableBilling(reason, now),
+    series,
+    deployments: [],
   }
 }
 
@@ -2043,6 +2244,8 @@ async function readHistoricalReport(env: CloudflareEnvironment, query: Cloudflar
   const db = database(env)
   if (!db)
     return null
+  if (query.to.getTime() <= now - SNAPSHOT_RETENTION_MS)
+    return readDailyHistoricalReport(env, query, now)
   const statement = db.prepare(`
     SELECT report_json
     FROM cloudflare_observability_snapshots
@@ -2051,10 +2254,10 @@ async function readHistoricalReport(env: CloudflareEnvironment, query: Cloudflar
     LIMIT 1
   `).bind(query.scope, query.to.getTime())
   if (!statement.first)
-    return null
+    return readDailyHistoricalReport(env, query, now)
   const row = await statement.first<{ report_json?: unknown }>()
   if (!row || typeof row.report_json !== 'string')
-    return null
+    return readDailyHistoricalReport(env, query, now)
   try {
     const report = JSON.parse(row.report_json) as CloudflareReport
     const checkedAt = iso(now)
@@ -2066,7 +2269,7 @@ async function readHistoricalReport(env: CloudflareEnvironment, query: Cloudflar
     }
   }
   catch {
-    return null
+    return readDailyHistoricalReport(env, query, now)
   }
 }
 
@@ -2074,10 +2277,10 @@ async function pruneObservability(env: CloudflareEnvironment, now: number): Prom
   const db = database(env)
   if (!db)
     return
-  const snapshots = db.prepare('DELETE FROM cloudflare_observability_snapshots WHERE captured_at < ?').bind(now - 90 * 24 * 60 * 60 * 1000)
+  const snapshots = db.prepare('DELETE FROM cloudflare_observability_snapshots WHERE captured_at < ?').bind(now - SNAPSHOT_RETENTION_MS)
   if (snapshots.run)
     await snapshots.run()
-  const cutoff = new Date(Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth() - 12, 1)).toISOString().slice(0, 10)
+  const cutoff = new Date(Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth() - (DAILY_RETENTION_MONTHS - 1), 1)).toISOString().slice(0, 10)
   const daily = db.prepare('DELETE FROM cloudflare_observability_daily WHERE day < ?').bind(cutoff)
   if (daily.run)
     await daily.run()
@@ -2100,13 +2303,16 @@ function tokenFromEvent(event: H3Event, env: CloudflareEnvironment): string {
 }
 
 function queryCacheKey(query: CloudflareQuery): string {
-  return `${query.scope}:${query.from.toISOString()}:${query.to.toISOString()}`
+  return query.preset
+    ? `${query.scope}:preset:${query.range}`
+    : `${query.scope}:explicit:${query.from.toISOString()}:${query.to.toISOString()}`
 }
 
 export function clearCloudflareObservabilityCache(): void {
   reportCache.clear()
   inventoryCache.clear()
   billingMetricCache.clear()
+  actualBillingCache.clear()
 }
 
 export async function readCloudflareReport(event: H3Event): Promise<CloudflareReport> {
@@ -2124,8 +2330,12 @@ export async function readCloudflareReport(event: H3Event): Promise<CloudflareRe
   }
   const cacheKey = queryCacheKey(query)
   const cached = reportCache.get(cacheKey)
-  if (cached && cached.expiresAt > now)
-    return cached.report
+  if (cached && cached.expiresAt > now) {
+    return {
+      ...cached.report,
+      meta: { ...cached.report.meta, from: query.from.toISOString(), to: query.to.toISOString(), scope: query.scope },
+    }
+  }
   const effectiveQuery = query.from.getTime() < now - LIVE_GRAPHQL_RETENTION_MS
     ? { ...query, from: new Date(now - LIVE_GRAPHQL_RETENTION_MS), historical: false }
     : query
@@ -2136,6 +2346,11 @@ export async function readCloudflareReport(event: H3Event): Promise<CloudflareRe
     report.coverage = report.coverage.map(item => item.status === 'live'
       ? { ...item, status: 'partial', reason: 'Live Cloudflare data was bounded to the provider retention window.' }
       : item)
+  }
+  if (!reportCache.has(cacheKey) && reportCache.size >= MAX_REPORT_CACHE_ENTRIES) {
+    const oldest = reportCache.keys().next().value
+    if (typeof oldest === 'string')
+      reportCache.delete(oldest)
   }
   reportCache.set(cacheKey, { expiresAt: now + OBSERVABILITY_CACHE_MS, report })
   return report
@@ -2158,6 +2373,23 @@ export async function collectCloudflareObservability(env: CloudflareEnvironment,
   }
   catch {
     report.coverage.push(coverage('observability_store', 'partial', iso(now), 'Cloudflare observability data was collected but could not be persisted.'))
+  }
+  if (token && database(env)) {
+    const scopedQuery: CloudflareQuery = {
+      from: new Date(now - 15 * 60 * 1000),
+      to: new Date(now),
+      scope: 'akmalalif',
+      range: '15m',
+      historical: false,
+      preset: true,
+    }
+    try {
+      const scopedReport = await buildReport(env, token, scopedQuery, now)
+      await persistReport(env, scopedReport, now)
+    }
+    catch {
+      report.coverage.push(coverage('observability_store', 'partial', iso(now), 'Account data was collected, but the akmalalif scope snapshot could not be persisted.'))
+    }
   }
   return report
 }

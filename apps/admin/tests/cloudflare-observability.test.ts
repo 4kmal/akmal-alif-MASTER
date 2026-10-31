@@ -15,6 +15,67 @@ import {
   sumMetricValues,
 } from '../server/services/cloudflare-observability'
 
+function eventWithPath(path: string, env: Record<string, unknown>): never {
+  return { path, context: { cloudflare: { env } } } as never
+}
+
+function createMemoryDb(initialDaily: Array<{ day: string, scope: string, metric_key: string, resource_id: string, unit: string, value: number, updated_at: number }> = []) {
+  const snapshots = new Map<string, unknown>()
+  const daily = new Map<string, { unit: string, value: number, updated_at: number }>()
+  for (const row of initialDaily)
+    daily.set(`${row.day}|${row.scope}|${row.metric_key}|${row.resource_id}`, { unit: row.unit, value: row.value, updated_at: row.updated_at })
+  const db = {
+    prepare(sql: string) {
+      let args: unknown[] = []
+      const statement: {
+        bind: (...values: unknown[]) => typeof statement
+        run: () => Promise<unknown>
+        first: <T extends Record<string, unknown>>() => Promise<T | null>
+        all: <T extends Record<string, unknown>>() => Promise<{ results?: T[] }>
+      } = {
+        bind(...values: unknown[]) {
+          args = values
+          return statement
+        },
+        async run() {
+          if (sql.includes('cloudflare_observability_snapshots'))
+            snapshots.set(String(args[0]), { capturedAt: args[2], report: args[6] })
+          if (sql.includes('INSERT INTO cloudflare_observability_daily')) {
+            const key = `${args[0]}|${args[1]}|${args[2]}|${args[3]}`
+            daily.set(key, { unit: String(args[4]), value: Number(args[5]), updated_at: Number(args[6]) })
+          }
+          return {}
+        },
+        async first<T extends Record<string, unknown>>() {
+          if (sql.includes('SELECT value, updated_at')) {
+            const key = `${args[0]}|${args[1]}|${args[2]}|${args[3]}`
+            const row = daily.get(key)
+            return row ? { value: row.value, updated_at: row.updated_at } as T : null
+          }
+          return null
+        },
+        async all<T extends Record<string, unknown>>() {
+          if (sql.includes('FROM cloudflare_observability_daily')) {
+            const scope = String(args[0])
+            const from = String(args[1])
+            const to = String(args[2])
+            const results = [...daily.entries()]
+              .map(([key, row]) => {
+                const [day, rowScope, metric_key, resource_id] = key.split('|')
+                return { day, scope: rowScope, metric_key, resource_id, ...row }
+              })
+              .filter(row => row.scope === scope && row.day >= from && row.day <= to)
+            return { results: results as T[] }
+          }
+          return { results: [] as T[] }
+        },
+      }
+      return statement
+    },
+  }
+  return { db, daily, snapshots }
+}
+
 afterEach(() => {
   clearCloudflareObservabilityCache()
   vi.restoreAllMocks()
@@ -95,6 +156,107 @@ describe('cloudflare observability query and accounting helpers', () => {
 })
 
 describe('cloudflare observability provider boundaries', () => {
+  it('reuses a relative-range report cache across a clock advance', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.endsWith('/graphql'))
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [{}] } } }), { status: 200 })
+      if (url.includes('/billing/history') || url.includes('/billing/profile'))
+        return new Response(JSON.stringify({ success: false, errors: [{ message: 'forbidden' }] }), { status: 403 })
+      return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
+    }))
+    const env = { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test' }
+    const now = Date.parse('2026-10-31T12:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    try {
+      const first = await readCloudflareReport(eventWithPath('/api/admin/observability/cloudflare?range=24h', env))
+      const firstCallCount = calls.length
+      vi.setSystemTime(now + 90_000)
+      const second = await readCloudflareReport(eventWithPath('/api/admin/observability/cloudflare?range=24h', env))
+      expect(calls).toHaveLength(firstCallCount)
+      expect(second.meta.from).toBe('2026-10-30T12:01:30.000Z')
+      expect(second.meta.to).toBe('2026-10-31T12:01:30.000Z')
+      expect(first.meta.from).toBe('2026-10-30T12:00:00.000Z')
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('deduplicates quarter snapshots, aggregates additive daily metrics, and reads old daily history', async () => {
+    const memory = createMemoryDb()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/graphql')) {
+        const body = JSON.parse(String(init?.body)) as { query?: string }
+        const workerRow = {
+          sum: {
+            requests: 10,
+            errors: 0,
+            subrequests: 0,
+            cpuTimeUs: 1_000,
+            duration: 1,
+            wallTime: 1,
+          },
+          quantiles: {
+            cpuTimeP50: 1,
+            cpuTimeP90: 1,
+            cpuTimeP99: 1,
+            cpuTimeP999: 1,
+            memoryUsageBytesP50: 1,
+            memoryUsageBytesP90: 1,
+            memoryUsageBytesP99: 1,
+            memoryUsageBytesP999: 1,
+            wallTimeP50: 1,
+            wallTimeP99: 1,
+            wallTimeP999: 1,
+            durationP50: 1,
+            durationP99: 1,
+          },
+          dimensions: {
+            datetimeHour: '2026-10-31T12:00:00Z',
+            scriptName: 'akmalalif-admin',
+          },
+        }
+        const account: Record<string, unknown> = {
+          workersAggregate: body.query?.includes('workersAggregate') ? [workerRow] : [],
+          workersByScript: body.query?.includes('workersByScript') ? [workerRow] : [],
+          workersSeries: body.query?.includes('workersSeries') ? [workerRow] : [],
+        }
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [account] } } }), { status: 200 })
+      }
+      if (url.includes('/billing/history') || url.includes('/billing/profile'))
+        return new Response(JSON.stringify({ success: false, errors: [{ message: 'forbidden' }] }), { status: 403 })
+      return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
+    }))
+    const env = { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test', DB: memory.db }
+    const firstAt = Date.parse('2026-10-31T12:00:00.000Z')
+    const firstReport = await collectCloudflareObservability(env, firstAt)
+    expect(firstReport.series.some(item => item.metric === 'workers.requests')).toBe(true)
+    expect(firstReport.series.some(item => item.metric === 'workers.errors')).toBe(true)
+    await collectCloudflareObservability(env, firstAt + 15 * 60 * 1000)
+    await collectCloudflareObservability(env, firstAt + 15 * 60 * 1000 + 90 * 1000)
+    expect(memory.snapshots.size).toBe(4)
+    expect(memory.daily.get('2026-10-31|account|workers.requests|')?.value).toBe(20)
+
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.parse('2027-02-01T00:00:00.000Z'))
+    try {
+      const historical = await readCloudflareReport(eventWithPath('/api/admin/observability/cloudflare?from=2026-10-31T00:00:00.000Z&to=2026-11-01T00:00:00.000Z', {
+        CF_OBSERVABILITY_TOKEN: 'test-token',
+        DB: memory.db,
+      }))
+      expect(historical.compute.find(item => item.key === 'workers.requests')?.value).toBe(20)
+      expect(historical.coverage.every(item => item.status === 'stale')).toBe(true)
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('follows paginated inventory responses without logging the bearer token', async () => {
     const calls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -181,6 +343,7 @@ describe('cloudflare observability provider boundaries', () => {
     expect(report.billing.cycle).toEqual({ from: '2026-10-08T00:00:00Z', to: '2026-11-08T00:00:00Z', source: 'cloudflare:subscriptions' })
     expect(report.billing.status).toBe('live')
     expect(report.billing.currency).toBe('USD')
+    expect(report.billing.forecast).not.toBe(report.billing.actualCharges)
   })
 
   it('records an unavailable collection and prunes the two historical retention windows', async () => {
