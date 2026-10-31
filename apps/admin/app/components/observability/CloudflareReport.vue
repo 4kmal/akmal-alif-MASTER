@@ -93,7 +93,7 @@ function preferredOverviewMetrics(report: CloudflareReport) {
     /request|invocation|visit/i,
     /error|exception|failure|fail/i,
     /cpu|compute|duration/i,
-    /traffic|bandwidth|egress|ingress|byte|storage/i,
+    /zones\.edgeResponseBytes|r2\.payloadSize|d1\.storage_bytes/i,
   ]
   const selected: ObservabilityMetric[] = []
   for (const pattern of priorities) {
@@ -147,7 +147,11 @@ const reportStatusLabel = computed(() => ({
 const memoryMetrics = computed(() => data.value?.compute.filter(metric => /memory|headroom/i.test(`${metric.key} ${metric.label}`)) || [])
 
 function metricReason(metric: ObservabilityMetric) {
-  return metric.value === null ? (metric.detail || 'Provider did not return this metric.') : metric.detail
+  if (metric.value === null)
+    return metric.detail || 'Provider did not return this metric.'
+  if (metric.detail?.startsWith('Aggregate across the selected window;'))
+    return null
+  return metric.detail
 }
 
 function formatDate(value: string) {
