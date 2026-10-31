@@ -8,9 +8,12 @@ import {
   runGamingMaintenance,
 } from '../admin-analytics/index.js';
 import {
+  ingestGamingEvents,
   ingestGamingSummary,
   normalizeGamingEvent,
   readGamingData,
+  readGamingPlayer,
+  readGamingSession,
 } from '../admin-analytics/gaming.js';
 import { createGamingAnalytics } from '../js/gaming-analytics.js';
 import { createAnalyticsClient } from '../js/analytics.js';
@@ -40,6 +43,13 @@ class D1 {
       this.database.exec('ROLLBACK');
       throw error;
     }
+  }
+}
+
+class YieldingD1 extends D1 {
+  async batch(statements) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return super.batch(statements);
   }
 }
 
@@ -100,6 +110,49 @@ test('gaming lifecycle events are segregated, deduplicated, and keep website cou
   assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count, 1);
 });
 
+test('concurrent duplicate retries claim one timeline row and mutate one session once', async () => {
+  const { database, env } = environment();
+  env.DB = new YieldingD1(database);
+  const event = normalizeGamingEvent({
+    id: 'concurrent-retry', type: 'gaming_session_heartbeat', path: '/video-games/relay/',
+    game_id: 'relay-run', run_id: 'race-run', active_ms: 1_000,
+  });
+  const identity = { visitorKey: 'visitor-race', sessionKey: 'session-race' };
+  const results = await Promise.all([
+    ingestGamingEvents([event], env, identity, now),
+    ingestGamingEvents([event], env, identity, now),
+  ]);
+  assert.equal(results[0].accepted + results[1].accepted, 1);
+  assert.equal(results[0].deduped + results[1].deduped, 1);
+  assert.equal(database.prepare('SELECT count(*) AS count FROM gaming_events').get().count, 1);
+  assert.equal(database.prepare('SELECT count(*) AS count, duration_seconds FROM gaming_sessions').get().count, 1);
+  assert.equal(database.prepare('SELECT duration_seconds FROM gaming_sessions').get().duration_seconds, 1);
+});
+
+test('report exposes Relay distance, Kessler interaction dimensions, sectors, and disconnect/render counts', async () => {
+  const { env } = environment();
+  const start = await ingestEvents(eventRequest([{
+    id: 'catalog-start', type: 'gaming_session_start', path: '/video-games/kessler-explorer/', game_id: 'kessler-explorer',
+    run_id: 'catalog-run', mode: 'exploration', sector: 'aurora', transport: 'handheld',
+  }]), env);
+  const cookies = responseCookies(start);
+  await ingestEvents(eventRequest([
+    { id: 'catalog-zone', type: 'gaming_interaction', path: '/video-games/kessler-explorer/', game_id: 'kessler-explorer', run_id: 'catalog-run', mode: 'exploration', sector: 'aurora', action: 'zone_enter', zone: 'ice-belt' },
+    { id: 'catalog-poi', type: 'gaming_interaction', path: '/video-games/kessler-explorer/', game_id: 'kessler-explorer', run_id: 'catalog-run', mode: 'exploration', sector: 'aurora', action: 'poi_visit', poi: 'relay' },
+    { id: 'catalog-layer', type: 'gaming_interaction', path: '/video-games/kessler-explorer/', game_id: 'kessler-explorer', run_id: 'catalog-run', mode: 'exploration', sector: 'aurora', action: 'layer_change', layer: 'orbital' },
+    { id: 'catalog-audio', type: 'gaming_interaction', path: '/video-games/kessler-explorer/', game_id: 'kessler-explorer', run_id: 'catalog-run', mode: 'exploration', sector: 'aurora', action: 'audio_change', audio_track: 'deep-space' },
+    { id: 'catalog-render', type: 'gaming_interaction', path: '/video-games/kessler-explorer/', game_id: 'kessler-explorer', run_id: 'catalog-run', mode: 'exploration', sector: 'aurora', action: 'render_failure' },
+    { id: 'catalog-disconnect', type: 'gaming_session_end', path: '/video-games/kessler-explorer/', game_id: 'kessler-explorer', run_id: 'catalog-run', mode: 'exploration', sector: 'aurora', action: 'disconnect', reason: 'disconnect', distance: 123.4 },
+  ], cookies), env);
+  const report = await readGamingData(env, { rangeDays: 90, now });
+  assert.equal(report.games[0].distance, 123.4);
+  assert.equal(report.games[0].disconnects, 1);
+  assert.equal(report.games[0].renderFailures, 1);
+  assert.equal(report.sectors[0].id, 'aurora');
+  assert.ok(report.interactions.some(item => item.label === 'zone_enter:ice-belt'));
+  assert.equal(report.endReasons.find(item => item.reason === 'disconnect').count, 1);
+});
+
 test('identity links require a server-issued token and never turn browser results into verified results', async () => {
   const { database, env } = environment();
   const token = await issueCorrelationToken(env, 'match-identity', '1', now + 3600_000);
@@ -124,7 +177,13 @@ test('authoritative summaries count one match and separate participants across a
   for (const [index, mode] of ['tdm', 'uplink', 'extraction'].entries()) {
     const result = await ingestGamingSummary({
       source: 'exepert-room', match_id: `match-${mode}`, game_id: 'exepert', mode, sector: mode === 'tdm' ? 'bastion' : 'full',
-      started_at: now - 30_000, ended_at: now, status: 'completed', result: { winner: index, reason: 'TIME', bank: mode === 'extraction' ? [120, 80] : undefined },
+      started_at: now - 30_000, ended_at: now, status: 'completed', result: {
+        winner: index, reason: 'TIME', bank: mode === 'extraction' ? [120, 80] : undefined,
+        captures: mode === 'uplink' ? 3 : undefined, contests: mode === 'uplink' ? 2 : undefined,
+        deploys: mode === 'uplink' ? 1 : undefined, loots: mode === 'extraction' ? 4 : undefined,
+        lifts: mode === 'extraction' ? 2 : undefined, extracted: mode === 'extraction' ? 1 : undefined,
+        extracted_value: mode === 'extraction' ? 200 : undefined,
+      },
       participants: Array.from({ length: 8 }, (_, participant) => ({ participant_id: String(participant + 1), bot: participant > 3, kills: participant, deaths: 1, assists: 2, score: participant * 100 })),
     }, env, now);
     assert.equal(result.accepted, 1);
@@ -136,6 +195,10 @@ test('authoritative summaries count one match and separate participants across a
   const report = await readGamingData(env, { rangeDays:90, now });
   assert.equal(report.authoritative.matches, 3);
   assert.equal(report.authoritative.participants, 24);
+  assert.equal(report.authoritative.humanKills, 18);
+  assert.equal(report.authoritative.botKills, 66);
+  assert.equal(report.authoritative.modes.find(mode => mode.mode === 'uplink').captures, 3);
+  assert.equal(report.authoritative.modes.find(mode => mode.mode === 'extraction').extracted_value, 200);
 });
 
 test('gaming maintenance prunes raw timeline while retaining bounded daily summaries', async () => {
@@ -148,10 +211,14 @@ test('gaming maintenance prunes raw timeline while retaining bounded daily summa
   assert.equal(database.prepare('SELECT count(*) AS count FROM gaming_events').get().count, 2);
   await runGamingMaintenance(env, now);
   assert.equal(database.prepare('SELECT count(*) AS count FROM gaming_events').get().count, 1);
-  assert.equal(database.prepare('SELECT count(*) AS count FROM gaming_daily').get().count, 1);
+  assert.equal(database.prepare('SELECT count(*) AS count FROM gaming_daily').get().count, 2);
   const report = await readGamingData(env, { rangeDays: 90, now });
   assert.equal(report.sessions.length, 1);
   assert.ok(report.sessions[0].id.startsWith('s_'));
+  const historical = await readGamingData(env, { rangeDays: 365, now });
+  assert.equal(historical.aggregate.starts, 2);
+  assert.ok(historical.daily.some(row => row.starts === 1));
+  assert.equal(historical.trackingStartedAt, new Date(old).toISOString());
 });
 
 test('authoritative room summaries backfill early links and protect verified results from later browser retries', async () => {
@@ -175,8 +242,9 @@ test('authoritative room summaries backfill early links and protect verified res
   const participant = database.prepare('SELECT player_key, linked_session_id FROM gaming_participants WHERE match_id = ?').get('match-backfill');
   assert.ok(participant.player_key);
   assert.ok(participant.linked_session_id);
-  const verified = database.prepare('SELECT verification, score, kills, deaths, assists FROM gaming_sessions WHERE id = ?').get(participant.linked_session_id);
+  const verified = database.prepare('SELECT verification, source, score, kills, deaths, assists FROM gaming_sessions WHERE id = ?').get(participant.linked_session_id);
   assert.equal(verified.verification, 'server_verified');
+  assert.equal(verified.source, 'exepert-room');
   assert.equal(verified.score, 450);
   assert.equal(verified.kills, 4);
   assert.equal(verified.deaths, 1);
@@ -186,8 +254,9 @@ test('authoritative room summaries backfill early links and protect verified res
     run_id: 'backfill-run', match_id: 'match-backfill', status: 'abandoned', score: 999, kills: 99, deaths: 99, assists: 99,
   }], cookies), env);
   assert.equal(browserEnd.status, 200);
-  const stillVerified = database.prepare('SELECT verification, score, kills, deaths, assists, status FROM gaming_sessions WHERE id = ?').get(participant.linked_session_id);
+  const stillVerified = database.prepare('SELECT verification, source, score, kills, deaths, assists, status FROM gaming_sessions WHERE id = ?').get(participant.linked_session_id);
   assert.equal(stillVerified.verification, 'server_verified');
+  assert.equal(stillVerified.source, 'exepert-room');
   assert.equal(stillVerified.score, 450);
   assert.equal(stillVerified.kills, 4);
   assert.equal(stillVerified.deaths, 1);
@@ -214,6 +283,48 @@ test('report aggregates cover all sessions while the session list stays cursor p
   const second = await readGamingData(env, { rangeDays:90, now, cursor:first.nextCursor });
   assert.equal(second.sessions.length, 5);
   assert.equal(second.nextCursor, null);
+  let cursor = null;
+  let exported = 0;
+  do {
+    const page = await readGamingData(env, { rangeDays:90, now, cursor, sessionsOnly:true });
+    exported += page.sessions.length;
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.equal(exported, 1_005);
+});
+
+test('session and player detail expose pagination and truncation after bounded pages', async () => {
+  const { database, env } = environment();
+  database.prepare(`INSERT INTO gaming_sessions
+    (id, player_key, game_id, transport, started_at, last_seen_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run('detail-session', 'detail-player', 'exepert', 'websocket', now, now, 'completed');
+  const eventInsert = database.prepare(`INSERT INTO gaming_events
+    (event_id, session_id, event_type, event_at, game_id)
+    VALUES (?, ?, ?, ?, ?)`);
+  for (let index = 0; index < 501; index += 1) eventInsert.run(`detail-event-${index}`, 'detail-session', 'gaming_interaction', now + index, 'exepert');
+  const sessionPage = await readGamingSession(env, 'detail-session');
+  assert.equal(sessionPage.timeline.length, 500);
+  assert.equal(sessionPage.timelineTotal, 501);
+  assert.equal(sessionPage.timelineTruncated, true);
+  assert.ok(sessionPage.timelineNextCursor);
+  const sessionTail = await readGamingSession(env, 'detail-session', { timelineCursor: sessionPage.timelineNextCursor });
+  assert.equal(sessionTail.timeline.length, 1);
+  assert.equal(sessionTail.timelineTruncated, false);
+
+  const sessionInsert = database.prepare(`INSERT INTO gaming_sessions
+    (id, player_key, game_id, transport, started_at, last_seen_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  for (let index = 0; index < 501; index += 1) sessionInsert.run(`player-session-${index}`, 'detail-player', 'relay-run', 'handheld', now - index, now - index, 'completed');
+  const playerPage = await readGamingPlayer(env, 'detail-player');
+  assert.equal(playerPage.player.sessions, 502);
+  assert.equal(playerPage.sessions.length, 500);
+  assert.equal(playerPage.sessionsTruncated, true);
+  assert.equal(playerPage.sessionsTotal, 502);
+  assert.ok(playerPage.sessionsNextCursor);
+  const playerTail = await readGamingPlayer(env, 'detail-player', { cursor: playerPage.sessionsNextCursor });
+  assert.equal(playerTail.sessions.length, 2);
+  assert.equal(playerTail.sessionsTruncated, false);
 });
 
 test('identity links that arrive after an authoritative summary promote the linked session', async () => {

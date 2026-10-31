@@ -99,12 +99,20 @@ CREATE TABLE IF NOT EXISTS gaming_daily (
   day TEXT NOT NULL,
   game_id TEXT NOT NULL,
   mode TEXT NOT NULL DEFAULT '',
+  sector TEXT NOT NULL DEFAULT '',
   transport TEXT NOT NULL DEFAULT '',
   starts INTEGER NOT NULL DEFAULT 0,
   players INTEGER NOT NULL DEFAULT 0,
   completions INTEGER NOT NULL DEFAULT 0,
   play_seconds INTEGER NOT NULL DEFAULT 0,
+  summary_json TEXT NOT NULL DEFAULT '{}',
   updated_at INTEGER NOT NULL,
-  PRIMARY KEY (day, game_id, mode, transport)
+  PRIMARY KEY (day, game_id, mode, sector, transport)
 );
 CREATE INDEX IF NOT EXISTS idx_gaming_daily_game_day ON gaming_daily (game_id, day);
+
+CREATE TABLE IF NOT EXISTS gaming_state (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);

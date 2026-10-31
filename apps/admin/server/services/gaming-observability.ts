@@ -11,6 +11,11 @@ interface WorkerBreakdown {
   completions?: number
   playSeconds?: number
   score?: number | null
+  distance?: number
+  disconnects?: number
+  renderFailures?: number
+  endReasons?: Record<string, number>
+  interactions?: Record<string, number>
 }
 
 interface WorkerReportData {
@@ -25,6 +30,9 @@ interface WorkerReportData {
   daily?: Array<{ date?: string, starts?: number, players?: number | null, completions?: number, playSeconds?: number }>
   games?: WorkerBreakdown[]
   modes?: WorkerBreakdown[]
+  sectors?: WorkerBreakdown[]
+  interactions?: Array<{ gameId?: string, label?: string, count?: number }>
+  endReasons?: Array<{ gameId?: string, reason?: string, count?: number }>
   funnel?: Array<{ stage?: string, count?: number }>
   performance?: { fps?: number | null, rttMs?: number | null, loadMs?: number | null }
   aggregate?: {
@@ -46,6 +54,12 @@ interface WorkerReportData {
     kills?: number
     deaths?: number
     assists?: number
+    humanKills?: number
+    humanDeaths?: number
+    humanAssists?: number
+    botKills?: number
+    botDeaths?: number
+    botAssists?: number
     modes?: Array<Record<string, number | string>>
   }
   nextCursor?: string | null
@@ -53,8 +67,8 @@ interface WorkerReportData {
 
 interface GamingWorker {
   readGamingData?: (env: unknown, options?: Record<string, unknown>) => Promise<WorkerReportData>
-  readGamingSession?: (env: unknown, id: string) => Promise<GamingSessionDetail | null>
-  readGamingPlayer?: (env: unknown, id: string) => Promise<GamingPlayerDetail | null>
+  readGamingSession?: (env: unknown, id: string, options?: Record<string, unknown>) => Promise<GamingSessionDetail | null>
+  readGamingPlayer?: (env: unknown, id: string, options?: Record<string, unknown>) => Promise<GamingPlayerDetail | null>
   runGamingMaintenance?: (env: unknown, now?: number) => Promise<unknown>
 }
 
@@ -92,6 +106,11 @@ function gameBreakdown(row: WorkerBreakdown) {
     completions: Number(row.completions || 0),
     playSeconds: Number(row.playSeconds || 0),
     ...(row.score == null ? {} : { score: Number(row.score) }),
+    distance: Number(row.distance || 0),
+    disconnects: Number(row.disconnects || 0),
+    renderFailures: Number(row.renderFailures || 0),
+    endReasons: row.endReasons || {},
+    interactions: row.interactions || {},
   }
 }
 
@@ -141,6 +160,12 @@ function authoritativeMetrics(authoritative: WorkerReportData['authoritative']) 
     metric('authoritative_kills', 'Server verified kills', authoritative.kills ?? null),
     metric('authoritative_deaths', 'Server verified deaths', authoritative.deaths ?? null),
     metric('authoritative_assists', 'Server verified assists', authoritative.assists ?? null),
+    metric('authoritative_human_kills', 'Human participant kills', authoritative.humanKills ?? null),
+    metric('authoritative_human_deaths', 'Human participant deaths', authoritative.humanDeaths ?? null),
+    metric('authoritative_human_assists', 'Human participant assists', authoritative.humanAssists ?? null),
+    metric('authoritative_bot_kills', 'Bot kills', authoritative.botKills ?? null),
+    metric('authoritative_bot_deaths', 'Bot deaths', authoritative.botDeaths ?? null),
+    metric('authoritative_bot_assists', 'Bot assists', authoritative.botAssists ?? null),
   ]
   const counters = ['captures', 'contests', 'deploys', 'loots', 'lifts', 'extracted', 'extracted_value']
   for (const mode of authoritative.modes || []) {
@@ -192,7 +217,7 @@ export async function readGamingReport(event: H3Event): Promise<GamingReport> {
     trackingStartedAt: data.trackingStartedAt || null,
     scope: 'akmalalif' as const,
   }
-  return {
+  const report = {
     meta,
     coverage: [{ source: 'admin-d1:gaming', status: 'live', checkedAt: meta.checkedAt }],
     overview: [
@@ -216,6 +241,9 @@ export async function readGamingReport(event: H3Event): Promise<GamingReport> {
     })),
     games: (data.games || []).map(gameBreakdown),
     modes: (data.modes || []).map(gameBreakdown),
+    sectors: (data.sectors || []).map(gameBreakdown),
+    interactions: data.interactions || [],
+    endReasons: data.endReasons || [],
     funnel: (data.funnel || []).map(row => ({
       stage: String(row.stage || ''),
       count: Number(row.count || 0),
@@ -235,15 +263,17 @@ export async function readGamingReport(event: H3Event): Promise<GamingReport> {
       metric('load_avg', 'Average game load', data.performance?.loadMs == null ? null : Number(data.performance.loadMs), 'ms'),
     ],
     nextCursor: data.nextCursor || null,
-  }
+  } as unknown as GamingReport
+  return report
 }
 
 export async function readGamingSessionDetail(event: H3Event): Promise<GamingSessionDetail> {
   const sessionId = getRouterParam(event, 'id') || ''
+  const query = getQuery(event) as Record<string, unknown>
   const read = worker().readGamingSession
   if (!read)
     throw createError({ statusCode: 503, statusMessage: 'Gaming analytics is unavailable.' })
-  const detail = await read(envFor(event), sessionId)
+  const detail = await read(envFor(event), sessionId, { timelineCursor: one(query.timeline_cursor) })
   if (!detail)
     throw createError({ statusCode: 404, statusMessage: 'Gaming session not found.' })
   return detail as GamingSessionDetail
@@ -251,10 +281,11 @@ export async function readGamingSessionDetail(event: H3Event): Promise<GamingSes
 
 export async function readGamingPlayerDetail(event: H3Event): Promise<GamingPlayerDetail> {
   const playerId = getRouterParam(event, 'id') || ''
+  const query = getQuery(event) as Record<string, unknown>
   const read = worker().readGamingPlayer
   if (!read)
     throw createError({ statusCode: 503, statusMessage: 'Gaming analytics is unavailable.' })
-  const detail = await read(envFor(event), playerId)
+  const detail = await read(envFor(event), playerId, { cursor: one(query.cursor) })
   if (!detail)
     throw createError({ statusCode: 404, statusMessage: 'Gaming player not found.' })
   return detail as GamingPlayerDetail
@@ -314,6 +345,7 @@ export async function readGamingSessionsCsv(event: H3Event): Promise<Response> {
       transport: one(query.transport),
       cursor,
       now,
+      sessionsOnly: true,
     })
     if (data?.unavailable)
       throw createError({ statusCode: 503, statusMessage: data.reason || 'Gaming analytics is unavailable.' })

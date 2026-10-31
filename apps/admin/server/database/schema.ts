@@ -241,13 +241,21 @@ export const gamingDaily = sqliteTable('gaming_daily', {
   day: text().notNull(),
   gameId: text('game_id').notNull(),
   mode: text().notNull().default(''),
+  sector: text().notNull().default(''),
   transport: text().notNull().default(''),
   starts: integer().notNull().default(0),
   players: integer().notNull().default(0),
   completions: integer().notNull().default(0),
   playSeconds: integer('play_seconds').notNull().default(0),
+  summaryJson: text('summary_json').notNull().default('{}'),
   updatedAt: integer('updated_at').notNull(),
 }, table => [
-  primaryKey({ columns: [table.day, table.gameId, table.mode, table.transport] }),
+  primaryKey({ columns: [table.day, table.gameId, table.mode, table.sector, table.transport] }),
   index('idx_gaming_daily_game_day').on(table.gameId, table.day),
 ])
+
+export const gamingState = sqliteTable('gaming_state', {
+  key: text().primaryKey(),
+  value: text().notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
