@@ -188,10 +188,13 @@ describe('cloudflare observability provider boundaries', () => {
 
   it('deduplicates quarter snapshots, aggregates additive daily metrics, and reads old daily history', async () => {
     const memory = createMemoryDb()
+    let billingMetricRequests = 0
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/graphql')) {
-        const body = JSON.parse(String(init?.body)) as { query?: string }
+        const body = JSON.parse(String(init?.body)) as { query?: string, variables?: { from?: string } }
+        if (body.variables?.from === '2026-10-08T00:00:00.000Z')
+          billingMetricRequests += 1
         const workerRow = {
           sum: {
             requests: 10,
@@ -237,6 +240,9 @@ describe('cloudflare observability provider boundaries', () => {
     const firstReport = await collectCloudflareObservability(env, firstAt)
     expect(firstReport.series.some(item => item.metric === 'workers.requests')).toBe(true)
     expect(firstReport.series.some(item => item.metric === 'workers.errors')).toBe(true)
+    const billingRequestsAfterFirst = billingMetricRequests
+    await collectCloudflareObservability(env, firstAt + 90 * 1000)
+    expect(billingMetricRequests).toBe(billingRequestsAfterFirst)
     await collectCloudflareObservability(env, firstAt + 15 * 60 * 1000)
     await collectCloudflareObservability(env, firstAt + 15 * 60 * 1000 + 90 * 1000)
     expect(memory.snapshots.size).toBe(4)
@@ -311,11 +317,19 @@ describe('cloudflare observability provider boundaries', () => {
     expect(report.billing.reason).toContain('docs-2026-10-31')
   })
 
-  it('uses the provider subscription cycle and current invoice amount when billing access is authorized', async () => {
+  it('uses current-cycle provider rated usage and ignores posted invoice timing', async () => {
+    const calls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.endsWith('/graphql'))
-        return new Response(JSON.stringify({ data: { viewer: { accounts: [{}] } } }), { status: 200 })
+      calls.push(url)
+      if (url.endsWith('/graphql')) {
+        const workerRow = {
+          sum: { requests: 100, errors: 1, subrequests: 2, cpuTimeUs: 1_000, duration: 2, wallTime: 3 },
+          quantiles: { cpuTimeP50: 1, cpuTimeP90: 2, cpuTimeP99: 3, cpuTimeP999: 4, memoryUsageBytesP50: 5, memoryUsageBytesP90: 6, memoryUsageBytesP99: 7, memoryUsageBytesP999: 8, wallTimeP50: 1, wallTimeP99: 2, wallTimeP999: 3, durationP50: 1, durationP99: 2 },
+          dimensions: { datetimeHour: '2026-10-31T12:00:00Z', scriptName: 'akmalalif-admin' },
+        }
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [{ workersAggregate: [workerRow], workersByScript: [workerRow], workersSeries: [workerRow] }] } } }), { status: 200 })
+      }
       if (url.endsWith('/billing/history')) {
         return new Response(JSON.stringify({
           success: true,
@@ -326,6 +340,15 @@ describe('cloudflare observability provider boundaries', () => {
           result_info: { next_page: false },
         }), { status: 200 })
       }
+      if (url.includes('/billable-usage?')) {
+        return new Response(JSON.stringify({
+          success: true,
+          result: [
+            { ServiceName: 'Workers requests', BillingPeriodStart: '2026-10-08T00:00:00Z', ChargePeriodStart: '2026-10-08T00:00:00Z', ChargePeriodEnd: '2026-10-09T00:00:00Z', BillingCurrency: 'USD', BilledCost: 1.2, EffectiveCost: 0.1 },
+            { ServiceName: 'Workers CPU', BillingPeriodStart: '2026-10-08T00:00:00Z', ChargePeriodStart: '2026-10-09T00:00:00Z', ChargePeriodEnd: '2026-10-10T00:00:00Z', BillingCurrency: 'USD', BilledCost: 0.8, EffectiveCost: 0.2 },
+          ],
+        }), { status: 200 })
+      }
       if (url.endsWith('/subscriptions')) {
         return new Response(JSON.stringify({
           success: true,
@@ -333,17 +356,51 @@ describe('cloudflare observability provider boundaries', () => {
         }), { status: 200 })
       }
       if (url.endsWith('/billing/profile'))
-        return new Response(JSON.stringify({ success: true, result: {} }), { status: 200 })
+        return new Response(JSON.stringify({ success: true, result: { total: 999 } }), { status: 200 })
       return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
     }))
     const event = { context: { cloudflare: { env: { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test' } } } } as never
     const report = await readCloudflareReport(event)
-    expect(report.billing.actualCharges).toBe(4.7)
+    expect(report.billing.actualCharges).toBe(2)
     expect(report.billing.fixedFees).toBe(5)
     expect(report.billing.cycle).toEqual({ from: '2026-10-08T00:00:00Z', to: '2026-11-08T00:00:00Z', source: 'cloudflare:subscriptions' })
     expect(report.billing.status).toBe('live')
     expect(report.billing.currency).toBe('USD')
+    expect(report.billing.reason).toContain('provider-rated metered usage')
+    expect(calls).toContain('https://api.example.test/accounts/73138007ecb740aea99f9c99bb2a2705/billable-usage?from=2026-10-08&to=2026-11-08')
     expect(report.billing.forecast).not.toBe(report.billing.actualCharges)
+  })
+
+  it('withholds current-cycle actual charges when FOCUS billing periods do not match', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/graphql'))
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [{}] } } }), { status: 200 })
+      if (url.endsWith('/billing/history')) {
+        return new Response(JSON.stringify({ success: true, result: [{ type: 'invoice', occurred_at: '2026-10-12T10:00:00Z', amount: 4.7, currency: 'usd' }] }), { status: 200 })
+      }
+      if (url.includes('/billable-usage?')) {
+        return new Response(JSON.stringify({
+          success: true,
+          result: [{ ServiceName: 'Workers requests', BillingPeriodStart: '2026-09-08T00:00:00Z', ChargePeriodStart: '2026-10-08T00:00:00Z', ChargePeriodEnd: '2026-10-09T00:00:00Z', BillingCurrency: 'USD', BilledCost: 12 }],
+        }), { status: 200 })
+      }
+      if (url.endsWith('/subscriptions')) {
+        return new Response(JSON.stringify({
+          success: true,
+          result: [{ frequency: 'monthly', state: 'Paid', price: 5, currency: 'USD', current_period_start: '2026-10-08T00:00:00Z', current_period_end: '2026-11-08T00:00:00Z' }],
+        }), { status: 200 })
+      }
+      if (url.endsWith('/billing/profile'))
+        return new Response(JSON.stringify({ success: true, result: { amount: 999 } }), { status: 200 })
+      return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
+    }))
+    const event = { context: { cloudflare: { env: { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test' } } } } as never
+    const report = await readCloudflareReport(event)
+    expect(report.billing.actualCharges).toBeNull()
+    expect(report.billing.reason).toContain('outside the provider billing period')
+    expect(report.billing.reason).not.toContain('4.7')
+    expect(report.billing.status).toBe('partial')
   })
 
   it('records an unavailable collection and prunes the two historical retention windows', async () => {

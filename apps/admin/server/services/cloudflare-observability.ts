@@ -26,6 +26,7 @@ export const SNAPSHOT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000
 export const DAILY_RETENTION_MONTHS = 13
 export const PRICING_VERSION = 'docs-2026-10-31'
 export const PRICING_AS_OF = 'docs-2026-10-31'
+const MAX_BILLING_METRIC_CACHE_ENTRIES = 32
 
 const WORKER_NAMES = new Set(['akmalalif-admin', 'akmalalif-portfolio'])
 const D1_NAMES = new Set(['akmalalif-admin', 'akmalalif-portfolio'])
@@ -158,6 +159,12 @@ interface ActualBillingResult {
   cycle: { from: string, to: string, source: string } | null
   currency?: string
   reason?: string
+}
+
+interface ProviderRatedUsage {
+  amount: number | null
+  currency?: string
+  reason: string
 }
 
 interface CachedActualBilling {
@@ -1650,7 +1657,7 @@ async function readBillingMetrics(env: CloudflareEnvironment, token: string, cyc
   const from = Math.max(cycleFrom, retentionFrom)
   if (!Number.isFinite(from) || !Number.isFinite(cycleTo) || from >= cycleTo)
     return []
-  const cacheKey = `${scope}:${new Date(from).toISOString()}:${new Date(cycleTo).toISOString()}`
+  const cacheKey = `${CLOUDFLARE_ACCOUNT_ID}:${scope}:${cycle.from}:${cycle.to}`
   const cached = billingMetricCache.get(cacheKey)
   if (cached && cached.expiresAt > now)
     return cached.metrics
@@ -1673,6 +1680,11 @@ async function readBillingMetrics(env: CloudflareEnvironment, token: string, cyc
   ]
   const settled = await Promise.allSettled(readers)
   const metrics = settled.flatMap(result => result.status === 'fulfilled' ? result.value.metrics : [])
+  if (!billingMetricCache.has(cacheKey) && billingMetricCache.size >= MAX_BILLING_METRIC_CACHE_ENTRIES) {
+    const oldest = billingMetricCache.keys().next().value
+    if (typeof oldest === 'string')
+      billingMetricCache.delete(oldest)
+  }
   billingMetricCache.set(cacheKey, { expiresAt: now + OBSERVABILITY_CACHE_MS, metrics })
   return metrics
 }
@@ -1680,67 +1692,6 @@ async function readBillingMetrics(env: CloudflareEnvironment, token: string, cyc
 function metricValue(metrics: ObservabilityMetric[], key: string): number | null {
   const found = metrics.find(item => item.key === key)
   return found?.value ?? null
-}
-
-function findNamedNumber(value: unknown, names: string[], depth = 0): number | null {
-  if (depth > 4 || value === null || value === undefined)
-    return null
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findNamedNumber(item, names, depth + 1)
-      if (found !== null)
-        return found
-    }
-    return null
-  }
-  const record = asRecord(value)
-  if (!record)
-    return null
-  for (const name of names) {
-    const found = asFiniteNumber(record[name])
-    if (found !== null)
-      return found
-  }
-  for (const child of Object.values(record)) {
-    const found = findNamedNumber(child, names, depth + 1)
-    if (found !== null)
-      return found
-  }
-  return null
-}
-
-function findCycle(value: unknown, depth = 0): { from: string, to: string, source: string } | null {
-  if (depth > 4 || value === null || value === undefined)
-    return null
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findCycle(item, depth + 1)
-      if (found)
-        return found
-    }
-    return null
-  }
-  const record = asRecord(value)
-  if (!record)
-    return null
-  const from = record.from ?? record.start ?? record.start_at ?? record.billing_period_start ?? record.current_period_start
-  const to = record.to ?? record.end ?? record.end_at ?? record.billing_period_end ?? record.current_period_end
-  if (typeof from === 'string' && typeof to === 'string')
-    return { from, to, source: 'cloudflare:billing' }
-  for (const child of Object.values(record)) {
-    const found = findCycle(child, depth + 1)
-    if (found)
-      return found
-  }
-  return null
-}
-
-function billingResponseAmount(body: CloudflareApiResponse): number | null {
-  return findNamedNumber(body.result, ['total_due', 'totalDue', 'total', 'amount_due', 'amountDue', 'amount', 'subtotal'])
-}
-
-function billingHistoryRows(body: CloudflareApiResponse | undefined): JsonRecord[] {
-  return body ? asArray(body.result) : []
 }
 
 function subscriptionRows(body: CloudflareApiResponse | undefined): JsonRecord[] {
@@ -1765,18 +1716,80 @@ function providerFixedFees(rows: JsonRecord[]): number | null {
   return prices.length ? prices.reduce((sum, value) => sum + value, 0) : null
 }
 
-function providerHistoryCharges(rows: JsonRecord[], cycle: { from: string, to: string } | null): { amount: number | null, currency?: string } {
-  const from = cycle ? new Date(cycle.from).getTime() : Number.NEGATIVE_INFINITY
-  const to = cycle ? new Date(cycle.to).getTime() : Number.POSITIVE_INFINITY
-  const invoices = rows.filter((row) => {
-    if (row.type !== undefined && row.type !== 'invoice')
-      return false
-    const occurredAt = typeof row.occurred_at === 'string' ? new Date(row.occurred_at).getTime() : Number.NaN
-    return Number.isFinite(occurredAt) && occurredAt >= from && occurredAt < to
-  })
-  const amounts = invoices.map(row => asFiniteNumber(row.amount)).filter((value): value is number => value !== null)
-  const currency = invoices.find(row => typeof row.currency === 'string')?.currency
-  return { amount: amounts.length ? amounts.reduce((sum, value) => sum + value, 0) : null, currency: typeof currency === 'string' ? currency.toUpperCase() : undefined }
+function providerCurrency(rows: JsonRecord[]): string | undefined {
+  const currency = rows.find(row => typeof row.currency === 'string')?.currency
+  return typeof currency === 'string' && currency.trim() ? currency.trim().toUpperCase() : undefined
+}
+
+function providerTimestamp(value: unknown): number | null {
+  if (typeof value !== 'string' || !value.trim())
+    return null
+  const raw = value.trim()
+  const usDate = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}):(\d{2}))?/.exec(raw)
+  if (usDate) {
+    const month = Number(usDate[1])
+    const day = Number(usDate[2])
+    const year = Number(usDate[3])
+    const hour = Number(usDate[4] ?? 0)
+    const minute = Number(usDate[5] ?? 0)
+    const second = Number(usDate[6] ?? 0)
+    const parsed = Date.UTC(year, month - 1, day, hour, minute, second)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const parsed = new Date(raw).getTime()
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function providerDay(value: unknown): string | null {
+  const timestamp = providerTimestamp(value)
+  return timestamp === null ? null : new Date(timestamp).toISOString().slice(0, 10)
+}
+
+function providerUsageRows(body: CloudflareApiResponse | undefined): JsonRecord[] {
+  return body ? resultRows(body.result, 'rows') : []
+}
+
+function billingHistoryRows(body: CloudflareApiResponse | undefined): JsonRecord[] {
+  return body ? resultRows(body.result) : []
+}
+
+function aggregateProviderRatedUsage(rows: JsonRecord[], cycle: { from: string, to: string }): ProviderRatedUsage {
+  if (!rows.length)
+    return { amount: null, reason: 'Cloudflare billable usage returned no rows for the provider billing cycle; current-cycle actual charges are unavailable.' }
+  const cycleFrom = new Date(cycle.from).getTime()
+  const cycleTo = new Date(cycle.to).getTime()
+  const cycleFromDay = providerDay(cycle.from)
+  if (!Number.isFinite(cycleFrom) || !Number.isFinite(cycleTo) || !cycleFromDay)
+    return { amount: null, reason: 'Cloudflare provider billing-cycle metadata was invalid; current-cycle actual charges are unavailable.' }
+  let amount = 0
+  let currency: string | undefined
+  for (const row of rows) {
+    const billingPeriodStart = providerDay(row.BillingPeriodStart)
+    if (!billingPeriodStart || billingPeriodStart !== cycleFromDay)
+      return { amount: null, reason: `Cloudflare billable usage included a row outside the provider billing period starting ${cycleFromDay}; current-cycle actual charges are unavailable.` }
+    const chargeFrom = providerTimestamp(row.ChargePeriodStart)
+    const chargeTo = providerTimestamp(row.ChargePeriodEnd)
+    if (chargeFrom === null || chargeTo === null || chargeFrom < cycleFrom || chargeTo > cycleTo || chargeFrom >= chargeTo)
+      return { amount: null, reason: `Cloudflare billable usage included a charge period outside the provider billing cycle ${cycle.from} to ${cycle.to}; current-cycle actual charges are unavailable.` }
+    const rowCurrency = typeof row.BillingCurrency === 'string' && row.BillingCurrency.trim()
+      ? row.BillingCurrency.trim().toUpperCase()
+      : undefined
+    if (rowCurrency && currency && rowCurrency !== currency)
+      return { amount: null, reason: 'Cloudflare billable usage returned multiple billing currencies; current-cycle actual charges are unavailable.' }
+    currency ??= rowCurrency
+    const billedCost = asFiniteNumber(row.BilledCost)
+    const effectiveCost = asFiniteNumber(row.EffectiveCost)
+    if (billedCost === null && effectiveCost !== null)
+      return { amount: null, currency, reason: 'Cloudflare billable usage returned only EffectiveCost without finalized BilledCost; current-cycle actual charges are unavailable.' }
+    if (billedCost === null)
+      return { amount: null, currency, reason: 'Cloudflare billable usage returned a row without BilledCost or EffectiveCost; current-cycle actual charges are unavailable.' }
+    amount += billedCost
+  }
+  return {
+    amount,
+    currency,
+    reason: `Cloudflare billable usage v1 rows match provider billing cycle ${cycle.from} to ${cycle.to}; finalized BilledCost is reported as provider-rated metered usage charges, not a full invoice total. Fixed subscription fees are reported separately.`,
+  }
 }
 
 async function readActualBilling(env: CloudflareEnvironment, token: string): Promise<ActualBillingResult> {
@@ -1797,22 +1810,43 @@ async function readActualBilling(env: CloudflareEnvironment, token: string): Pro
     actualBillingCache.set(CLOUDFLARE_ACCOUNT_ID, { expiresAt: now + INVENTORY_CACHE_MS, result })
     return result
   }
-  const amounts = successful.map(result => billingResponseAmount(result.value)).filter((value): value is number => value !== null)
   const historyResult = settled[0]
-  const profileResult = settled[1]
   const subscriptionResult = settled[2]
   const history = historyResult?.status === 'fulfilled' ? historyResult.value : undefined
-  const profile = profileResult?.status === 'fulfilled' ? profileResult.value : undefined
   const subscription = subscriptionResult?.status === 'fulfilled' ? subscriptionResult.value : undefined
   const subscriptions = subscriptionRows(subscription)
-  const cycle = providerCycleFromSubscriptions(subscriptions) ?? findCycle(history?.result) ?? findCycle(profile?.result) ?? findCycle(subscription?.result)
-  const historyCharges = providerHistoryCharges(billingHistoryRows(history), cycle)
+  const cycle = providerCycleFromSubscriptions(subscriptions)
+  const historyCurrency = providerCurrency(billingHistoryRows(history))
+  const subscriptionCurrency = providerCurrency(subscriptions)
+  let usage: ProviderRatedUsage = {
+    amount: null,
+    reason: 'Cloudflare provider billing-cycle metadata was unavailable; posted billing history is not treated as current-cycle usage.',
+  }
+  if (cycle) {
+    const from = providerDay(cycle.from)
+    const to = providerDay(cycle.to)
+    if (from && to) {
+      const usagePath = `/accounts/${CLOUDFLARE_ACCOUNT_ID}/billable-usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+      try {
+        usage = aggregateProviderRatedUsage(providerUsageRows(await cloudflareRest(env, token, usagePath, 'billing.billable_usage')), cycle)
+      }
+      catch (error) {
+        const normalized = normalizeProviderError(error, 'billing.billable_usage')
+        usage = {
+          amount: null,
+          reason: normalized.status === 403
+            ? 'Cloudflare billable usage returned HTTP 403; posted billing history is not treated as current-cycle usage, so actual charges are unavailable.'
+            : providerReason(normalized),
+        }
+      }
+    }
+  }
   const result = {
-    charges: historyCharges.amount ?? (amounts.length ? amounts[0]! : null),
-    fixedFees: providerFixedFees(subscriptions) ?? (profile ? billingResponseAmount(profile) : null),
+    charges: usage.amount,
+    fixedFees: providerFixedFees(subscriptions),
     cycle,
-    currency: historyCharges.currency ?? (typeof subscriptions.find(row => typeof row.currency === 'string')?.currency === 'string' ? String(subscriptions.find(row => typeof row.currency === 'string')?.currency).toUpperCase() : undefined),
-    reason: historyCharges.amount !== null || amounts.length ? undefined : 'Cloudflare billing access succeeded but returned no numeric invoice amount.',
+    currency: usage.currency ?? subscriptionCurrency ?? historyCurrency,
+    reason: usage.reason,
   }
   actualBillingCache.set(CLOUDFLARE_ACCOUNT_ID, { expiresAt: now + INVENTORY_CACHE_MS, result })
   return result
@@ -1833,7 +1867,15 @@ function billingUsage(
   return { key, label, consumed, included, billable: allowance.billable, unit, estimatedCost: ratePerUnit === null ? null : allowance.estimatedCost, actualCost: null, attribution }
 }
 
-function buildBilling(metrics: ObservabilityMetric[], now: number, actual: ActualBillingResult | null): CloudflareBilling {
+function getBillingMetricsCoverage(cycle: { from: string, to: string }, now: number): { complete: boolean, reason?: string } {
+  const cycleFrom = new Date(cycle.from).getTime()
+  const retentionFrom = now - LIVE_GRAPHQL_RETENTION_MS
+  if (!Number.isFinite(cycleFrom) || cycleFrom < retentionFrom)
+    return { complete: false, reason: 'Current-cycle analytics are only partially covered by the provider retention window; estimated charges and forecast are withheld.' }
+  return { complete: true }
+}
+
+function buildBilling(metrics: ObservabilityMetric[], now: number, actual: ActualBillingResult | null, metricsCoverage = getBillingMetricsCoverage(actual?.cycle ?? getBillingCycle(now), now)): CloudflareBilling {
   const calendarCycle = getBillingCycle(now)
   const cycle = actual?.cycle ?? calendarCycle
   const workersRequests = metricValue(metrics, 'workers.requests')
@@ -1887,27 +1929,30 @@ function buildBilling(metrics: ObservabilityMetric[], now: number, actual: Actua
   const variableEstimate = usage.reduce((sum, item) => sum + (item.estimatedCost ?? 0), 0)
   const fallbackFixedFees = 5
   const fixedFees = actual?.fixedFees ?? fallbackFixedFees
-  const estimatedCharges = usage.length ? fixedFees + variableEstimate : null
+  const estimatedCharges = metricsCoverage.complete && usage.length ? fixedFees + variableEstimate : null
   const cycleFrom = new Date(cycle.from).getTime()
   const cycleTo = new Date(cycle.to).getTime()
   const elapsed = Math.max(1, now - cycleFrom)
   const duration = Math.max(1, cycleTo - cycleFrom)
   const projectedVariable = variableEstimate * (duration / elapsed)
-  const forecast = usage.length ? fixedFees + projectedVariable : null
+  const forecast = metricsCoverage.complete && usage.length ? fixedFees + projectedVariable : null
   const actualCharges = actual?.charges ?? null
   const hasUnpricedUsage = usage.some(item => (item.consumed ?? 0) > 0 && item.estimatedCost === null)
-  const status: SourceStatus = hasUnpricedUsage
+  const status: SourceStatus = !metricsCoverage.complete || hasUnpricedUsage
     ? 'partial'
     : actualCharges !== null && usage.length ? 'live' : usage.length ? 'partial' : actual?.reason ? 'partial' : 'unavailable'
   const reason = actualCharges !== null
     ? [
-        'Provider billing history is reported as actual billed charges; rated usage and forecast are calculated separately from current-cycle analytics.',
+        'Provider billable usage is reported as current-cycle provider-rated metered usage charges, not a full invoice total; fixed subscription fees, current-cycle estimates, and forecast are kept separate.',
         hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so the estimate and forecast are partial.' : undefined,
+        metricsCoverage.reason,
         actual?.reason,
       ].filter(Boolean).join(' ')
     : [
         `Actual Cloudflare billing is unavailable. Fallback estimate uses published rates under ${PRICING_VERSION}; fixed fees remain separate from usage overage and forecast.`,
         hasUnpricedUsage ? 'Some current-cycle usage lines have no published rate, so the estimate and forecast are partial.' : undefined,
+        metricsCoverage.reason,
+        actual?.reason,
       ].filter(Boolean).join(' ')
   return {
     status,
@@ -2023,15 +2068,18 @@ async function buildReport(env: CloudflareEnvironment, token: string, query: Clo
   const allMetrics = [...sourceData.values()].flatMap(data => data.metrics)
   const allSeries = [...sourceData.values()].flatMap(data => data.series)
   const resources = inventoryResourcesForScope(inventory, query, scopedEnv)
+  const billingCycle = actualBilling?.cycle ?? getBillingCycle(now)
+  const metricsCoverage = getBillingMetricsCoverage(billingCycle, now)
   const billingMetrics = allowBilling
-    ? await readBillingMetrics(scopedEnv, token, actualBilling?.cycle ?? getBillingCycle(now), query.scope, now)
+    ? await readBillingMetrics(scopedEnv, token, billingCycle, query.scope, now)
     : allMetrics
+  const billing = buildBilling(billingMetrics, now, actualBilling, metricsCoverage)
   if (actualBilling) {
     sourceCoverage.push(coverage(
       'billing',
-      actualBilling.charges !== null ? 'live' : 'partial',
+      billing.status,
       checkedAt,
-      actualBilling.reason ?? (actualBilling.charges === null ? 'Billing access returned no invoice amount.' : undefined),
+      billing.reason,
     ))
   }
   const report: CloudflareReport = {
@@ -2065,7 +2113,7 @@ async function buildReport(env: CloudflareEnvironment, token: string, query: Clo
       ...(sourceData.get('workflows')?.metrics ?? []),
       ...(sourceData.get('builds')?.metrics ?? []),
     ],
-    billing: buildBilling(billingMetrics, now, actualBilling),
+    billing,
     series: allSeries,
     deployments: inventory.deployments.filter(deployment => resources.some(resource => resource.id === deployment.id || resource.name.toLowerCase() === deployment.resourceName.toLowerCase())),
   }
