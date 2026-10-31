@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-31",
+  "language": "en",
+  "posts": [
+    {
+      "slug": "publictransport-my-live-data-deep-dive",
+      "category": "civic-tech",
+      "excerpt": "publictransport.my combines the official GTFS Realtime feed, the MyRapid kiosk's live socket and timetable-estimated trains. Here is how each piece works.",
+      "tags": ["Malaysia", "Public transport", "Open data", "GTFS", "Reverse engineering"],
+      "meta_title": "How publictransport.my Gets Live Bus Data | Akmal Alif",
+      "meta_description": "A source-led deep dive into publictransport.my: data.gov.my GTFS Realtime, the MyRapid kiosk's Socket.IO feed, estimated trains and how 'Leave in 2 min' works.",
+      "words": [2000, 2800]
+    },
+    {
+      "slug": "wonders-of-creation-al-qazwini",
+      "category": "islamic-heritage",
+      "excerpt": "Al-Qazwini's 13th-century Wonders of Creation put angels, islands, jinn and Gog and Magog into one ordered cosmos. A new video essay is a good way in.",
+      "tags": ["Islamic history", "Manuscripts", "Cosmography", "Video essay"],
+      "meta_title": "A Judge's Book of Wonders: al-Qazwini | Akmal Alif",
+      "meta_description": "Reading al-Qazwini's Ajaib al-Makhluqat through a video essay, Encyclopaedia Iranica and the 1280 Munich manuscript: wonder, order and Gog and Magog.",
+      "youtube": ["tniqI9CkwKI"],
+      "words": [1500, 2100]
+    }
+  ],
+  "categories": [
+    { "name": "Islamic Heritage", "slug": "islamic-heritage", "description": "Islamic history, scholarship and manuscripts, read alongside their sources.", "icon_key": "islamic-heritage", "sort_order": 100 }
+  ]
+}
