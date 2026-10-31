@@ -8,7 +8,10 @@ definePageMeta({ layout: 'dashboard' })
       report="overview"
       title="Briefing"
       intro="Reach, engagement, career contact, and shortlink activity in one clear view."
-    />
-    <ObservabilitySummary />
+    >
+      <template #after-metrics>
+        <ObservabilitySummary />
+      </template>
+    </PortfolioReport>
   </div>
 </template>

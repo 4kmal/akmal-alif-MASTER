@@ -12,11 +12,11 @@ import { useAPI } from '@/utils/api'
 
 export type CloudflareRange = '24h' | '7d' | '30d'
 export type CloudflareScope = 'account' | 'akmalalif'
-export type GamingRange = '7d' | '30d' | '90d'
+export type GamingRange = '7d' | '30d' | '90d' | '13m'
 
 const CLOUDFLARE_RANGES: readonly CloudflareRange[] = ['24h', '7d', '30d']
 const CLOUDFLARE_SCOPES: readonly CloudflareScope[] = ['account', 'akmalalif']
-const GAMING_RANGES: readonly GamingRange[] = ['7d', '30d', '90d']
+const GAMING_RANGES: readonly GamingRange[] = ['7d', '30d', '90d', '13m']
 
 function oneOf<T extends string>(value: string | undefined, choices: readonly T[], fallback: T): T {
   return value && choices.includes(value as T) ? value as T : fallback
@@ -95,6 +95,9 @@ const BYTE_FACTORS: Record<string, number> = {
 }
 
 const DURATION_SECONDS = new Set(['s', 'sec', 'secs', 'second', 'seconds'])
+const DURATION_MILLISECONDS = new Set(['ms', 'millisecond', 'milliseconds'])
+const DURATION_MICROSECONDS = new Set(['us', 'µs', 'microsecond', 'microseconds'])
+const COUNT_UNITS = new Set(['count', 'counts'])
 
 function numberFormat(value: number, compact = false): string {
   return new Intl.NumberFormat(undefined, compact
@@ -104,6 +107,17 @@ function numberFormat(value: number, compact = false): string {
 
 function normalizedUnit(unit: string): string {
   return unit.trim().toLowerCase().replace(/[\s_-]+/g, '')
+}
+
+function humanizeDuration(milliseconds: number): string {
+  const magnitude = Math.abs(milliseconds)
+  if (magnitude >= 3_600_000)
+    return `${numberFormat(milliseconds / 3_600_000)} h`
+  if (magnitude >= 60_000)
+    return `${numberFormat(milliseconds / 60_000)} min`
+  if (magnitude >= 1_000)
+    return `${numberFormat(milliseconds / 1_000)} s`
+  return `${numberFormat(milliseconds)} ms`
 }
 
 function humanizeObservabilityNumber(value: number, unit = ''): string {
@@ -123,18 +137,82 @@ function humanizeObservabilityNumber(value: number, unit = ''): string {
     return `${numberFormat(bytes / scale.divisor)} ${scale.label}`
   }
 
-  if (DURATION_SECONDS.has(normalized)) {
-    const magnitude = Math.abs(value)
-    if (magnitude >= 3600)
-      return `${numberFormat(value / 3600)} h`
-    if (magnitude >= 60)
-      return `${numberFormat(value / 60)} min`
-    return `${numberFormat(value)} s`
-  }
+  if (DURATION_SECONDS.has(normalized))
+    return humanizeDuration(value * 1_000)
 
-  const compact = !unit || /(?:count|counts|players|sessions|rooms|bots|users|events|requests|starts|completions|matches|participants|kills|deaths|assists|score|points|interactions)$/i.test(unit)
+  if (DURATION_MILLISECONDS.has(normalized))
+    return humanizeDuration(value)
+
+  if (DURATION_MICROSECONDS.has(normalized))
+    return humanizeDuration(value / 1_000)
+
+  if (normalized === 'ratio' || normalized === 'fraction')
+    return `${numberFormat(value * 100)}%`
+
+  if (normalized === '%' || normalized === 'percent' || normalized === 'percentage')
+    return `${numberFormat(value)}%`
+
+  if (COUNT_UNITS.has(normalized))
+    return numberFormat(value, true)
+
+  const compact = !unit || /(?:players|sessions|rooms|bots|users|events|requests|starts|completions|matches|participants|kills|deaths|assists|score|points|interactions)$/.test(normalized)
   const formatted = numberFormat(value, compact)
   return unit ? `${formatted} ${unit}` : formatted
+}
+
+const ADDITIVE_SERIES_PATTERN = /request|invocation|error|exception|event|count|cpu|duration|traffic|bandwidth|egress|ingress|byte|second|minute|hour/i
+const NON_ADDITIVE_SERIES_PATTERN = /memory|headroom|percentile|p\d{2}|latency|storage|capacity|utilization|percent(?:age)?|ratio|fraction|rate|gauge/i
+
+function isAdditiveSeriesMetric(metric: Pick<ObservabilityMetric, 'key' | 'label' | 'unit'>): boolean {
+  const text = `${metric.key} ${metric.label} ${metric.unit}`
+  return ADDITIVE_SERIES_PATTERN.test(text) && !NON_ADDITIVE_SERIES_PATTERN.test(text)
+}
+
+export interface CloudflareChartPoint {
+  timestamp: string
+  value: number
+}
+
+export function aggregateCloudflareSeries(
+  series: CloudflareReport['series'],
+  metric: Pick<ObservabilityMetric, 'key' | 'label' | 'unit'> & { resourceId?: string },
+  range: CloudflareRange,
+): CloudflareChartPoint[] {
+  const matching = series.filter(point => point.metric === metric.key
+    && (!metric.resourceId || point.resourceId === metric.resourceId))
+  if (matching.length === 0)
+    return []
+
+  const accountPoints = metric.resourceId ? [] : matching.filter(point => !point.resourceId)
+  const source = accountPoints.length > 0 ? accountPoints : matching
+  const bucketMs = range === '24h' ? 60 * 60 * 1000 : range === '7d' ? 12 * 60 * 60 * 1000 : 2 * 24 * 60 * 60 * 1000
+  const additive = isAdditiveSeriesMetric(metric)
+  const buckets = new Map<number, { total: number, latestAt: number, latestValue: number }>()
+
+  for (const point of source) {
+    const time = Date.parse(point.timestamp)
+    if (!Number.isFinite(time) || !Number.isFinite(point.value))
+      continue
+    const bucket = Math.floor(time / bucketMs) * bucketMs
+    const current = buckets.get(bucket)
+    if (!current) {
+      buckets.set(bucket, { total: point.value, latestAt: time, latestValue: point.value })
+      continue
+    }
+    if (additive)
+      current.total += point.value
+    if (time >= current.latestAt) {
+      current.latestAt = time
+      current.latestValue = point.value
+    }
+  }
+
+  return [...buckets.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([time, bucket]) => ({
+      timestamp: new Date(time).toISOString(),
+      value: additive ? bucket.total : bucket.latestValue,
+    }))
 }
 
 export function formatObservabilityMetric(metric: Pick<ObservabilityMetric, 'value' | 'unit'> | null | undefined): string {
@@ -153,14 +231,14 @@ export function formatObservabilityNumber(value: number | null | undefined, unit
 export function observabilityMetricTitle(metric: Pick<ObservabilityMetric, 'value' | 'unit'> | null | undefined): string {
   if (!metric || metric.value === null || metric.value === undefined)
     return 'Unavailable from the provider.'
-  const value = numberFormat(metric.value)
+  const value = String(metric.value)
   return metric.unit ? `Raw value: ${value} ${metric.unit}` : `Raw value: ${value}`
 }
 
 export function observabilityNumberTitle(value: number | null | undefined, unit = ''): string {
   if (value === null || value === undefined)
     return 'Unavailable from the provider.'
-  const formatted = numberFormat(value)
+  const formatted = String(value)
   return unit ? `Raw value: ${formatted} ${unit}` : `Raw value: ${formatted}`
 }
 

@@ -3,6 +3,7 @@ import type {
   GamingBreakdown,
   GamingPlayer,
   GamingPlayerDetail,
+  GamingReport,
   GamingSession,
   GamingSessionDetail,
   ObservabilityMetric,
@@ -20,6 +21,39 @@ const tabs = [
 ] as const
 type GamingTab = typeof tabs[number]['id']
 
+type GamingBreakdownExtra = GamingBreakdown & {
+  distance?: number
+  disconnects?: number
+  renderFailures?: number
+  endReasons?: Record<string, number>
+  interactions?: Record<string, number>
+}
+
+type GamingReportExtra = GamingReport & {
+  games: GamingBreakdownExtra[]
+  modes: GamingBreakdownExtra[]
+  sectors?: GamingBreakdownExtra[]
+  interactions?: Array<{ gameId: string, label: string, count: number }>
+  endReasons?: Array<{ gameId: string, reason: string, count: number }>
+}
+
+type GamingSessionDetailExtra = GamingSessionDetail & {
+  timelineTotal?: number
+  timelineLimit?: number
+  timelineTruncated?: boolean
+  timelineNextCursor?: string | null
+  participantsTotal?: number
+  participantsLimit?: number
+  participantsTruncated?: boolean
+}
+
+type GamingPlayerDetailExtra = GamingPlayerDetail & {
+  sessionsTotal?: number
+  sessionsLimit?: number
+  sessionsTruncated?: boolean
+  sessionsNextCursor?: string | null
+}
+
 const route = useRoute()
 const router = useRouter()
 const { data, loading, error, stale, lastUpdated, refresh, range, game, mode, transport } = useGamingObservability()
@@ -30,6 +64,8 @@ const sessionDetail = ref<GamingSessionDetail | null>(null)
 const playerDetail = ref<GamingPlayerDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref<string | null>(null)
+const detailMoreLoading = ref(false)
+const detailMoreError = ref<string | null>(null)
 const exportLoading = ref(false)
 const exportError = ref<string | null>(null)
 const detailPanel = useTemplateRef<HTMLElement>('detailPanel')
@@ -81,6 +117,9 @@ const onlineMetrics = computed(() => data.value?.performance || [])
 const activeHumans = computed(() => data.value?.live.players ?? null)
 const activeBots = computed(() => data.value?.live.bots ?? null)
 const selectedGameLabel = computed(() => game.value || 'All games')
+const reportWithExtras = computed(() => data.value as GamingReportExtra | null)
+const sessionDetailWithExtras = computed(() => sessionDetail.value as GamingSessionDetailExtra | null)
+const playerDetailWithExtras = computed(() => playerDetail.value as GamingPlayerDetailExtra | null)
 
 const breakdownFields = [
   { key: 'kills', label: 'Kills', aliases: ['kills'], unit: 'count' },
@@ -94,7 +133,11 @@ const breakdownFields = [
   { key: 'extracted', label: 'Extracted', aliases: ['extracted'], unit: 'count' },
   { key: 'extractedValue', label: 'Extracted value', aliases: ['extractedValue', 'extracted_value'], unit: 'count' },
   { key: 'distance', label: 'Distance', aliases: ['distance', 'distanceKm', 'distance_km'], unit: 'km' },
+  { key: 'disconnects', label: 'Disconnects', aliases: ['disconnects', 'disconnect'], unit: 'count' },
+  { key: 'renderFailures', label: 'Render failures', aliases: ['renderFailures', 'render_failures'], unit: 'count' },
   { key: 'endReason', label: 'End reason', aliases: ['endReason', 'end_reason', 'outcome'], unit: '' },
+  { key: 'endReasons', label: 'End reasons', aliases: ['endReasons', 'end_reasons'], unit: '' },
+  { key: 'interactions', label: 'Interactions', aliases: ['interactions'], unit: '' },
   { key: 'zone', label: 'Zone', aliases: ['zone', 'zones'], unit: '' },
   { key: 'poi', label: 'POI', aliases: ['poi', 'pois'], unit: '' },
   { key: 'layer', label: 'Layer', aliases: ['layer', 'layers'], unit: '' },
@@ -102,6 +145,8 @@ const breakdownFields = [
 ] as const
 
 type BreakdownField = typeof breakdownFields[number]
+const distanceBreakdownField = breakdownFields.find(field => field.key === 'distance')!
+const endReasonsBreakdownField = breakdownFields.find(field => field.key === 'endReasons')!
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -131,8 +176,45 @@ function breakdownValue(item: GamingBreakdown, field: BreakdownField): unknown {
 }
 
 const visibleBreakdownFields = computed(() => {
-  const rows = [...(data.value?.games || []), ...(data.value?.modes || [])]
+  const rows = [...(reportWithExtras.value?.games || []), ...(reportWithExtras.value?.modes || [])]
   return breakdownFields.filter(field => rows.some(row => breakdownValue(row, field) !== null))
+})
+
+const sectorRows = computed(() => reportWithExtras.value?.sectors || [])
+
+const relayRows = computed(() => {
+  const rows = [...(reportWithExtras.value?.games || []), ...(reportWithExtras.value?.modes || [])]
+  return rows.filter((row) => {
+    const endReasons = objectValue(breakdownValue(row, endReasonsBreakdownField))
+    return /relay/i.test(`${row.id} ${row.label}`) || Boolean(endReasons && Object.keys(endReasons).length)
+  })
+})
+
+const interactionRows = computed(() => {
+  const explicit = reportWithExtras.value?.interactions || []
+  if (explicit.length)
+    return explicit
+  const interactionsField = breakdownFields.find(field => field.key === 'interactions')!
+  return [...(reportWithExtras.value?.games || []), ...(reportWithExtras.value?.modes || [])]
+    .flatMap((row) => {
+      const value = objectValue(breakdownValue(row, interactionsField))
+      if (!value)
+        return []
+      return Object.entries(value).map(([label, count]) => ({
+        gameId: row.id,
+        label,
+        count: typeof count === 'number' ? count : Number(count) || 0,
+      }))
+    })
+})
+
+const kesslerInteractions = computed(() => {
+  return interactionRows.value.filter(item => /kessler/i.test(`${item.gameId} ${item.label}`))
+})
+
+const relayEndReasons = computed(() => {
+  const rows = reportWithExtras.value?.endReasons || []
+  return rows.filter(item => /relay/i.test(`${item.gameId} ${item.reason}`))
 })
 
 const authorityMetrics = computed(() => (data.value?.overview || []).filter(metric => metric.key.startsWith('authoritative_')))
@@ -145,6 +227,8 @@ function formatBreakdownValue(item: GamingBreakdown, field: BreakdownField) {
     return formatObservabilityNumber(value, field.unit)
   if (Array.isArray(value))
     return value.join(', ')
+  if (typeof value === 'object')
+    return Object.entries(value).map(([label, count]) => `${label}: ${typeof count === 'number' ? formatObservabilityNumber(count, 'count') : String(count)}`).join(' · ')
   return String(value)
 }
 
@@ -206,11 +290,14 @@ async function exportReport() {
 function clearDetail() {
   const trigger = detailTrigger
   detailController?.abort()
+  detailRequest += 1
   detailController = null
   detailKind.value = null
   sessionDetail.value = null
   playerDetail.value = null
   detailError.value = null
+  detailMoreError.value = null
+  detailMoreLoading.value = false
   detailTrigger = null
   void nextTick(() => trigger?.focus())
 }
@@ -225,6 +312,7 @@ async function openSession(session: GamingSession, event?: Event) {
   playerDetail.value = null
   detailLoading.value = true
   detailError.value = null
+  detailMoreError.value = null
   try {
     const result = await useAPI<GamingSessionDetail>(`/api/admin/observability/gaming/sessions/${encodeURIComponent(session.id)}`, { signal: detailController.signal })
     if (request === detailRequest)
@@ -251,6 +339,7 @@ async function openPlayer(player: GamingPlayer, event?: Event) {
   playerDetail.value = null
   detailLoading.value = true
   detailError.value = null
+  detailMoreError.value = null
   try {
     const result = await useAPI<GamingPlayerDetail>(`/api/admin/observability/gaming/players/${encodeURIComponent(player.id)}`, { signal: detailController.signal })
     if (request === detailRequest)
@@ -264,6 +353,70 @@ async function openPlayer(player: GamingPlayer, event?: Event) {
   finally {
     if (request === detailRequest)
       detailLoading.value = false
+  }
+}
+
+async function loadMoreSessionTimeline() {
+  const current = sessionDetailWithExtras.value
+  const cursor = current?.timelineNextCursor
+  if (!current || !cursor || detailMoreLoading.value)
+    return
+  detailMoreLoading.value = true
+  detailMoreError.value = null
+  const controller = new AbortController()
+  detailController?.abort()
+  detailController = controller
+  const request = ++detailRequest
+  try {
+    const path = appendObservabilityQuery(`/api/admin/observability/gaming/sessions/${encodeURIComponent(current.session.id)}`, { timeline_cursor: cursor })
+    const result = await useAPI<GamingSessionDetailExtra>(path, { signal: controller.signal })
+    if (request === detailRequest && sessionDetail.value) {
+      sessionDetail.value = {
+        ...result,
+        timeline: [...sessionDetail.value.timeline, ...result.timeline.filter(item => !sessionDetail.value?.timeline.some(existing => existing.id === item.id))],
+      }
+    }
+  }
+  catch (cause: unknown) {
+    if (request !== detailRequest || (cause && typeof cause === 'object' && 'name' in cause && cause.name === 'AbortError'))
+      return
+    detailMoreError.value = cause instanceof Error ? cause.message : 'More timeline events could not be loaded.'
+  }
+  finally {
+    if (request === detailRequest)
+      detailMoreLoading.value = false
+  }
+}
+
+async function loadMorePlayerSessions() {
+  const current = playerDetailWithExtras.value
+  const cursor = current?.sessionsNextCursor
+  if (!current || !cursor || detailMoreLoading.value)
+    return
+  detailMoreLoading.value = true
+  detailMoreError.value = null
+  const controller = new AbortController()
+  detailController?.abort()
+  detailController = controller
+  const request = ++detailRequest
+  try {
+    const path = appendObservabilityQuery(`/api/admin/observability/gaming/players/${encodeURIComponent(current.player.id)}`, { cursor })
+    const result = await useAPI<GamingPlayerDetailExtra>(path, { signal: controller.signal })
+    if (request === detailRequest && playerDetail.value) {
+      playerDetail.value = {
+        ...result,
+        sessions: [...playerDetail.value.sessions, ...result.sessions.filter(item => !playerDetail.value?.sessions.some(existing => existing.id === item.id))],
+      }
+    }
+  }
+  catch (cause: unknown) {
+    if (request !== detailRequest || (cause && typeof cause === 'object' && 'name' in cause && cause.name === 'AbortError'))
+      return
+    detailMoreError.value = cause instanceof Error ? cause.message : 'More player sessions could not be loaded.'
+  }
+  finally {
+    if (request === detailRequest)
+      detailMoreLoading.value = false
   }
 }
 
@@ -312,6 +465,7 @@ onBeforeUnmount(() => detailController?.abort())
           <option value="7d">Last 7 days</option>
           <option value="30d">Last 30 days</option>
           <option value="90d">Last 90 days</option>
+          <option value="13m">Last 13 months</option>
         </select>
       </label>
       <label>
@@ -360,9 +514,10 @@ onBeforeUnmount(() => detailController?.abort())
     <p v-if="exportError" class="observability-error" role="alert">{{ exportError }}</p>
     <p v-else-if="loading && !data" class="observability-empty" aria-live="polite">Loading gaming report…</p>
     <p v-else-if="!data" class="observability-empty">No gaming report returned for this range.</p>
+    <p v-if="range === '13m'" class="observability-meta">Session and player drilldowns cover the last 90 days; older totals use daily summaries.</p>
 
     <template v-if="data">
-      <div id="gaming-panel" role="tabpanel" :aria-labelledby="`gaming-tab-${activeTab}`" tabindex="0">
+      <div id="gaming-panel" class="observability-panel" role="tabpanel" :aria-labelledby="`gaming-tab-${activeTab}`" tabindex="0">
         <div class="observability-card observability-card--full">
           <div class="observability-card__header">
             <div><h2>Source coverage</h2><p>Server verified and client reported data remain distinguishable below.</p></div>
@@ -443,6 +598,44 @@ onBeforeUnmount(() => detailController?.abort())
               </table>
             </div>
           </article>
+          <article v-if="sectorRows.length" class="observability-card observability-card--full">
+            <div class="observability-card__header"><div><h2>Sector popularity</h2><p>Sector-level starts, players, completions, and play time.</p></div></div>
+            <div class="observability-table-wrap">
+              <table class="observability-table">
+                <thead><tr><th>Sector</th><th>Starts</th><th>Players</th><th>Completions</th><th>Play time</th><th>Score</th></tr></thead>
+                <tbody>
+                  <tr v-for="item in sectorRows" :key="item.id"><th scope="row">{{ item.label }}</th><td>{{ formatObservabilityNumber(item.starts) }}</td><td>{{ formatObservabilityNumber(item.players) }}</td><td>{{ formatObservabilityNumber(item.completions) }}</td><td>{{ formatObservabilityNumber(item.playSeconds, 's') }}</td><td>{{ formatObservabilityNumber(item.score) }}</td></tr>
+                  <tr v-if="sectorRows.length === 0"><td colspan="6" class="observability-table__muted">No sector rows returned.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+          <article v-if="relayRows.length || relayEndReasons.length" class="observability-card observability-card--full">
+            <div class="observability-card__header"><div><h2>RELAY RUN telemetry</h2><p>Distance and end reasons stay separate from completion counts.</p></div></div>
+            <div v-if="relayRows.length" class="observability-table-wrap">
+              <table class="observability-table">
+                <thead><tr><th>Breakdown</th><th>Distance</th><th>End reasons</th></tr></thead>
+                <tbody>
+                  <tr v-for="item in relayRows" :key="`relay-${item.id}`"><th scope="row">{{ item.label }}</th><td>{{ formatBreakdownValue(item, distanceBreakdownField) }}</td><td>{{ formatBreakdownValue(item, endReasonsBreakdownField) }}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-if="relayEndReasons.length" class="observability-table-wrap observability-table-wrap--spaced">
+              <table class="observability-table">
+                <thead><tr><th>Game</th><th>End reason</th><th>Count</th></tr></thead>
+                <tbody><tr v-for="item in relayEndReasons" :key="`${item.gameId}-${item.reason}`"><th scope="row">{{ item.gameId }}</th><td>{{ item.reason }}</td><td>{{ formatObservabilityNumber(item.count) }}</td></tr></tbody>
+              </table>
+            </div>
+          </article>
+          <article v-if="kesslerInteractions.length" class="observability-card observability-card--full">
+            <div class="observability-card__header"><div><h2>Kessler interactions</h2><p>Interaction events returned for the selected game and mode filters.</p></div></div>
+            <div class="observability-table-wrap">
+              <table class="observability-table">
+                <thead><tr><th>Game</th><th>Interaction</th><th>Count</th></tr></thead>
+                <tbody><tr v-for="item in kesslerInteractions" :key="`${item.gameId}-${item.label}`"><th scope="row">{{ item.gameId }}</th><td>{{ item.label }}</td><td>{{ formatObservabilityNumber(item.count) }}</td></tr></tbody>
+              </table>
+            </div>
+          </article>
         </div>
 
         <div v-if="activeTab === 'players'" class="observability-grid">
@@ -501,12 +694,29 @@ onBeforeUnmount(() => detailController?.abort())
             <article class="observability-card observability-card--metric"><h3>Score</h3><span class="observability-value">{{ formatObservabilityNumber(sessionDetail.session.score) }}</span></article>
           </div>
           <div v-if="sessionDetail.session.details" class="observability-card"><div class="observability-card__header"><h3>Game details</h3></div><ul class="observability-inline-list"><li v-for="(value, key) in sessionDetail.session.details" :key="key"><span>{{ key }}</span><strong>{{ value ?? '—' }}</strong></li></ul></div>
-          <div class="observability-card"><div class="observability-card__header"><h3>Timeline</h3></div><ul class="observability-inline-list"><li v-for="item in sessionDetail.timeline" :key="item.id"><span>{{ formatDateTime(item.at) }} · {{ item.kind }}</span><strong>{{ item.detail || '—' }}</strong></li><li v-if="sessionDetail.timeline.length === 0" class="observability-table__muted">No timeline events returned.</li></ul></div>
-          <div class="observability-card"><div class="observability-card__header"><h3>Participants</h3></div><ul class="observability-inline-list"><li v-for="item in sessionDetail.participants" :key="item.label"><span>{{ item.label }}{{ item.bot ? ' · bot' : ' · human' }}</span><strong>{{ item.score ?? '—' }}</strong></li><li v-if="sessionDetail.participants.length === 0" class="observability-table__muted">No participant rows returned.</li></ul></div>
+          <div class="observability-card">
+            <div class="observability-card__header">
+              <div><h3>Timeline</h3><p>{{ sessionDetail.timeline.length }}<span v-if="sessionDetailWithExtras?.timelineTotal"> of {{ sessionDetailWithExtras?.timelineTotal }}</span> events loaded<span v-if="sessionDetailWithExtras?.timelineTruncated && !sessionDetailWithExtras?.timelineNextCursor"> · provider limit reached</span></p></div>
+              <button v-if="sessionDetailWithExtras?.timelineNextCursor" class="observability-button" type="button" :disabled="detailMoreLoading" @click="loadMoreSessionTimeline">{{ detailMoreLoading ? 'Loading…' : 'Load more' }}</button>
+            </div>
+            <ul class="observability-inline-list"><li v-for="item in sessionDetail.timeline" :key="item.id"><span>{{ formatDateTime(item.at) }} · {{ item.kind }}</span><strong>{{ item.detail || '—' }}</strong></li><li v-if="sessionDetail.timeline.length === 0" class="observability-table__muted">No timeline events returned.</li></ul>
+            <p v-if="detailMoreError" class="observability-error" role="alert">{{ detailMoreError }}</p>
+          </div>
+          <div class="observability-card">
+            <div class="observability-card__header"><div><h3>Participants</h3><p>{{ sessionDetail.participants.length }}<span v-if="sessionDetailWithExtras?.participantsTotal"> of {{ sessionDetailWithExtras?.participantsTotal }}</span> participants shown<span v-if="sessionDetailWithExtras?.participantsTruncated"> · provider limit reached</span></p></div></div>
+            <ul class="observability-inline-list"><li v-for="item in sessionDetail.participants" :key="item.label"><span>{{ item.label }}{{ item.bot ? ' · bot' : ' · human' }}</span><strong>{{ item.score ?? '—' }}</strong></li><li v-if="sessionDetail.participants.length === 0" class="observability-table__muted">No participant rows returned.</li></ul>
+          </div>
         </template>
         <template v-else-if="playerDetail">
           <div class="observability-grid"><article class="observability-card observability-card--metric"><h3>Sessions</h3><span class="observability-value">{{ playerDetail.player.sessions }}</span></article><article class="observability-card observability-card--metric"><h3>Play time</h3><span class="observability-value">{{ formatObservabilityNumber(playerDetail.player.playSeconds, 's') }}</span></article><article class="observability-card observability-card--metric"><h3>Journey</h3><span class="observability-value">{{ playerDetail.player.returning ? 'Returning' : 'New' }}</span></article></div>
-          <div class="observability-card"><div class="observability-card__header"><h3>Sessions</h3></div><ul class="observability-inline-list"><li v-for="session in playerDetail.sessions" :key="session.id"><span>{{ gameLabel(session.gameId) }} · {{ formatDateTime(session.startedAt) }}</span><strong>{{ session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</strong></li><li v-if="playerDetail.sessions.length === 0" class="observability-table__muted">No sessions returned.</li></ul></div>
+          <div class="observability-card">
+            <div class="observability-card__header">
+              <div><h3>Sessions</h3><p>{{ playerDetail.sessions.length }}<span v-if="playerDetailWithExtras?.sessionsTotal"> of {{ playerDetailWithExtras?.sessionsTotal }}</span> sessions loaded<span v-if="playerDetailWithExtras?.sessionsTruncated && !playerDetailWithExtras?.sessionsNextCursor"> · provider limit reached</span></p></div>
+              <button v-if="playerDetailWithExtras?.sessionsNextCursor" class="observability-button" type="button" :disabled="detailMoreLoading" @click="loadMorePlayerSessions">{{ detailMoreLoading ? 'Loading…' : 'Load more' }}</button>
+            </div>
+            <ul class="observability-inline-list"><li v-for="session in playerDetail.sessions" :key="session.id"><span>{{ gameLabel(session.gameId) }} · {{ formatDateTime(session.startedAt) }}</span><strong>{{ session.verification === 'server_verified' ? 'Server verified' : 'Client reported' }}</strong></li><li v-if="playerDetail.sessions.length === 0" class="observability-table__muted">No sessions returned.</li></ul>
+            <p v-if="detailMoreError" class="observability-error" role="alert">{{ detailMoreError }}</p>
+          </div>
         </template>
       </article>
     </div>

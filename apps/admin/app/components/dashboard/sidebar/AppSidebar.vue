@@ -160,8 +160,8 @@ const settingsItems = computed<NavItem[]>(() => [
                 "
               >
                 <img
-                  :src="adminAssetURL('portfolio-mark.svg')"
-                  alt=""
+                  :src="adminAssetURL('profile.webp')"
+                  :alt="`${title} profile`"
                   width="32"
                   height="32"
                   class="size-8 rounded-full"

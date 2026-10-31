@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { ObservabilityMetric } from '../../../shared/types/observability'
+import type { CloudflareReport, ObservabilityMetric } from '../../../shared/types/observability'
 import { Download, ExternalLink, RefreshCw } from '@lucide/vue'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { formatObservabilityMetric, formatObservabilityNumber, observabilityCoverageStatus, observabilityMetricTitle, useCloudflareObservability } from '@/composables/useObservability'
+import { aggregateCloudflareSeries, formatObservabilityMetric, formatObservabilityNumber, observabilityCoverageStatus, observabilityMetricTitle, useCloudflareObservability } from '@/composables/useObservability'
 
 const tabs = [
   { id: 'overview', label: 'Overview' },
@@ -68,7 +68,7 @@ const selectedMetrics = computed(() => {
   if (activeTab.value === 'services')
     return reportMetrics(report.services)
   if (activeTab.value === 'overview')
-    return reportMetrics([...report.compute, ...report.traffic, ...report.services], 8)
+    return preferredOverviewMetrics(report)
   return []
 })
 
@@ -77,51 +77,62 @@ function reportMetrics(metrics: ObservabilityMetric[], limit = 12) {
   return (accountMetrics.length ? accountMetrics : metrics).slice(0, limit)
 }
 
-const metricGroups = computed(() => {
+function allReportMetrics(report: CloudflareReport) {
+  return [
+    ...report.compute,
+    ...report.storage,
+    ...report.durableObjects,
+    ...report.traffic,
+    ...report.services,
+  ]
+}
+
+function preferredOverviewMetrics(report: CloudflareReport) {
+  const metrics = reportMetrics(allReportMetrics(report), 100)
+  const priorities = [
+    /request|invocation|visit/i,
+    /error|exception|failure|fail/i,
+    /cpu|compute|duration/i,
+    /traffic|bandwidth|egress|ingress|byte|storage/i,
+  ]
+  const selected: ObservabilityMetric[] = []
+  for (const pattern of priorities) {
+    const metric = metrics.find(candidate => !selected.some(item => item.key === candidate.key && item.resourceId === candidate.resourceId)
+      && pattern.test(`${candidate.key} ${candidate.label}`))
+    if (metric)
+      selected.push(metric)
+  }
+  for (const metric of metrics) {
+    if (selected.length >= 4)
+      break
+    if (!selected.some(item => item.key === metric.key && item.resourceId === metric.resourceId))
+      selected.push(metric)
+  }
+  return selected.slice(0, 4)
+}
+
+const chartMetric = computed<ObservabilityMetric | null>(() => {
   const report = data.value
   if (!report)
-    return []
-  return [
-    { label: 'Compute', metrics: reportMetrics(report.compute, 5) },
-    { label: 'Storage', metrics: reportMetrics([...report.storage, ...report.durableObjects], 5) },
-    { label: 'Traffic', metrics: reportMetrics(report.traffic, 5) },
-    { label: 'Services', metrics: reportMetrics(report.services, 5) },
-  ].filter(group => group.metrics.length > 0)
+    return null
+  const metrics = selectedMetrics.value.length ? selectedMetrics.value : reportMetrics(allReportMetrics(report), 100)
+  const hasSeries = (metric: ObservabilityMetric) => report.series.some(point => point.metric === metric.key
+    && (!metric.resourceId || point.resourceId === metric.resourceId))
+  return metrics.find(metric => !metric.resourceId && hasSeries(metric))
+    || metrics.find(hasSeries)
+    || null
 })
 
 const chartPoints = computed(() => {
   const report = data.value
   if (!report)
     return []
-  const selectedKeys = new Set(selectedMetrics.value.map(metric => metric.key))
-  const candidates = report.series.filter(point => selectedKeys.size === 0 || selectedKeys.has(point.metric))
-  const accountSeries = candidates.filter(point => !point.resourceId)
-  const firstScopedPoint = candidates.find(point => point.resourceId)
-  const source = accountSeries.length
-    ? accountSeries
-    : firstScopedPoint
-      ? candidates.filter(point => point.resourceId === firstScopedPoint.resourceId)
-      : candidates
-  if (source.length === 0)
+  const metric = chartMetric.value
+  if (!metric)
     return []
-
-  const sourceMetric = source[0]?.metric
-  const metricSeries = source.filter(point => point.metric === sourceMetric)
-  const bucketMs = range.value === '24h' ? 60 * 60 * 1000 : range.value === '7d' ? 12 * 60 * 60 * 1000 : 2 * 24 * 60 * 60 * 1000
-  const buckets = new Map<number, { total: number, count: number }>()
-  for (const point of metricSeries) {
-    const time = Date.parse(point.timestamp)
-    if (!Number.isFinite(time))
-      continue
-    const bucket = Math.floor(time / bucketMs) * bucketMs
-    const current = buckets.get(bucket) || { total: 0, count: 0 }
-    current.total += point.value
-    current.count += 1
-    buckets.set(bucket, current)
-  }
-  return [...buckets.entries()].sort(([left], [right]) => left - right).map(([time, bucket]) => ({
-    label: formatDate(new Date(time).toISOString()),
-    value: bucket.total / bucket.count,
+  return aggregateCloudflareSeries(report.series, metric, range.value).map(point => ({
+    label: formatChartDate(point.timestamp),
+    value: point.value,
   }))
 })
 
@@ -142,6 +153,15 @@ function metricReason(metric: ObservabilityMetric) {
 function formatDate(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date)
+}
+
+function formatChartDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.valueOf()))
+    return value
+  return new Intl.DateTimeFormat(undefined, range.value === '24h'
+    ? { hour: 'numeric', minute: '2-digit' }
+    : { month: 'short', day: 'numeric' }).format(date)
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -265,12 +285,12 @@ function billingUsageValue(value: number | null, unit: string) {
     <p v-else-if="!data" class="observability-empty">No Cloudflare report returned for this range.</p>
 
     <template v-if="data">
-      <div id="cloudflare-panel" role="tabpanel" :aria-labelledby="`cloudflare-tab-${activeTab}`" tabindex="0">
+      <div id="cloudflare-panel" class="observability-panel" role="tabpanel" :aria-labelledby="`cloudflare-tab-${activeTab}`" tabindex="0">
         <div class="observability-card observability-card--full">
           <div class="observability-card__header">
             <div>
               <h2>Source coverage</h2>
-              <p>Every badge reflects the provider response for this report window.</p>
+              <p>Provider status is reported for this window; open coverage for source details.</p>
             </div>
             <ObservabilityCoverage :coverage="data.coverage" />
           </div>
@@ -298,23 +318,12 @@ function billingUsageValue(value: number | null, unit: string) {
           <div class="observability-card__header">
             <div>
               <h2>{{ activeTab === 'overview' ? 'Usage trend' : `${tabs.find(tab => tab.id === activeTab)?.label} trend` }}</h2>
-              <p>Values are plotted from the returned series; missing provider data stays unavailable.</p>
+              <p v-if="chartMetric">{{ chartMetric.label }} · {{ scopeLabel }} · {{ chartMetric.unit || 'provider units' }}</p>
+              <p v-else>No single metric series is available for this section.</p>
             </div>
             <span class="observability-status" :data-state="reportStatus">{{ reportStatusLabel }}</span>
           </div>
-          <ObservabilityLineChart :points="chartPoints" />
-        </div>
-
-        <div v-if="activeTab === 'overview'" class="observability-grid">
-          <article v-for="group in metricGroups" :key="group.label" class="observability-card">
-            <div class="observability-card__header"><h2>{{ group.label }}</h2></div>
-            <ul class="observability-inline-list">
-              <li v-for="metric in group.metrics.slice(0, 5)" :key="`${group.label}-${metric.key}-${metric.resourceId || ''}`">
-                <span>{{ metric.label }}</span>
-                <strong :title="observabilityMetricTitle(metric)">{{ formatObservabilityMetric(metric) }}</strong>
-              </li>
-            </ul>
-          </article>
+          <ObservabilityLineChart :points="chartPoints" :unit="chartMetric?.unit" :metric-label="chartMetric?.label" />
         </div>
 
         <article v-if="activeTab !== 'billing'" class="observability-card observability-card--full">

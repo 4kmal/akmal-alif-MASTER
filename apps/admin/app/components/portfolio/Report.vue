@@ -1047,6 +1047,8 @@ onBeforeUnmount(() => {
       />
     </div>
 
+    <slot name="after-metrics" />
+
     <div v-if="error" class="portfolio-state portfolio-state--error" role="alert">
       <strong>Analytics unavailable</strong>
       <span>{{ error }}</span>

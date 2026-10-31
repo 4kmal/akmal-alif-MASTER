@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { formatObservabilityNumber } from '@/composables/useObservability'
 
 interface Point {
   label: string
@@ -9,8 +10,12 @@ interface Point {
 const props = withDefaults(defineProps<{
   points: Point[]
   emptyLabel?: string
+  unit?: string
+  metricLabel?: string
 }>(), {
   emptyLabel: 'No series returned for this range.',
+  unit: '',
+  metricLabel: 'Report trend',
 })
 
 const width = 720
@@ -35,12 +40,12 @@ const axisLabels = computed(() => plottedPoints.value.filter((_, index) => {
 }))
 const gridRows = computed(() => [0, 0.5, 1].map(ratio => ({
   y: padding.top + ratio * innerHeight,
-  label: new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(maxValue.value * (1 - ratio)),
+  label: formatObservabilityNumber(maxValue.value * (1 - ratio), props.unit),
 })))
 </script>
 
 <template>
-  <div class="observability-line-chart" :aria-label="emptyLabel">
+  <div class="observability-line-chart" :aria-label="points.length ? metricLabel : emptyLabel">
     <template v-if="points.length">
       <svg viewBox="0 0 720 220" role="img" aria-label="Report trend">
         <line
@@ -68,7 +73,7 @@ const gridRows = computed(() => [0, 0.5, 1].map(ratio => ({
           :cy="point.y"
           r="3.5"
         >
-          <title>{{ point.label }}: {{ point.value }}</title>
+          <title>{{ point.label }}: {{ formatObservabilityNumber(point.value, unit) }}</title>
         </circle>
         <text
           v-for="point in axisLabels"

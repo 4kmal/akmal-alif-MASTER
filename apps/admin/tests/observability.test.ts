@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  aggregateCloudflareSeries,
   appendObservabilityQuery,
   formatObservabilityMetric,
   formatObservabilityNumber,
@@ -32,6 +33,24 @@ describe('observability report helpers', () => {
     expect(formatObservabilityNumber(2 * 1024 ** 3, 'bytes')).toBe('2 GiB')
     expect(formatObservabilityNumber(125, 'seconds')).toBe('2.08 min')
     expect(formatObservabilityNumber(12_500, 'players')).toBe('12.5K players')
+    expect(formatObservabilityNumber(1_500, 'us')).toBe('1.5 ms')
+    expect(formatObservabilityNumber(1_500, 'ms')).toBe('1.5 s')
+    expect(formatObservabilityNumber(12, 'count')).toBe('12')
+    expect(formatObservabilityNumber(0.42, 'ratio')).toBe('42%')
+  })
+
+  it('aggregates additive account series without averaging and keeps gauge series at the latest sample', () => {
+    const series = [
+      { timestamp: '2026-10-31T00:05:00.000Z', metric: 'requests', value: 4, resourceId: 'worker-a' },
+      { timestamp: '2026-10-31T00:05:00.000Z', metric: 'requests', value: 6, resourceId: 'worker-b' },
+      { timestamp: '2026-10-31T00:25:00.000Z', metric: 'requests', value: 3, resourceId: 'worker-a' },
+      { timestamp: '2026-10-31T00:25:00.000Z', metric: 'requests', value: 7, resourceId: 'worker-b' },
+      { timestamp: '2026-10-31T00:05:00.000Z', metric: 'storage_bytes', value: 8, resourceId: 'worker-a' },
+      { timestamp: '2026-10-31T00:25:00.000Z', metric: 'storage_bytes', value: 12, resourceId: 'worker-a' },
+    ]
+
+    expect(aggregateCloudflareSeries(series, { key: 'requests', label: 'Requests', unit: 'count' }, '24h').map(point => point.value)).toEqual([20])
+    expect(aggregateCloudflareSeries(series, { key: 'storage_bytes', label: 'Storage', unit: 'bytes' }, '24h').map(point => point.value)).toEqual([12])
   })
 
   it('recognizes abort errors from replaced report requests', () => {
