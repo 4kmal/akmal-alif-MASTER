@@ -804,6 +804,8 @@ export function createAnalyticsClient(options = {}) {
   }
 
   function isContactTarget(element) {
+    // The arcade beside the chat is a game, not a contact interaction.
+    if (closestElement(element, '.arcade-panel, .arcade-overlay')) return false;
     return Boolean(closestElement(element, '.contact-page, .contact-wrapper, .contact-container'));
   }
 

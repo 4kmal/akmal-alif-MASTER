@@ -151,6 +151,24 @@
                 </div>
             </div>
         </div>
+
+        <!-- 3D Arcade: EXEPERT cabinet + 4K-BOY handheld -->
+        <section class="arcade-panel" id="arcadePanel" data-arcade aria-label="Arcade: EXEPERT and RELAY RUN">
+            <div class="arcade-stage" data-arcade-stage tabindex="0" aria-describedby="arcadeHelp"></div>
+            <div class="arcade-hud">
+                <span class="arcade-hud__title">4KMAL4LIF ARCADE</span>
+                <button class="arcade-hud__mute" type="button" data-arcade-mute aria-pressed="false">♪ ON</button>
+            </div>
+            <p class="arcade-hud__help" id="arcadeHelp">Drag to look around. Click a machine, then its buttons. Keys: arrows, Enter = START, Z / X = A / B, Esc = back.</p>
+            <div class="arcade-loading" data-arcade-loading aria-hidden="true">INSERT COIN<span>…</span></div>
+            <div class="arcade-fallback" data-arcade-fallback hidden>
+                <p class="arcade-fallback__title">EXEPERT</p>
+                <p>This arcade needs WebGL. You can still open the game directly.</p>
+                <a class="arcade-fallback__link" href="/video-games/exepert/">PLAY EXEPERT</a>
+            </div>
+            <button class="arcade-play" type="button" data-arcade-launch>▶ PLAY EXEPERT</button>
+        </section>
+        <button class="arcade-toggle" type="button" data-arcade-toggle aria-controls="arcadePanel" aria-expanded="false"><span>ARCADE</span></button>
     </div>
 
     <!-- Scripts -->
@@ -163,5 +181,6 @@
     <script src="../js/mobile-tracklist.js"></script>
     <script src="./text-vortex.js"></script>
     <script src="./contact-script.js"></script>
+    <script type="module" src="/contact/arcade/arcade.js"></script>
 </body>
 </html>
