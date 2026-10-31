@@ -12,6 +12,8 @@ const BLOG_ARTWORK_BY_SLUG = Object.freeze({
   'mods-worlds-remember-enrage-nightcoop': 'persistent-world',
   'dream-1-zero-shot-robotics': 'bimanual-robot',
   'dumb-money-gamestop-shared-story': 'shared-story',
+  'publictransport-my-live-data-deep-dive': 'live-bus-map',
+  'wonders-of-creation-al-qazwini': 'wonders-manuscript',
 });
 
 const BLOG_ARTWORK_SLUG_BY_NAME = Object.freeze(
@@ -21,6 +23,40 @@ const BLOG_ARTWORK_SLUG_BY_NAME = Object.freeze(
 const playbackBudgets = new Map();
 
 const BLOG_ARTWORK_SVGS = Object.freeze({
+  'live-bus-map': `
+    <svg class="blog-card-sprite blog-card-sprite--live-bus-map" data-blog-artwork="live-bus-map" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
+      <rect class="blog-artwork-bg" width="320" height="180" />
+      <rect class="blog-artwork-shadow" x="24" y="140" width="272" height="4" />
+      <rect class="blog-artwork-deep" x="48" y="28" width="224" height="106" />
+      <path class="blog-artwork-line" d="M48 72h224v5H48zM120 28h5v106h-5zM206 28h5v106h-5z" />
+      <path class="blog-artwork-mid" d="M62 112h46v8H62zM100 86h8v34h-8zM100 86h58v8h-58zM150 60h8v34h-8zM150 60h62v8h-62zM204 42h8v26h-8zM204 42h48v8h-48z" />
+      <rect class="blog-artwork-accent" x="56" y="108" width="12" height="12" />
+      <rect class="blog-artwork-accent" x="246" y="38" width="12" height="12" />
+      <rect class="blog-artwork-surface" x="138" y="54" width="32" height="18" />
+      <rect class="blog-artwork-deep" x="142" y="58" width="24" height="5" />
+      <rect class="blog-artwork-deep" x="142" y="70" width="6" height="5" /><rect class="blog-artwork-deep" x="160" y="70" width="6" height="5" />
+      <g class="blog-artwork-motion blog-artwork-motion--map" data-blog-artwork-motion>
+        <rect class="blog-artwork-accent" x="149" y="40" width="10" height="8" />
+      </g>
+    </svg>`,
+  'wonders-manuscript': `
+    <svg class="blog-card-sprite blog-card-sprite--wonders-manuscript" data-blog-artwork="wonders-manuscript" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
+      <rect class="blog-artwork-bg" width="320" height="180" />
+      <rect class="blog-artwork-shadow" x="40" y="141" width="240" height="4" />
+      <rect class="blog-artwork-deep" x="62" y="128" width="196" height="10" />
+      <rect class="blog-artwork-mid" x="70" y="92" width="86" height="38" />
+      <rect class="blog-artwork-mid" x="164" y="92" width="86" height="38" />
+      <rect class="blog-artwork-deep" x="156" y="88" width="8" height="46" />
+      <path class="blog-artwork-line" d="M80 102h60v4H80zM80 112h46v4H80zM174 102h60v4h-60zM174 112h52v4h-52z" />
+      <path class="blog-artwork-deep" d="M146 22h28v6h8v6h6v20h-6v6h-8v6h-28v-6h-8v-6h-6V34h6v-6h8z" />
+      <path class="blog-artwork-line" d="M124 42h72v4h-72z" />
+      <rect class="blog-artwork-accent" x="154" y="38" width="12" height="12" />
+      <path class="blog-artwork-mid" d="M66 46h12v6h10v6h12v6H88v6H76v-6h-6v-6h-4z" />
+      <rect class="blog-artwork-accent" x="226" y="40" width="6" height="6" /><rect class="blog-artwork-accent" x="246" y="58" width="6" height="6" />
+      <g class="blog-artwork-motion blog-artwork-motion--world" data-blog-artwork-motion>
+        <rect class="blog-artwork-accent" x="234" y="22" width="8" height="8" />
+      </g>
+    </svg>`,
   'robot-workstation': `
     <svg class="blog-card-sprite blog-card-sprite--robot-workstation" data-blog-artwork="robot-workstation" data-artwork-motion-state="paused" viewBox="0 0 320 180" role="presentation" aria-hidden="true" focusable="false">
       <rect class="blog-artwork-bg" width="320" height="180" />
@@ -219,6 +255,11 @@ const BLOG_FILTER_ICONS = Object.freeze({
       <rect x="2" y="3" width="7" height="6" fill="currentColor" /><rect x="11" y="11" width="7" height="6" fill="currentColor" />
       <path d="M9 6h2v2H9V6Zm0 6h2v2H9v-2Z" fill="var(--blog-accent)" /><path d="M6 9v2h8V9h2v4h-2v2H6v-2H4V9h2Z" fill="currentColor" />
     </svg>`,
+  'islamic-heritage': `
+    <svg class="blog-filter-icon blog-filter-icon--islamic-heritage" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M9 1h2v3H9V1ZM7 4h6v2h2v2h1v3H4V8h1V6h2V4ZM3 11h14v7H3v-7Z" fill="currentColor" />
+      <rect x="9" y="13" width="2" height="5" fill="var(--blog-accent)" />
+    </svg>`,
 });
 
 const BLOG_FILTER_ICON_ALIASES = Object.freeze({
@@ -236,6 +277,8 @@ const BLOG_FILTER_ICON_ALIASES = Object.freeze({
   'internet-culture': 'internet-culture',
   internetculture: 'internet-culture',
   internet: 'internet-culture',
+  'islamic-heritage': 'islamic-heritage',
+  heritage: 'islamic-heritage',
   technology: 'machine-learning',
   design: 'all',
   education: 'neuroscience',

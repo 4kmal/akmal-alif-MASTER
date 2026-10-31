@@ -1,6 +1,7 @@
 import type { DOMOutputSpec } from '@tiptap/pm/model'
 import type { BlogMediaAttrs } from '@/utils/blog-studio'
 import { mergeAttributes, Node } from '@tiptap/vue-3'
+import { blogDiagramPath, findBlogDiagram } from '#shared/utils/blog-diagrams'
 import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 
 function readMediaAttributes(element: HTMLElement) {
@@ -154,5 +155,45 @@ export const BlogYouTube = Node.create({
     if (title)
       children.push(['figcaption', {}, title])
     return ['figure', mergeAttributes({ 'data-blog-youtube': 'true', 'data-video-id': videoId, 'data-title': title }, HTMLAttributes), ...children]
+  },
+})
+
+export const BlogDiagram = Node.create({
+  name: 'blogDiagram',
+  group: 'block',
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return {
+      diagramKey: { default: '' },
+      caption: { default: '' },
+    }
+  },
+
+  parseHTML() {
+    return [{
+      tag: 'figure[data-blog-diagram]',
+      getAttrs: (element: HTMLElement) => ({
+        diagramKey: findBlogDiagram(element.dataset.diagramKey)?.key ?? '',
+        caption: element.dataset.caption || element.querySelector('figcaption')?.textContent || '',
+      }),
+    }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const diagram = findBlogDiagram(HTMLAttributes.diagramKey)
+    const caption = typeof HTMLAttributes.caption === 'string' ? HTMLAttributes.caption : ''
+    if (!diagram) {
+      return ['figure', { 'data-blog-diagram': 'true', 'data-diagram-key': '' }, [
+        'div',
+        { class: 'blog-diagram-node blog-diagram-node--invalid' },
+        'Diagram is not in the approved list',
+      ]]
+    }
+    const children: DOMOutputSpec[] = [['img', { src: blogDiagramPath(diagram.key), alt: caption || diagram.title, loading: 'lazy' }]]
+    if (caption)
+      children.push(['figcaption', {}, caption])
+    return ['figure', mergeAttributes({ 'data-blog-diagram': 'true', 'data-diagram-key': diagram.key, 'data-caption': caption, 'class': 'blog-diagram-node' }, HTMLAttributes), ...children]
   },
 })

@@ -226,6 +226,12 @@ test('maps only the three legacy pic3 cards while preserving custom and unknown 
     src: LEGACY_BLOG_THUMBNAIL,
     alt: 'Future post',
   });
+  assert.deepEqual(resolveBlogThumbnail({ slug: 'publictransport-my-live-data-deep-dive', cover_image_url: '' }), { type: 'sprite', artwork: 'live-bus-map' });
+  assert.deepEqual(resolveBlogThumbnail({ slug: 'wonders-of-creation-al-qazwini', cover_image_url: '' }), { type: 'sprite', artwork: 'wonders-manuscript' });
+  for (const artwork of ['live-bus-map', 'wonders-manuscript']) {
+    assert.match(renderBlogSprite(artwork), new RegExp(`data-blog-artwork="${artwork}"`));
+    assert.match(renderBlogSprite(artwork), /data-blog-artwork-motion/);
+  }
   assert.match(renderBlogSprite('hexapod'), /data-blog-artwork="hexapod"/);
   assert.match(renderBlogSprite('hexapod'), /aria-hidden="true"/);
   assert.doesNotMatch(renderBlogSprite('hexapod'), /<text\b/);
@@ -241,7 +247,7 @@ test('renders original filter icons only for the known category slugs', () => {
 
 test('owner-selected filter icons override slugs and cover every studio choice', () => {
   const choices = ['civic-tech', 'cybersecurity', 'game-development', 'robotics', 'anthem',
-    'internet-culture', 'psychology', 'machine-learning', 'neuroscience', 'technology',
+    'internet-culture', 'islamic-heritage', 'psychology', 'machine-learning', 'neuroscience', 'technology',
     'design', 'education', 'music', 'news', 'personal', 'projects', 'general'];
   for (const choice of choices) {
     assert.match(renderBlogFilterIcon('a-new-category', choice), /class="blog-filter-icon/);

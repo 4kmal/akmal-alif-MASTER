@@ -1841,6 +1841,160 @@ body.blog-page:has(.blog-outline-aside[hidden]) .blog-post-full {
     }
 }
 
+/* Diagrams are inlined SVG, so their colours come from these tokens and follow the site theme. */
+.blog-content figure.blog-diagram,
+.blog-diagram-dialog {
+    --diagram-paper: #fffdf8;
+    --diagram-ink: #1d1d1f;
+    --diagram-muted: #5b5b66;
+    --diagram-line: #dcd7ca;
+    --diagram-accent: var(--portfolio-accent, #fbda29);
+    --diagram-orange: #d9680a;
+    --diagram-orange-fill: #fff1e1;
+    --diagram-blue: #2563eb;
+    --diagram-blue-fill: #e8f0ff;
+    --diagram-green: #15803d;
+    --diagram-green-fill: #e6f7ec;
+    --diagram-green-soft: #f3fbf6;
+    --diagram-gray: #8a8a93;
+    --diagram-gray-fill: #f2f1ec;
+    --diagram-rail: #c2255c;
+    --diagram-map: #eef3e8;
+    --diagram-road: #ffffff;
+    --diagram-phone: #1d1d1f;
+}
+
+body.dark .blog-content figure.blog-diagram,
+body.dark .blog-diagram-dialog {
+    --diagram-paper: #16171b;
+    --diagram-ink: #f2f2f2;
+    --diagram-muted: #a7a7b1;
+    --diagram-line: #34353d;
+    --diagram-orange: #ff9b4a;
+    --diagram-orange-fill: #33230f;
+    --diagram-blue: #79a5ff;
+    --diagram-blue-fill: #172440;
+    --diagram-green: #4ade80;
+    --diagram-green-fill: #0f2a19;
+    --diagram-green-soft: #111f18;
+    --diagram-gray: #9a9aa3;
+    --diagram-gray-fill: #222227;
+    --diagram-rail: #ff5c93;
+    --diagram-map: #1f2a22;
+    --diagram-road: #2f3a32;
+    --diagram-phone: #000000;
+}
+
+.blog-content figure.blog-diagram {
+    margin-block: 2rem;
+}
+
+.blog-diagram__canvas {
+    overflow-x: auto;
+    background: var(--diagram-paper);
+    border: 1px solid var(--portfolio-border, rgba(42, 42, 42, 0.16));
+    border-radius: var(--portfolio-radius-nested, 16px);
+}
+
+.blog-diagram__canvas svg,
+.blog-diagram-dialog__stage svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.blog-diagram__controls {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.blog-diagram__button {
+    min-height: 36px;
+    padding: 6px 12px;
+    color: var(--portfolio-text, #2a2a2a);
+    background: var(--portfolio-surface-soft, #f5f5f5);
+    border: 1px solid var(--portfolio-border, rgba(42, 42, 42, 0.16));
+    border-radius: 10px;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.blog-diagram__fallback {
+    display: inline-block;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+}
+
+:is(.blog-diagram__canvas, .blog-diagram__button):focus-visible {
+    outline: 2px solid var(--portfolio-focus, #a06e00);
+    outline-offset: 3px;
+}
+
+.blog-diagram.is-paused svg * {
+    animation-play-state: paused !important;
+}
+
+.blog-diagram-dialog {
+    width: min(1280px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    padding: 16px;
+    overflow: auto;
+    color: var(--portfolio-text, #2a2a2a);
+    background: var(--diagram-paper);
+    border: 1px solid var(--portfolio-border, rgba(42, 42, 42, 0.16));
+    border-radius: 18px;
+}
+
+.blog-diagram-dialog::backdrop {
+    background: rgba(10, 10, 12, 0.72);
+}
+
+.blog-diagram-dialog__close {
+    display: block;
+    margin: 0 0 12px auto;
+}
+
+@media (max-width: 720px) {
+    .blog-diagram__canvas svg {
+        min-width: 760px;
+    }
+
+    .blog-diagram-dialog__stage svg {
+        min-width: 960px;
+    }
+}
+
+/* The reference list under a "Sources" heading reads like a bibliography. */
+.blog-post-full .blog-content h2#sources ~ ol {
+    font-size: 0.9em;
+    line-height: 1.6;
+    color: var(--portfolio-text-muted, #555);
+}
+
+.blog-post-full .blog-content h2#sources ~ ol li {
+    margin-bottom: 0.55em;
+    overflow-wrap: anywhere;
+}
+
+/* Callouts such as "Read the original post" are written as blockquotes in the studio. */
+.blog-post-full .blog-content blockquote {
+    margin-inline: 0;
+    padding: 14px 18px;
+    background: var(--portfolio-surface-soft, #f5f5f5);
+    border: 1px solid var(--portfolio-border, rgba(42, 42, 42, 0.16));
+    border-left: 4px solid var(--portfolio-accent, #fbda29);
+    border-radius: 12px;
+}
+
+.blog-post-full .blog-content blockquote > :last-child {
+    margin-bottom: 0;
+}
+
 /* YouTube markers stay inert until the reader explicitly requests the player. */
 .youtube-click-to-load {
     display: grid;

@@ -10,7 +10,8 @@ import TextAlign from '@tiptap/extension-text-align'
 import { TextStyleKit } from '@tiptap/extension-text-style'
 import StarterKit from '@tiptap/starter-kit'
 import { Extension, useEditor } from '@tiptap/vue-3'
-import { BlogGallery, BlogMedia, BlogYouTube } from '@/utils/blog-media-extension'
+import { findBlogDiagram } from '#shared/utils/blog-diagrams'
+import { BlogDiagram, BlogGallery, BlogMedia, BlogYouTube } from '@/utils/blog-media-extension'
 import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 
 export interface BlogTextMatch {
@@ -158,6 +159,7 @@ export function useBlogEditor(options: BlogEditorOptions) {
       BlogMedia,
       BlogGallery,
       BlogYouTube,
+      BlogDiagram,
     ],
     editorProps: {
       attributes: {
@@ -198,6 +200,13 @@ export function useBlogEditor(options: BlogEditorOptions) {
     if (!normalized)
       return false
     return editor.value.chain().focus().insertContent({ type: 'blogYouTube', attrs: { videoId: normalized, title: title.trim() } }).run()
+  }
+
+  function insertDiagram(diagramKey: string, caption = '') {
+    const diagram = findBlogDiagram(diagramKey)
+    if (!editor.value || !diagram)
+      return false
+    return editor.value.chain().focus().insertContent({ type: 'blogDiagram', attrs: { diagramKey: diagram.key, caption: caption.trim() } }).run()
   }
 
   function selectedMedia(): import('@/utils/blog-studio').BlogMediaAttrs | null {
@@ -242,5 +251,5 @@ export function useBlogEditor(options: BlogEditorOptions) {
     return true
   }
 
-  return { editor, insertMedia, insertGallery, insertYouTube, updateSelectedMedia, selectedMedia, findText, replaceText }
+  return { editor, insertMedia, insertGallery, insertYouTube, insertDiagram, updateSelectedMedia, selectedMedia, findText, replaceText }
 }

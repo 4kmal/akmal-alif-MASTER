@@ -1360,6 +1360,7 @@ const BLOG_CATEGORY_ICON_KEYS = new Set([
   'robotics',
   'anthem',
   'internet-culture',
+  'islamic-heritage',
   'psychology',
   'machine-learning',
   'neuroscience',

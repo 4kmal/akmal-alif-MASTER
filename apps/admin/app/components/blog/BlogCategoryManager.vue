@@ -11,6 +11,7 @@ const CATEGORY_ICON_KEYS = [
   'robotics',
   'anthem',
   'internet-culture',
+  'islamic-heritage',
   'psychology',
   'machine-learning',
   'neuroscience',

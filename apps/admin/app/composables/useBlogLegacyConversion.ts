@@ -1,9 +1,10 @@
 import type { JSONContent } from '@tiptap/vue-3'
 import type { LegacyConversionIssue, LegacyConversionResult } from '@/utils/blog-studio'
+import { findBlogDiagram } from '#shared/utils/blog-diagrams'
 import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 
 const UNSUPPORTED_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form', 'canvas', 'svg'])
-const BLOCK_NODE_TYPES = new Set(['blockquote', 'codeBlock', 'heading', 'horizontalRule', 'orderedList', 'paragraph', 'table', 'bulletList', 'blogMedia', 'blogGallery', 'blogYouTube'])
+const BLOCK_NODE_TYPES = new Set(['blockquote', 'codeBlock', 'heading', 'horizontalRule', 'orderedList', 'paragraph', 'table', 'bulletList', 'blogMedia', 'blogGallery', 'blogYouTube', 'blogDiagram'])
 const STRUCTURAL_TAGS = new Set(['address', 'aside', 'footer', 'header', 'main', 'nav'])
 
 function issueFor(issues: LegacyConversionIssue[], tag: string, message: string) {
@@ -58,6 +59,14 @@ function convertElement(element: Element, issues: LegacyConversionIssue[]): JSON
       return []
     }
     return [{ type: 'blogYouTube', attrs: { videoId, title: element.getAttribute('data-title') || element.querySelector('figcaption')?.textContent || '' } }]
+  }
+  if (tag === 'figure' && element.hasAttribute('data-blog-diagram')) {
+    const diagram = findBlogDiagram(element.getAttribute('data-diagram-key'))
+    if (!diagram) {
+      issueFor(issues, 'diagram', 'Diagram that is not in the approved list was skipped.')
+      return []
+    }
+    return [{ type: 'blogDiagram', attrs: { diagramKey: diagram.key, caption: element.getAttribute('data-caption') || element.querySelector('figcaption')?.textContent || '' } }]
   }
   const children = Array.from(element.childNodes).flatMap((child) => {
     if (child.nodeType === Node.TEXT_NODE) {

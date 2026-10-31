@@ -6,6 +6,7 @@ import type { BlogAsset, BlogDraft, BlogMediaAttrs, BlogPostDetail, BlogRevision
 import type { GallerySummary } from '@/utils/content-calendar'
 import { Archive, ArrowLeft, Check, Clock3, Download, ExternalLink, FileText, History, LoaderCircle, PanelRight, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Upload, X } from '@lucide/vue'
 import { EditorContent } from '@tiptap/vue-3'
+import { BLOG_DIAGRAMS, blogDiagramPath } from '#shared/utils/blog-diagrams'
 import { useBlogApi } from '@/composables/useBlogApi'
 import { useBlogAutosave } from '@/composables/useBlogAutosave'
 import { useBlogDocuments } from '@/composables/useBlogDocuments'
@@ -43,6 +44,10 @@ const youtubeDialogOpen = ref(false)
 const youtubeVideoId = ref('')
 const youtubeTitle = ref('')
 const youtubeError = ref('')
+const diagramDialogOpen = ref(false)
+const diagramKey = ref('')
+const diagramCaption = ref('')
+const diagramError = ref('')
 const selectedMediaAttrs = ref<BlogMediaAttrs | null>(null)
 const legacyReview = ref<LegacyConversionResult | null>(null)
 const legacyReviewOpen = ref(false)
@@ -600,6 +605,22 @@ function insertYouTube() {
   statusNotice.value = 'YouTube video inserted'
 }
 
+function openDiagramDialog() {
+  diagramKey.value = BLOG_DIAGRAMS[0]?.key ?? ''
+  diagramCaption.value = ''
+  diagramError.value = ''
+  diagramDialogOpen.value = true
+}
+
+function insertDiagram() {
+  if (!editorState.insertDiagram(diagramKey.value, diagramCaption.value)) {
+    diagramError.value = 'Choose a diagram from the approved list.'
+    return
+  }
+  diagramDialogOpen.value = false
+  statusNotice.value = 'Diagram inserted'
+}
+
 function insertAsset(asset: BlogAsset) {
   editorState.insertMedia({ assetId: asset.id, kind: asset.kind, src: asset.source_url, alt: asset.name, caption: '', width: 100, align: 'left' })
   mediaDialogOpen.value = false
@@ -789,7 +810,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </div>
     <template v-else>
       <section class="blog-editor-shell">
-        <BlogRibbon :editor="activeEditor" :find-text="editorState.findText" :replace-text="editorState.replaceText" @insert-media="openMediaDialog" @insert-gallery="openGalleryDialog" @insert-you-tube="openYouTubeDialog" />
+        <BlogRibbon :editor="activeEditor" :find-text="editorState.findText" :replace-text="editorState.replaceText" @insert-media="openMediaDialog" @insert-gallery="openGalleryDialog" @insert-you-tube="openYouTubeDialog" @insert-diagram="openDiagramDialog" />
         <div class="blog-editor-body">
           <div class="blog-editor-paper-wrap">
             <EditorContent :editor="editor" />
@@ -1232,6 +1253,36 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             type="submit" class="blog-button blog-button--primary"
           >
             Insert video
+          </button>
+        </div>
+      </form>
+    </BlogModal>
+    <BlogModal v-model:open="diagramDialogOpen" title="Insert diagram">
+      <div class="blog-modal__header">
+        <div>
+          <p class="blog-eyebrow">
+            Insert
+          </p>
+          <h2>Diagram</h2>
+        </div>
+        <button type="button" class="blog-icon-button" aria-label="Close diagram dialog" @click="diagramDialogOpen = false">
+          <X :size="18" />
+        </button>
+      </div>
+      <form class="blog-modal__form" @submit.prevent="insertDiagram">
+        <label class="blog-field"><span>Diagram</span>
+          <select v-model="diagramKey" required>
+            <option v-for="diagram in BLOG_DIAGRAMS" :key="diagram.key" :value="diagram.key">{{ diagram.title }}</option>
+          </select>
+        </label>
+        <img v-if="diagramKey" class="blog-diagram-dialog__preview" :src="blogDiagramPath(diagramKey)" alt="" loading="lazy">
+        <label class="blog-field"><span>Caption (optional)</span><input v-model="diagramCaption" maxlength="300" placeholder="Figure 1. How the data moves"></label>
+        <p v-if="diagramError" class="blog-alert blog-alert--error" role="alert">
+          {{ diagramError }}
+        </p>
+        <div class="blog-modal__footer">
+          <button type="submit" class="blog-button blog-button--primary">
+            Insert diagram
           </button>
         </div>
       </form>

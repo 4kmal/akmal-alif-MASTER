@@ -1,4 +1,5 @@
 import sanitizeHtml from 'sanitize-html'
+import { blogDiagramPath, findBlogDiagram } from '#shared/utils/blog-diagrams'
 
 export const BLOG_SCHEMA_VERSION = 1
 export const BLOG_MAX_CANONICAL_BYTES = 512 * 1024
@@ -434,6 +435,23 @@ async function renderNode(node: TiptapNode, state: RenderState, depth: number, o
       if (options.mode === 'preview')
         return `${openTag('div', attributes)}<p>${escapeHtml(title)}</p></div>`
       return `${openTag('div', attributes)}<button type="button">${escapeHtml(title)}</button></div>`
+    }
+    case 'blogDiagram': {
+      const diagram = findBlogDiagram(text(attrs?.diagramKey, 'blogDiagram diagramKey', 64))
+      if (!diagram)
+        fail('blogDiagram diagramKey must be an approved diagram')
+      const caption = attrs?.caption == null || attrs.caption === '' ? '' : text(attrs.caption, 'blogDiagram caption', 300)
+      const label = caption || diagram.title
+      const path = blogDiagramPath(diagram.key)
+      const attributes = {
+        'class': options.mode === 'preview' ? 'blog-diagram blog-diagram-static' : 'blog-diagram',
+        'data-diagram-key': diagram.key,
+        'aria-label': label,
+      }
+      const figcaption = caption ? `<figcaption>${escapeHtml(caption)}</figcaption>` : ''
+      if (options.mode === 'preview')
+        return `${openTag('figure', attributes)}<img src="${escapeHtml(path)}" alt="${escapeHtml(label)}" loading="lazy">${figcaption}</figure>`
+      return `${openTag('figure', attributes)}<noscript><a href="${escapeHtml(path)}">${escapeHtml(label)}</a></noscript>${figcaption}</figure>`
     }
     default:
       fail(`Unsupported document node: ${type}`)

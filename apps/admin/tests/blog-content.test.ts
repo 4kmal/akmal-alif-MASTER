@@ -50,6 +50,21 @@ describe('blog content boundaries', () => {
     expect(html).not.toContain('attacker.invalid')
   })
 
+  it('renders approved diagrams as a hydratable figure and rejects other keys', async () => {
+    const html = await renderTiptapDocument({
+      type: 'doc',
+      content: [{ type: 'blogDiagram', attrs: { diagramKey: 'publictransport-live-data', caption: 'Buses <live> & trains' } }],
+    })
+    expect(html).toBe('<figure class="blog-diagram" data-diagram-key="publictransport-live-data" aria-label="Buses &lt;live&gt; &amp; trains"><noscript><a href="/assets/blog/diagrams/publictransport-live-data.svg">Buses &lt;live&gt; &amp; trains</a></noscript><figcaption>Buses &lt;live&gt; &amp; trains</figcaption></figure>')
+
+    const preview = await renderTiptapDocument({ type: 'doc', content: [{ type: 'blogDiagram', attrs: { diagramKey: 'publictransport-live-data' } }] }, { mode: 'preview' })
+    expect(preview).toContain('class="blog-diagram blog-diagram-static"')
+    expect(preview).toContain('<img src="/assets/blog/diagrams/publictransport-live-data.svg"')
+
+    for (const diagramKey of ['unknown-diagram', '../publictransport-live-data', 'Publictransport-Live-Data', 42])
+      await expect(renderTiptapDocument({ type: 'doc', content: [{ type: 'blogDiagram', attrs: { diagramKey } }] })).rejects.toMatchObject({ statusCode: 400 })
+  })
+
   it('rejects unsupported nodes and unsafe formatting attributes', async () => {
     await expect(renderTiptapDocument({ type: 'doc', content: [{ type: 'script', content: [] }] })).rejects.toMatchObject({ statusCode: 400 })
     await expect(renderTiptapDocument({

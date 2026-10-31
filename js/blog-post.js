@@ -4,6 +4,7 @@ import {
   getBlogHeadings,
   renderBlogOutline,
 } from './blog-reader.js';
+import { disposeBlogDiagrams, initBlogDiagrams } from './blog-diagram.js';
 import { disposeBlogGalleries, initBlogGalleries } from './blog-gallery.js';
 import { disposeYouTubeEmbeds, initYouTubeEmbeds } from './youtube-embed.js';
 
@@ -121,6 +122,7 @@ export async function initBlogPost({
   clearBlogOutline(outline);
   disposeBlogGalleries(content);
   disposeYouTubeEmbeds(content);
+  disposeBlogDiagrams(content);
   content.innerHTML = '<p class="blog-state-message">Loading blog post...</p>';
 
   try {
@@ -144,6 +146,7 @@ export async function initBlogPost({
 
     initBlogGalleries(content);
     initYouTubeEmbeds(content);
+    initBlogDiagrams(content);
 
     const headings = getBlogHeadings(content);
     renderBlogOutline({ container: outline, headings, documentRef, windowRef });

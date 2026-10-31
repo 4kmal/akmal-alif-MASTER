@@ -1,0 +1,280 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="ptm-diagram" viewBox="0 0 1200 860" width="1200" height="860" role="img" aria-labelledby="ptm-title ptm-desc">
+  <title id="ptm-title">How publictransport.my puts Klang Valley transit on one live map</title>
+  <desc id="ptm-desc">Buses report GPS positions to Prasarana's automatic vehicle location (AVL) server. That server feeds two paths. In the first, Prasarana publishes the positions as GTFS Realtime on data.gov.my; publictransport.my's server polls that protobuf feed, turns it into JSON at /api/vehicles and pushes only the buses in each user's viewport over a WebSocket. In the second, the user's browser opens the same Socket.IO connection the MyRapid Bus Kiosk uses, asks for a fresh snapshot every five seconds and decompresses the gzip reply. Trains are not tracked live: a rail estimator places LRT, MRT and Monorail trains from published headways and KTM trains from timetables, served from /api/rail/movements with a 30-second cache. OpenStreetMap data becomes Protomaps vector tiles on publictransport.my's own tile server. The phone combines all of this in React and MapLibre GL, animates vehicles between updates and tells the rider when to leave.</desc>
+  <style>
+    .ptm-diagram { font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .ptm-diagram .bg { fill: var(--diagram-paper, #fffdf8); }
+    .ptm-diagram .h1 { font-size: 24px; font-weight: 800; fill: var(--diagram-ink, #1d1d1f); }
+    .ptm-diagram .sub { font-size: 13px; fill: var(--diagram-muted, #5b5b66); }
+    .ptm-diagram .col { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; fill: var(--diagram-muted, #5b5b66); }
+    .ptm-diagram .t { font-size: 14px; font-weight: 700; fill: var(--diagram-ink, #1d1d1f); }
+    .ptm-diagram .b { font-size: 11.5px; fill: var(--diagram-muted, #5b5b66); }
+    .ptm-diagram .m { font-family: "Departure Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 10.5px; fill: var(--diagram-ink, #1d1d1f); }
+    .ptm-diagram .lbl { font-size: 10.5px; fill: var(--diagram-muted, #5b5b66); }
+    .ptm-diagram .lane { font-size: 11.5px; font-weight: 600; fill: var(--diagram-orange, #d9680a); }
+    .ptm-diagram .box { stroke-width: 1.6; }
+    .ptm-diagram .ico { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .ptm-diagram .orange .box { fill: var(--diagram-orange-fill, #fff1e1); stroke: var(--diagram-orange, #d9680a); }
+    .ptm-diagram .orange .ico { stroke: var(--diagram-orange, #d9680a); }
+    .ptm-diagram .blue .box { fill: var(--diagram-blue-fill, #e8f0ff); stroke: var(--diagram-blue, #2563eb); }
+    .ptm-diagram .blue .ico { stroke: var(--diagram-blue, #2563eb); }
+    .ptm-diagram .green .box { fill: var(--diagram-green-fill, #e6f7ec); stroke: var(--diagram-green, #15803d); }
+    .ptm-diagram .green .ico { stroke: var(--diagram-green, #15803d); }
+    .ptm-diagram .gray .box { fill: var(--diagram-gray-fill, #f2f1ec); stroke: var(--diagram-gray, #8a8a93); }
+    .ptm-diagram .gray .ico { stroke: var(--diagram-gray, #8a8a93); }
+    .ptm-diagram .server { fill: var(--diagram-green-soft, #f3fbf6); stroke: var(--diagram-green, #15803d); stroke-width: 1.6; stroke-dasharray: 2 5; stroke-linecap: round; }
+    .ptm-diagram .server-label { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; fill: var(--diagram-green, #15803d); }
+    .ptm-diagram .flow { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+    .ptm-diagram .flow.orange { stroke: var(--diagram-orange, #d9680a); }
+    .ptm-diagram .flow.blue { stroke: var(--diagram-blue, #2563eb); }
+    .ptm-diagram .flow.green { stroke: var(--diagram-green, #15803d); }
+    .ptm-diagram .flow.static { stroke: var(--diagram-gray, #8a8a93); stroke-width: 1.6; }
+    .ptm-diagram .flow.est { stroke-dasharray: 7 6; animation: ptm-dash 1.1s linear infinite; }
+    .ptm-diagram .dot { stroke: var(--diagram-paper, #fffdf8); stroke-width: 1.5; }
+    .ptm-diagram .dot.orange { fill: var(--diagram-orange, #d9680a); }
+    .ptm-diagram .dot.blue { fill: var(--diagram-blue, #2563eb); }
+    .ptm-diagram .dot.green { fill: var(--diagram-green, #15803d); }
+    .ptm-diagram .ah-orange { fill: var(--diagram-orange, #d9680a); }
+    .ptm-diagram .ah-blue { fill: var(--diagram-blue, #2563eb); }
+    .ptm-diagram .ah-green { fill: var(--diagram-green, #15803d); }
+    .ptm-diagram .ah-gray { fill: var(--diagram-gray, #8a8a93); }
+    .ptm-diagram .step circle { fill: var(--diagram-accent, #fbda29); stroke: var(--diagram-ink, #1d1d1f); stroke-width: 1.4; }
+    .ptm-diagram .step text { font-size: 12px; font-weight: 800; fill: #1d1d1f; text-anchor: middle; dominant-baseline: central; }
+    .ptm-diagram .phone { fill: var(--diagram-phone, #1d1d1f); }
+    .ptm-diagram .screen { fill: var(--diagram-paper, #fffdf8); }
+    .ptm-diagram .map { fill: var(--diagram-map, #eef3e8); }
+    .ptm-diagram .road { stroke: var(--diagram-road, #ffffff); stroke-width: 5; stroke-linecap: round; fill: none; }
+    .ptm-diagram .route { stroke: var(--diagram-orange, #d9680a); stroke-width: 3; fill: none; stroke-linecap: round; }
+    .ptm-diagram .rail { stroke: var(--diagram-rail, #c2255c); stroke-width: 3; fill: none; stroke-dasharray: 6 5; animation: ptm-dash 1.4s linear infinite; }
+    .ptm-diagram .you { fill: var(--diagram-blue, #2563eb); }
+    .ptm-diagram .you-ring { fill: none; stroke: var(--diagram-blue, #2563eb); stroke-width: 2; }
+    .ptm-diagram .sheet { fill: var(--diagram-paper, #fffdf8); stroke: var(--diagram-line, #dcd7ca); stroke-width: 1.2; }
+    .ptm-diagram .chip { fill: var(--diagram-green, #15803d); }
+    .ptm-diagram .chip-text { font-size: 12px; font-weight: 800; fill: #ffffff; }
+    .ptm-diagram .live { fill: #c2255c; }
+    .ptm-diagram .live-text { font-size: 9px; font-weight: 800; fill: #ffffff; letter-spacing: 0.08em; }
+    .ptm-diagram .rule { stroke: var(--diagram-line, #dcd7ca); stroke-width: 1; }
+    @keyframes ptm-dash { to { stroke-dashoffset: -26; } }
+    @media (prefers-reduced-motion: reduce) {
+      .ptm-diagram .flow.est, .ptm-diagram .rail { animation: none; }
+    }
+  </style>
+  <defs>
+    <marker id="ptm-ah-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-orange" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="ptm-ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-blue" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="ptm-ah-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-green" d="M0 0 10 5 0 10z"/></marker>
+    <marker id="ptm-ah-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="ah-gray" d="M0 0 10 5 0 10z"/></marker>
+    <path id="ptm-p-bus-avl" d="M234 192H282"/>
+    <path id="ptm-p-avl-rt" d="M409 250V288"/>
+    <path id="ptm-p-avl-kiosk" d="M284 232H259V326H236"/>
+    <path id="ptm-p-lane" d="M409 140V114H1062V138"/>
+    <path id="ptm-p-rt-poll" d="M534 330H596"/>
+    <path id="ptm-p-poll-stream" d="M740 290V254"/>
+    <path id="ptm-p-stream-phone" d="M882 212H950"/>
+    <path id="ptm-p-route" d="M984 252C1022 292 1010 350 1058 376S1118 432 1142 492"/>
+    <path id="ptm-p-rail" d="M978 470C1030 446 1078 400 1146 296"/>
+  </defs>
+
+  <rect class="bg" width="1200" height="860" rx="20"/>
+  <text class="h1" x="24" y="40">How publictransport.my puts Klang Valley transit on one live map</text>
+  <text class="sub" x="24" y="62">Buses from two live Prasarana feeds, trains estimated from timetables, basemap from OpenStreetMap. Observed 31 Oct 2026, simplified.</text>
+  <text class="col" x="284" y="88">OPERATOR + GOVERNMENT</text>
+  <text class="col" x="952" y="88">YOUR PHONE</text>
+
+  <!-- Express lane: the browser talks to the kiosk's socket directly -->
+  <use href="#ptm-p-lane" xlink:href="#ptm-p-lane" class="flow orange" marker-end="url(#ptm-ah-orange)"/>
+  <text class="lane" x="448" y="106">Kiosk socket, opened directly by your browser · Engine.IO v3 · emit onFts-reload every 5 s → gzip snapshot</text>
+  <g class="step"><circle cx="430" cy="114" r="11"/><text x="430" y="114">2</text></g>
+
+  <!-- Column 1: the street and public pages -->
+  <g class="card orange">
+    <rect class="box" x="24" y="140" width="210" height="104" rx="12"/>
+    <g class="ico" transform="translate(196 152)"><rect x="0" y="2" width="22" height="15" rx="3"/><path d="M3 7h16M0 12h22"/><circle cx="5" cy="19" r="2"/><circle cx="17" cy="19" r="2"/></g>
+    <text class="t" x="38" y="166">RapidKL buses</text>
+    <text class="b" x="38" y="188">GPS unit on every bus</text>
+    <text class="b" x="38" y="205">position · bearing · speed</text>
+    <text class="m" x="38" y="226">tracked by Prasarana</text>
+  </g>
+  <g class="card orange">
+    <rect class="box" x="24" y="268" width="210" height="122" rx="12"/>
+    <g class="ico" transform="translate(196 280)"><rect x="0" y="0" width="22" height="16" rx="2"/><path d="M7 21h8M11 16v5"/></g>
+    <text class="t" x="38" y="294">MyRapid Bus Kiosk</text>
+    <text class="b" x="38" y="314">Prasarana's public web map</text>
+    <text class="m" x="38" y="334">Leaflet 1.3.4 + OSM tiles</text>
+    <text class="m" x="38" y="352">io.connect(…avl…)</text>
+    <text class="m" x="38" y="370">pako.inflate → markers</text>
+  </g>
+  <g class="card gray">
+    <rect class="box" x="24" y="420" width="210" height="100" rx="12"/>
+    <g class="ico" transform="translate(196 432)"><rect x="0" y="0" width="22" height="20" rx="2"/><path d="M0 6h22M7 6v14M14 6v14"/></g>
+    <text class="t" x="38" y="446">Operator timetables</text>
+    <text class="b" x="38" y="467">LRT · MRT · Monorail:</text>
+    <text class="b" x="38" y="483">a train every N minutes</text>
+    <text class="b" x="38" y="502">KTM: stop-by-stop times</text>
+  </g>
+  <g class="card gray">
+    <rect class="box" x="24" y="640" width="210" height="90" rx="12"/>
+    <g class="ico" transform="translate(196 652)"><path d="M0 3 7 0 15 3 22 0V17L15 20 7 17 0 20Z"/><path d="M7 0V17M15 3V20"/></g>
+    <text class="t" x="38" y="666">OpenStreetMap</text>
+    <text class="b" x="38" y="688">roads, stops, buildings</text>
+    <text class="b" x="38" y="705">open data (ODbL)</text>
+  </g>
+
+  <!-- Column 2: operator and government -->
+  <g class="card orange">
+    <rect class="box" x="284" y="140" width="250" height="110" rx="12"/>
+    <g class="ico" transform="translate(498 152)"><rect x="0" y="0" width="22" height="6" rx="2"/><rect x="0" y="8" width="22" height="6" rx="2"/><rect x="0" y="16" width="22" height="6" rx="2"/></g>
+    <text class="t" x="298" y="166">Prasarana AVL server</text>
+    <text class="b" x="298" y="187">automatic vehicle location</text>
+    <text class="m" x="298" y="208">Socket.IO · Engine.IO v3</text>
+    <text class="m" x="298" y="226">rapidbus-socketio-avl</text>
+    <text class="m" x="298" y="242">.prasarana.com.my</text>
+  </g>
+  <g class="card blue">
+    <rect class="box" x="284" y="290" width="250" height="100" rx="12"/>
+    <g class="ico" transform="translate(498 302)"><ellipse cx="11" cy="4" rx="11" ry="4"/><path d="M0 4v13c0 2 5 4 11 4s11-2 11-4V4M0 10c0 2 5 4 11 4s11-2 11-4"/></g>
+    <text class="t" x="298" y="316">data.gov.my GTFS-RT</text>
+    <text class="b" x="298" y="337">VehiclePosition feeds</text>
+    <text class="m" x="298" y="357">protobuf · CC BY 4.0</text>
+    <text class="b" x="298" y="377">Prasarana · KTMB · BAS.MY</text>
+  </g>
+  <g class="card blue">
+    <rect class="box" x="284" y="420" width="250" height="100" rx="12"/>
+    <g class="ico" transform="translate(498 432)"><ellipse cx="11" cy="4" rx="11" ry="4"/><path d="M0 4v13c0 2 5 4 11 4s11-2 11-4V4"/></g>
+    <text class="t" x="298" y="446">data.gov.my GTFS Static</text>
+    <text class="b" x="298" y="467">routes · stops · trips · shapes</text>
+    <text class="m" x="298" y="487">rapid-rail-kl · ktmb</text>
+    <text class="b" x="298" y="506">downloadable timetable ZIPs</text>
+  </g>
+
+  <!-- Column 3: publictransport.my -->
+  <rect class="server" x="580" y="140" width="320" height="620" rx="18"/>
+  <text class="server-label" x="598" y="160">PUBLICTRANSPORT.MY · BEHIND CLOUDFLARE</text>
+  <g class="card green">
+    <rect class="box" x="598" y="172" width="284" height="80" rx="12"/>
+    <g class="ico" transform="translate(846 182)"><path d="M0 11c4-8 7-8 11 0s7 8 11 0"/><path d="M0 4c4-6 7-6 11 0s7 6 11 0" opacity="0.5"/></g>
+    <text class="t" x="612" y="197">Vehicle stream</text>
+    <text class="m" x="612" y="218">WS /api/vehicles/stream</text>
+    <text class="b" x="612" y="238">sends only the buses in your view</text>
+  </g>
+  <g class="card green">
+    <rect class="box" x="598" y="290" width="284" height="80" rx="12"/>
+    <g class="ico" transform="translate(846 300)"><circle cx="11" cy="11" r="4"/><path d="M11 0v4M11 18v4M0 11h4M18 11h4M3 3l3 3M16 16l3 3M3 19l3-3M16 6l3-3"/></g>
+    <text class="t" x="612" y="315">Feed poller</text>
+    <text class="m" x="612" y="336">GET /api/vehicles</text>
+    <text class="b" x="612" y="356">decodes protobuf into compact JSON</text>
+  </g>
+  <g class="card green">
+    <rect class="box" x="598" y="420" width="284" height="100" rx="12"/>
+    <g class="ico" transform="translate(846 430)"><rect x="3" y="0" width="16" height="16" rx="4"/><path d="M6 21 3 24M16 21l3 3M7 11h0M15 11h0M3 6h16"/></g>
+    <text class="t" x="612" y="445">Rail estimator</text>
+    <text class="m" x="612" y="466">/api/rail/movements</text>
+    <text class="m" x="612" y="484">estimated: true · max-age=30</text>
+    <text class="b" x="612" y="505">headway (LRT/MRT) · schedule (KTM)</text>
+  </g>
+  <g class="card green">
+    <rect class="box" x="598" y="545" width="284" height="72" rx="12"/>
+    <g class="ico" transform="translate(846 555)"><path d="M6 22c0-6 10-6 10-12a5 5 0 1 0-10 0"/><circle cx="11" cy="10" r="1.5"/></g>
+    <text class="t" x="612" y="569">Trip planner</text>
+    <text class="m" x="612" y="589">/api/journeys · /api/board</text>
+    <text class="b" x="612" y="607">walk + bus + train, when to leave</text>
+  </g>
+  <g class="card green">
+    <rect class="box" x="598" y="640" width="284" height="90" rx="12"/>
+    <g class="ico" transform="translate(846 652)"><rect x="0" y="0" width="10" height="10" rx="1"/><rect x="12" y="0" width="10" height="10" rx="1"/><rect x="0" y="12" width="10" height="10" rx="1"/><rect x="12" y="12" width="10" height="10" rx="1"/></g>
+    <text class="t" x="612" y="666">Map tiles</text>
+    <text class="m" x="612" y="687">tiles.publictransport.my</text>
+    <text class="b" x="612" y="708">Protomaps vector tiles (PMTiles)</text>
+  </g>
+
+  <!-- Column 4: the phone -->
+  <rect class="phone" x="952" y="140" width="220" height="620" rx="34"/>
+  <rect class="screen" x="966" y="176" width="192" height="548" rx="18"/>
+  <rect class="phone" x="1032" y="150" width="60" height="12" rx="6"/>
+  <text class="t" x="978" y="200" style="font-size:12px">publictransport.my</text>
+  <rect class="live" x="1118" y="189" width="32" height="14" rx="7"/>
+  <text class="live-text" x="1123" y="199">LIVE</text>
+  <rect class="map" x="972" y="212" width="180" height="300" rx="10"/>
+  <path class="road" d="M972 300H1152M1040 212V512M972 430L1152 360"/>
+  <use href="#ptm-p-rail" xlink:href="#ptm-p-rail" class="rail"/>
+  <use href="#ptm-p-route" xlink:href="#ptm-p-route" class="route"/>
+  <rect x="1052" y="370" width="12" height="12" rx="2" class="sheet"/>
+  <circle class="you-ring" cx="1012" cy="410" r="7">
+    <animate attributeName="r" values="7;18" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.8;0" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <circle class="you" cx="1012" cy="410" r="6"/>
+  <g>
+    <rect x="-9" y="-6" width="18" height="12" rx="3" class="dot orange"/>
+    <animateMotion dur="9s" repeatCount="indefinite" rotate="auto"><mpath href="#ptm-p-route" xlink:href="#ptm-p-route"/></animateMotion>
+  </g>
+  <circle r="6" class="dot" style="fill:var(--diagram-rail, #c2255c)">
+    <animateMotion dur="7s" repeatCount="indefinite"><mpath href="#ptm-p-rail" xlink:href="#ptm-p-rail"/></animateMotion>
+  </circle>
+  <rect class="sheet" x="972" y="524" width="180" height="112" rx="12"/>
+  <text class="t" x="984" y="548" style="font-size:13px">Your bus</text>
+  <text class="b" x="984" y="567">3 stops away · live GPS</text>
+  <text class="lbl" x="984" y="583">next train: estimated</text>
+  <rect class="chip" x="984" y="596" width="122" height="28" rx="14"/>
+  <text class="chip-text" x="998" y="615">Leave in 2 min</text>
+  <text class="m" x="978" y="660">React + TanStack Query</text>
+  <text class="m" x="978" y="678">MapLibre GL + PMTiles</text>
+  <text class="m" x="978" y="696">requestAnimationFrame</text>
+  <text class="lbl" x="978" y="713">smooths motion between fixes</text>
+
+  <!-- Live flows -->
+  <use href="#ptm-p-bus-avl" xlink:href="#ptm-p-bus-avl" class="flow orange" marker-end="url(#ptm-ah-orange)"/>
+  <use href="#ptm-p-avl-rt" xlink:href="#ptm-p-avl-rt" class="flow orange" marker-end="url(#ptm-ah-orange)"/>
+  <use href="#ptm-p-avl-kiosk" xlink:href="#ptm-p-avl-kiosk" class="flow orange" marker-end="url(#ptm-ah-orange)"/>
+  <use href="#ptm-p-rt-poll" xlink:href="#ptm-p-rt-poll" class="flow blue" marker-end="url(#ptm-ah-blue)"/>
+  <use href="#ptm-p-poll-stream" xlink:href="#ptm-p-poll-stream" class="flow green" marker-end="url(#ptm-ah-green)"/>
+  <use href="#ptm-p-stream-phone" xlink:href="#ptm-p-stream-phone" class="flow green" marker-end="url(#ptm-ah-green)"/>
+  <path class="flow green est" d="M882 470H950" marker-end="url(#ptm-ah-green)"/>
+  <path class="flow green" d="M882 581H950" marker-end="url(#ptm-ah-green)" style="stroke-width:1.8"/>
+  <path class="flow static" d="M234 470H282" marker-end="url(#ptm-ah-gray)"/>
+  <path class="flow static" d="M534 470H596" marker-end="url(#ptm-ah-gray)"/>
+  <path class="flow static" d="M234 685H596" marker-end="url(#ptm-ah-gray)"/>
+  <path class="flow static" d="M882 685H950" marker-end="url(#ptm-ah-gray)"/>
+
+  <!-- Packets moving along the live paths -->
+  <circle r="4.5" class="dot orange"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#ptm-p-bus-avl" xlink:href="#ptm-p-bus-avl"/></animateMotion></circle>
+  <circle r="4.5" class="dot orange"><animateMotion dur="1.2s" repeatCount="indefinite"><mpath href="#ptm-p-avl-rt" xlink:href="#ptm-p-avl-rt"/></animateMotion></circle>
+  <circle r="4.5" class="dot orange"><animateMotion dur="2.2s" repeatCount="indefinite"><mpath href="#ptm-p-avl-kiosk" xlink:href="#ptm-p-avl-kiosk"/></animateMotion></circle>
+  <circle r="4.5" class="dot orange"><animateMotion dur="5s" repeatCount="indefinite"><mpath href="#ptm-p-lane" xlink:href="#ptm-p-lane"/></animateMotion></circle>
+  <circle r="4.5" class="dot orange"><animateMotion dur="5s" begin="2.5s" repeatCount="indefinite"><mpath href="#ptm-p-lane" xlink:href="#ptm-p-lane"/></animateMotion></circle>
+  <circle r="4.5" class="dot blue"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath href="#ptm-p-rt-poll" xlink:href="#ptm-p-rt-poll"/></animateMotion></circle>
+  <circle r="4.5" class="dot green"><animateMotion dur="1.2s" repeatCount="indefinite"><mpath href="#ptm-p-poll-stream" xlink:href="#ptm-p-poll-stream"/></animateMotion></circle>
+  <circle r="4.5" class="dot green"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#ptm-p-stream-phone" xlink:href="#ptm-p-stream-phone"/></animateMotion></circle>
+
+  <!-- Flow labels and numbered steps -->
+  <g class="step"><circle cx="259" cy="174" r="11"/><text x="259" y="174">1</text></g>
+  <text class="lbl" x="259" y="210" text-anchor="middle">GPS</text>
+  <text class="lbl" x="418" y="273">publishes</text>
+  <g class="step"><circle cx="566" cy="312" r="11"/><text x="566" y="312">3</text></g>
+  <text class="lbl" x="566" y="348" text-anchor="middle">polls</text>
+  <text class="lbl" x="748" y="276">JSON</text>
+  <g class="step"><circle cx="916" cy="194" r="11"/><text x="916" y="194">4</text></g>
+  <text class="lbl" x="916" y="230" text-anchor="middle">in view</text>
+  <text class="lbl" x="259" y="460" text-anchor="middle">GTFS</text>
+  <text class="lbl" x="566" y="460" text-anchor="middle">GTFS</text>
+  <g class="step"><circle cx="916" cy="452" r="11"/><text x="916" y="452">5</text></g>
+  <text class="lbl" x="916" y="488" text-anchor="middle">30 s</text>
+  <g class="step"><circle cx="916" cy="563" r="11"/><text x="916" y="563">7</text></g>
+  <text class="lbl" x="916" y="599" text-anchor="middle">plans</text>
+  <g class="step"><circle cx="417" cy="668" r="11"/><text x="417" y="668">6</text></g>
+  <text class="lbl" x="434" y="672">OSM data → vector tiles</text>
+  <text class="lbl" x="916" y="703" text-anchor="middle">tiles</text>
+
+  <!-- Legend -->
+  <line class="rule" x1="24" y1="772" x2="1176" y2="772"/>
+  <path class="flow orange" d="M24 800H64"/>
+  <circle r="4.5" class="dot orange" cx="44" cy="800"/>
+  <text class="b" x="74" y="804">Live GPS positions</text>
+  <path class="flow green" d="M224 800H264" style="stroke-dasharray:7 6"/>
+  <text class="b" x="274" y="804">Estimated from timetables</text>
+  <path class="flow static" d="M454 800H494"/>
+  <text class="b" x="504" y="804">Static or cached data</text>
+  <g class="step"><circle cx="672" cy="800" r="11"/><text x="672" y="800">1</text></g>
+  <text class="b" x="690" y="804">Steps explained in the article</text>
+  <text class="lbl" x="24" y="838">Sources: publictransport.my network requests and JavaScript bundle, the MyRapid Bus Kiosk page source and data.gov.my documentation, observed 31 October 2026.</text>
+</svg>
