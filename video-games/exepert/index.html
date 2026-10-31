@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>EXEPERT · Kessler IV</title>
+  <meta name="description" content="EXEPERT is a browser arena shooter on Kessler IV. Play solo against bots or squad up with friends.">
+  <link rel="icon" href="/icon/ig.ico" type="image/x-icon">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600&family=Martian+Mono:wdth,wght@75..112.5,300..600&family=Unbounded:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="./exepert.css">
+</head>
+<body>
+  <canvas id="gl" aria-label="EXEPERT game view"></canvas>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="hud" hidden>
+    <div class="compass" aria-hidden="true"><div class="compass__tape" id="compassTape"></div><div class="compass__pin"></div><div class="compass__deg" id="compassDeg">000</div></div>
+    <div class="objective" id="objective"></div>
+    <canvas class="minimap" id="minimap" width="200" height="200" aria-hidden="true"></canvas>
+    <ol class="feed" id="feed" aria-live="polite"></ol>
+    <div class="crosshair" id="crosshair" aria-hidden="true"><i></i><i></i><i></i><i></i><b class="hitmark" id="hitmark"></b></div>
+    <div class="damage-ring" id="damageRing" aria-hidden="true"></div>
+    <div class="vignette" id="vignette" aria-hidden="true"></div>
+    <div class="center-msg" id="centerMsg" aria-live="assertive"></div>
+    <div class="toast" id="toast" aria-live="polite"></div>
+    <div class="storm" id="storm" hidden>RELAY STORM · RETURN TO THE SECTOR <span id="stormT">5</span></div>
+
+    <div class="vitals">
+      <div class="vitals__row"><span class="tag">HP</span><div class="bar"><div class="bar__fill" id="hpFill"></div><div class="bar__shield" id="shieldFill"></div></div><span class="num" id="hpNum">100</span></div>
+      <div class="abilities">
+        <div class="ability" id="abDash"><span class="key">Q</span><span class="lbl">PHASE DASH</span><div class="cd" id="dashCd"></div></div>
+        <div class="ability" id="abNade"><span class="key">G</span><span class="lbl">FRAG ×<b id="nadeN">2</b></span></div>
+      </div>
+    </div>
+    <div class="weapon">
+      <div class="weapon__slots" id="slots"></div>
+      <div class="weapon__name" id="wName">VX-9 BREACH</div>
+      <div class="weapon__ammo"><span id="ammo">32</span><small id="mag">/ 32</small></div>
+      <div class="heat" id="heat" hidden><div class="heat__fill" id="heatFill"></div></div>
+      <div class="weapon__state" id="wState"></div>
+    </div>
+    <div class="extra" id="extraHud"></div>
+  </div>
+
+  <div class="scoreboard" id="scoreboard" hidden><div class="scoreboard__inner" id="scoreboardInner"></div></div>
+
+  <!-- ===================== Overlays ===================== -->
+  <div class="screen" id="loading">
+    <div class="loading">
+      <p class="eyebrow">// DEPLOYMENT · KESSLER IV</p>
+      <h1 class="logo">EXEPERT</h1>
+      <p class="loading__status" id="loadStatus">GENERATING SURFACE GEOMETRY</p>
+      <div class="loading__bar"><div id="loadBar"></div></div>
+      <p class="loading__tip" id="loadTip"></p>
+    </div>
+  </div>
+
+  <div class="screen" id="menu" hidden>
+    <div class="menu">
+      <header class="menu__head">
+        <p class="eyebrow">// 4KMAL4LIF ARCADE · CARTRIDGE 01</p>
+        <h1 class="logo">EXEPERT</h1>
+        <p class="menu__tag">Marathon × Cyberpunk × Battlefield × Battlefront × CoD × Titanfall. First map: <b>Kessler IV</b>.</p>
+      </header>
+
+      <section class="panel" data-view="home">
+        <label class="field"><span>CALLSIGN</span><input id="callsign" maxlength="16" autocomplete="off" spellcheck="false" placeholder="RUNNER"></label>
+        <div class="menu__grid">
+          <button class="btn btn--primary" data-go="solo">SOLO VS BOTS</button>
+          <button class="btn" data-act="quickplay">QUICK PLAY <small>online</small></button>
+          <button class="btn" data-act="create">CREATE SQUAD <small>private room</small></button>
+          <div class="join"><input id="joinCode" maxlength="5" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Room code"><button class="btn" data-act="join">JOIN</button></div>
+          <button class="btn" data-go="loadout">LOADOUT</button>
+          <button class="btn" data-go="settings">SETTINGS</button>
+          <button class="btn btn--ghost" data-act="exit" id="exitBtn">EXIT TO ARCADE</button>
+        </div>
+        <p class="menu__note" id="menuNote"></p>
+        <p class="menu__online" id="onlineStatus"></p>
+      </section>
+
+      <section class="panel" data-view="solo" hidden>
+        <h2>SOLO VS BOTS</h2>
+        <div class="choice" id="modeChoice" role="radiogroup" aria-label="Mode"></div>
+        <div class="choice" id="sectorChoice" role="radiogroup" aria-label="Sector"></div>
+        <div class="row">
+          <label class="field field--inline"><span>DIFFICULTY</span><select id="difficulty"><option value="easy">RECRUIT</option><option value="normal" selected>VETERAN</option><option value="hard">EXEPERT</option></select></label>
+          <label class="field field--inline"><span>BOTS</span><select id="botCount"><option value="auto" selected>AUTO</option><option>0</option><option>3</option><option>5</option><option>7</option><option>9</option><option>11</option></select></label>
+        </div>
+        <div class="row"><button class="btn" data-go="home">BACK</button><button class="btn btn--primary" data-act="solo">DEPLOY</button></div>
+      </section>
+
+      <section class="panel" data-view="loadout" hidden>
+        <h2>LOADOUT</h2>
+        <p class="hint">Pick two. 1 / 2 or the mouse wheel swaps in the field.</p>
+        <div class="loadout" id="loadoutList"></div>
+        <div class="row"><button class="btn" data-go="home">DONE</button></div>
+      </section>
+
+      <section class="panel" data-view="settings" hidden>
+        <h2>SETTINGS</h2>
+        <label class="field field--range"><span>LOOK SENSITIVITY</span><input type="range" id="sens" min="0.2" max="3" step="0.05"><output id="sensOut"></output></label>
+        <label class="field field--range"><span>FIELD OF VIEW</span><input type="range" id="fov" min="70" max="110" step="1"><output id="fovOut"></output></label>
+        <label class="field field--range"><span>VOLUME</span><input type="range" id="vol" min="0" max="1" step="0.05"><output id="volOut"></output></label>
+        <div class="row">
+          <label class="field field--inline"><span>QUALITY</span><select id="quality"><option value="low">LOW</option><option value="medium">MEDIUM</option><option value="high">HIGH</option></select></label>
+          <label class="check"><input type="checkbox" id="invertY"> INVERT Y</label>
+          <label class="check"><input type="checkbox" id="toggleSprint"> TOGGLE SPRINT</label>
+        </div>
+        <div class="row"><button class="btn" data-go="back">BACK</button></div>
+      </section>
+
+      <section class="panel" data-view="lobby" hidden>
+        <h2>SQUAD ROOM <span class="code" id="lobbyCode">-----</span></h2>
+        <div class="row"><button class="btn" data-act="copy">COPY INVITE LINK</button><span class="hint" id="copyNote"></span></div>
+        <div class="lobby" id="lobbyList"></div>
+        <div class="row" id="hostRow">
+          <label class="field field--inline"><span>MODE</span><select id="lobbyMode"></select></label>
+          <label class="field field--inline"><span>SECTOR</span><select id="lobbySector"></select></label>
+          <label class="field field--inline"><span>BOTS</span><select id="lobbyBots"><option value="auto">AUTO</option><option>0</option><option>2</option><option>4</option><option>6</option><option>8</option></select></label>
+          <label class="field field--inline"><span>DIFFICULTY</span><select id="lobbyDiff"><option value="easy">RECRUIT</option><option value="normal">VETERAN</option><option value="hard">EXEPERT</option></select></label>
+        </div>
+        <div class="row"><button class="btn" data-act="leave">LEAVE</button><button class="btn" data-act="swapTeam">SWITCH TEAM</button><button class="btn btn--primary" data-act="start" id="startBtn">START MATCH</button></div>
+        <p class="hint" id="lobbyHint">Warm up while you wait. The host starts the match.</p>
+      </section>
+
+      <section class="panel" data-view="pause" hidden>
+        <h2>PAUSED <span class="code" id="pauseCode"></span></h2>
+        <p class="hint">The match keeps running. Click RESUME to jump back in.</p>
+        <div class="menu__grid">
+          <button class="btn btn--primary" data-act="resume">RESUME</button>
+          <button class="btn" data-act="lobbyView" id="lobbyBtn" hidden>SQUAD ROOM</button>
+          <button class="btn" data-go="loadout">LOADOUT</button>
+          <button class="btn" data-go="settings">SETTINGS</button>
+          <button class="btn" data-act="copy" id="pauseInvite" hidden>COPY INVITE LINK</button>
+          <button class="btn" data-act="leave">LEAVE MATCH</button>
+          <button class="btn btn--ghost" data-act="exit" id="exitBtn2">EXIT TO ARCADE</button>
+        </div>
+      </section>
+
+      <section class="panel" data-view="controls-touch" hidden>
+        <h2>HEADS UP</h2>
+        <p class="hint">EXEPERT is built for a keyboard and mouse or a gamepad. Touch controls are not in yet.</p>
+        <div class="row"><button class="btn" data-go="home">OK</button></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="screen screen--clear" id="clickToPlay" hidden>
+    <button class="deploy" id="deployBtn"><span>CLICK TO DEPLOY</span><small>WASD move · SPACE jump ×2 · SHIFT sprint · C slide · Q dash · G frag · R reload · TAB scores · ESC menu</small></button>
+  </div>
+
+  <div class="screen screen--dim" id="post" hidden><div class="post" id="postInner"></div></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

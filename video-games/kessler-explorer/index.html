@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Kessler IV Explorer</title>
+  <meta name="description" content="A holographic 3D surface map of three fictional zones, with contour terrain, structures, regions, points of interest, hot zones and moving patrol contacts.">
+  <link rel="icon" href="../../icon/ig.ico" type="image/x-icon">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500&family=Martian+Mono:wdth,wght@75..112.5,300..600&family=Unbounded:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="./kessler.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="gl" aria-label="3D surface map. Drag to pan, right-drag to rotate, scroll to zoom."></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <div id="watermark" aria-hidden="true">BASTION</div>
+  <div id="labels"></div>
+
+  <button id="compass" type="button" aria-label="Compass heading. Select to face north.">
+    <span class="c-base"></span>
+    <span id="c-tape"></span>
+    <span class="c-center"><span class="c-needle"></span><b id="c-card">N</b><span id="c-deg">000°</span></span>
+  </button>
+
+  <section id="left" aria-label="Map layers and sector data">
+    <div class="hud-eyebrow"><span>MAP LAYERS</span><span>04</span></div>
+    <button id="layers-toggle" class="panel" type="button" aria-expanded="false" aria-controls="layers">
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 15 5.5 8 9 1 5.5z M1 8.5 8 12l7-3.5 M1 11.5 8 15l7-3.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+      LAYERS
+    </button>
+    <div id="layers" class="panel">
+      <label class="layer"><input type="checkbox" id="ly-poi" checked><span class="box"></span><span class="ln">POINTS OF INTEREST</span><span class="lc" id="lc-poi">00</span></label>
+      <div class="legend" id="poi-legend"></div>
+      <label class="layer"><input type="checkbox" id="ly-regions" checked><span class="box"></span><span class="ln">REGIONS</span><span class="lc" id="lc-regions">00</span></label>
+      <label class="layer"><input type="checkbox" id="ly-hot"><span class="box"></span><span class="ln">HOT ZONES</span><span class="lc" id="lc-hot">00</span></label>
+      <label class="layer"><input type="checkbox" id="ly-contacts" checked><span class="box"></span><span class="ln">CONTACTS</span><span class="lc" id="lc-contacts">00</span></label>
+    </div>
+    <dl id="sector" class="panel">
+      <div><dt>SECTOR</dt><dd id="s-code">—</dd></div>
+      <div><dt>CREW MAX</dt><dd id="s-crew">—</dd></div>
+      <div><dt>REGIONS</dt><dd id="s-regions">—</dd></div>
+      <div><dt>NODES LOGGED</dt><dd id="s-nodes">—</dd></div>
+      <div><dt>STRUCTURES</dt><dd id="s-struct">—</dd></div>
+      <div><dt>PEAK ELEV</dt><dd id="s-peak">—</dd></div>
+    </dl>
+  </section>
+
+  <section id="right" aria-label="Deployment zone">
+    <div class="hud-eyebrow"><span>DEPLOYMENT ZONE</span><span id="zone-idx">01/03</span></div>
+    <div id="deploy" class="panel">
+      <div class="dz-row">
+        <button class="dz-btn dz-cycle" id="dz-prev" type="button" aria-label="Previous zone">‹</button>
+        <h1 id="dz-name">BASTION</h1>
+        <button class="dz-btn dz-cycle" id="dz-next" type="button" aria-label="Next zone">›</button>
+        <button class="dz-btn" id="dz-more" type="button" aria-expanded="false" aria-controls="dz-brief">[+]</button>
+      </div>
+      <div id="dz-brief" hidden>
+        <span class="eyebrow" id="dz-code">KS-IV/BA</span>
+        <p id="dz-blurb"></p>
+      </div>
+    </div>
+    <aside id="intel" class="panel" hidden aria-live="polite">
+      <div class="in-head"><span class="eyebrow" id="in-kind">REGION</span><span class="eyebrow" id="in-idx">01/06</span><button id="in-close" type="button" aria-label="Close details">×</button></div>
+      <h2 id="in-name">—</h2>
+      <span id="in-chip" class="chip">—</span>
+      <dl id="in-data"></dl>
+      <p id="in-desc"></p>
+      <div id="in-nodes-wrap"><div class="eyebrow">NODES IN RANGE</div><ul id="in-nodes"></ul></div>
+      <div class="in-foot"><button id="in-prev" type="button">← PREV</button><button id="in-next" type="button">NEXT →</button></div>
+    </aside>
+    <div id="zones" aria-label="Other zones"></div>
+  </section>
+
+  <div id="view" class="panel" aria-label="View controls">
+    <button class="vbtn" id="v-reset" type="button" title="Recenter (R)" aria-label="Recenter map">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 0v4M8 12v4M0 8h4M12 8h4" stroke="currentColor" stroke-width="1.3"/></svg>
+    </button>
+    <button class="vbtn" id="v-tilt" type="button" title="Toggle tilt (T)" aria-label="Toggle between tilted and top-down view">2D</button>
+    <button class="vbtn" id="v-in" type="button" title="Zoom in (+)" aria-label="Zoom in">+</button>
+    <div id="v-rail" role="slider" tabindex="0" aria-label="Zoom" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><i id="v-fill"></i></div>
+    <button class="vbtn" id="v-out" type="button" title="Zoom out (−)" aria-label="Zoom out">−</button>
+  </div>
+
+  <div id="readout" class="panel">
+    <div class="ro-row"><span class="eyebrow">CURSOR</span><span id="ro-grid">GR ---- ----</span><span id="ro-elev">— M</span></div>
+    <div class="scale"><div id="scale-bar" style="width:80px"></div><span id="scale-label">— M</span></div>
+    <div class="ro-meta">CONTOUR INTERVAL <b id="ro-ci">—</b> · INDEX <b id="ro-idx">—</b><span id="ro-water"></span></div>
+    <div class="ro-meta ro-hint" id="ro-hint">DRAG PAN · RIGHT-DRAG ROTATE · WHEEL ZOOM · Q/E TURN</div>
+  </div>
+
+  <div id="player" class="panel" aria-label="Ambient signal player">
+    <button class="pbtn" id="p-prev" type="button" aria-label="Previous signal"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1v10" stroke="currentColor" stroke-width="1.4"/><path d="M11 1 4 6l7 5z" fill="currentColor"/></svg></button>
+    <button class="pbtn pbtn--play" id="p-play" type="button" aria-label="Play ambient signal"><svg viewBox="0 0 12 12" aria-hidden="true" id="p-icon"><path d="M2.5 1 11 6l-8.5 5z" fill="currentColor"/></svg></button>
+    <button class="pbtn" id="p-next" type="button" aria-label="Next signal"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 1v10" stroke="currentColor" stroke-width="1.4"/><path d="M1 1l7 5-7 5z" fill="currentColor"/></svg></button>
+    <div class="p-meta">
+      <div class="p-row"><span class="p-dot" aria-hidden="true">···</span><span id="p-title">ORBITAL DRIFT</span><span id="p-time">1/3 · 00:00 / LIVE</span></div>
+      <canvas id="p-viz" height="28"></canvas>
+    </div>
+  </div>
+
+  <div id="boot" role="status">
+    <div class="boot-inner">
+      <div class="boot-eyebrow">// SURFACE DATA · KESSLER IV</div>
+      <div id="boot-name">BASTION</div>
+      <div id="boot-status">DECODING SURFACE GEOMETRY…</div>
+      <div id="boot-bar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- three.js r128 (UMD build defines the THREE global) + bloom postprocessing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script type="module" src="./kessler-main.js"></script>
+</body>
+</html>

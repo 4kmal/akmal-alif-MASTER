@@ -22,7 +22,21 @@
       "name": "EVENT_RATE_LIMITER",
       "namespace_id": "74102601",
       "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "EXEPERT_RATE_LIMITER",
+      "namespace_id": "74102602",
+      "simple": { "limit": 20, "period": 60 }
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "EXEPERT_ROOMS", "class_name": "ExepertRoom" },
+      { "name": "EXEPERT_LOBBY", "class_name": "ExepertLobby" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1-exepert", "new_sqlite_classes": ["ExepertRoom", "ExepertLobby"] }
   ],
   "routes": [
     {

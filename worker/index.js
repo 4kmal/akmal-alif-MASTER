@@ -905,6 +905,11 @@ export async function handleRequest(request, env, ctx) {
     return handleAdminGateway(request, env);
   }
 
+  if (url.pathname === '/api/exepert' || url.pathname.startsWith('/api/exepert/')) {
+    const { handleExepert } = await import('./exepert/gateway.js');
+    return handleExepert(request, env, url);
+  }
+
   if (url.pathname.startsWith('/api/')) {
     return handleApi(request, env, url);
   }
@@ -949,3 +954,7 @@ export async function fetch(request, env, ctx) {
 }
 
 export default { fetch };
+
+// EXEPERT multiplayer Durable Objects (bound in wrangler.jsonc).
+export { ExepertRoom } from './exepert/room-do.js';
+export { ExepertLobby } from './exepert/lobby-do.js';
