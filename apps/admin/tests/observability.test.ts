@@ -1,7 +1,9 @@
+import type { LocationQuery, LocationQueryRaw } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 import {
   aggregateCloudflareSeries,
   appendObservabilityQuery,
+  createObservabilityQuerySync,
   formatObservabilityMetric,
   formatObservabilityNumber,
   isObservabilityAbort,
@@ -21,6 +23,46 @@ describe('observability report helpers', () => {
       mode: undefined,
       transport: 'web%2Fsocket',
     })).toBe('/api/admin/observability/gaming?range=7d&transport=web%252Fsocket')
+  })
+
+  it('merges rapid filter and tab patches while delayed router writes settle', async () => {
+    let currentQuery: LocationQuery = { range: '7d', game: 'exepert', tab: 'players' }
+    const writes: LocationQueryRaw[] = []
+    const resolvers: Array<() => void> = []
+    const router = {
+      replace: ({ query }: { query: LocationQueryRaw }) => new Promise<void>((resolve) => {
+        writes.push({ ...query })
+        resolvers.push(() => {
+          currentQuery = { ...query }
+          resolve()
+        })
+      }),
+    }
+    const querySync = createObservabilityQuerySync(router, () => currentQuery)
+
+    querySync.patchQuery({ game: undefined })
+    querySync.patchQuery({ range: '13m' })
+    querySync.patchQuery({ tab: undefined })
+
+    expect(writes).toEqual([{ range: '7d', tab: 'players' }])
+    currentQuery = { ...writes[0] }
+    expect(querySync.shouldIgnoreRoute(currentQuery)).toBe(true)
+
+    resolvers.shift()?.()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(writes).toEqual([
+      { range: '7d', tab: 'players' },
+      { range: '13m' },
+    ])
+    currentQuery = { ...writes[1] }
+    expect(querySync.shouldIgnoreRoute(currentQuery)).toBe(true)
+
+    resolvers.shift()?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(currentQuery).toEqual({ range: '13m' })
   })
 
   it('keeps unavailable provider values visible instead of converting them to zero', () => {

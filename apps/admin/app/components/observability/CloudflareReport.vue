@@ -16,8 +16,7 @@ const tabs = [
 type CloudflareTab = typeof tabs[number]['id']
 
 const route = useRoute()
-const router = useRouter()
-const { data, loading, error, stale, lastUpdated, refresh, range, scope } = useCloudflareObservability()
+const { data, loading, error, stale, lastUpdated, refresh, range, scope, patchQuery, shouldIgnoreRoute } = useCloudflareObservability()
 const activeTab = ref<CloudflareTab>(isTab(route.query.tab) ? route.query.tab as CloudflareTab : 'overview')
 const teleportReady = ref(false)
 const showHeaderFilters = useMediaQuery('(min-width: 1280px)')
@@ -49,10 +48,12 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
 }
 
 watch(activeTab, (value) => {
-  void router.replace({ query: { ...route.query, tab: value === 'overview' ? undefined : value } })
+  patchQuery({ tab: value === 'overview' ? undefined : value })
 })
 
 watch(() => route.query.tab, (value) => {
+  if (shouldIgnoreRoute(route.query))
+    return
   const nextTab: CloudflareTab = isTab(value) ? value : 'overview'
   if (nextTab !== activeTab.value)
     activeTab.value = nextTab

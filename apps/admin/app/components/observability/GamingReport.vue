@@ -56,8 +56,7 @@ type GamingPlayerDetailExtra = GamingPlayerDetail & {
 }
 
 const route = useRoute()
-const router = useRouter()
-const { data, loading, error, stale, lastUpdated, refresh, range, game, mode, transport } = useGamingObservability()
+const { data, loading, error, stale, lastUpdated, refresh, range, game, mode, transport, patchQuery, shouldIgnoreRoute } = useGamingObservability()
 const activeTab = ref<GamingTab>(isTab(route.query.tab) ? route.query.tab as GamingTab : 'overview')
 const teleportReady = ref(false)
 const showHeaderFilters = useMediaQuery('(min-width: 1536px)')
@@ -102,10 +101,12 @@ function handleTabKeydown(event: KeyboardEvent, index: number) {
 }
 
 watch(activeTab, (value) => {
-  void router.replace({ query: { ...route.query, tab: value === 'overview' ? undefined : value } })
+  patchQuery({ tab: value === 'overview' ? undefined : value })
 })
 
 watch(() => route.query.tab, (value) => {
+  if (shouldIgnoreRoute(route.query))
+    return
   const nextTab: GamingTab = isTab(value) ? value : 'overview'
   if (nextTab !== activeTab.value)
     activeTab.value = nextTab

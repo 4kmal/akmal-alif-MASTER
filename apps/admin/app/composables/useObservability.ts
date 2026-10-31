@@ -1,4 +1,5 @@
 import type { MaybeRefOrGetter, Ref } from 'vue'
+import type { LocationQuery, LocationQueryRaw, Router } from 'vue-router'
 import type {
   CloudflareReport,
   GamingReport,
@@ -70,6 +71,105 @@ export function appendObservabilityQuery(path: string, query: Record<string, str
   }
   const encoded = params.toString()
   return encoded ? `${path}?${encoded}` : path
+}
+
+type ObservabilityQueryRouter = Pick<Router, 'replace'>
+type ObservabilityQueryPatch = Record<string, string | undefined>
+
+function querySignature(query: Record<string, unknown>): string {
+  return JSON.stringify(Object.keys(query).sort().map(key => [key, query[key]]))
+}
+
+function applyQueryPatch(query: LocationQuery | LocationQueryRaw, patch: ObservabilityQueryPatch): LocationQueryRaw {
+  const next: LocationQueryRaw = { ...query }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined)
+      delete next[key]
+    else
+      next[key] = value
+  }
+  return next
+}
+
+export interface ObservabilityQuerySync {
+  patchQuery: (patch: ObservabilityQueryPatch) => void
+  shouldIgnoreRoute: (query: LocationQuery) => boolean
+}
+
+/**
+ * Serializes optimistic query patches so independent filter and tab writers
+ * cannot overwrite each other while a router navigation is still pending.
+ */
+export function createObservabilityQuerySync(
+  router: ObservabilityQueryRouter,
+  getRouteQuery: () => LocationQuery,
+): ObservabilityQuerySync {
+  let desiredQuery: LocationQueryRaw | null = null
+  let externalQuery: LocationQuery | null = null
+  let flushing = false
+  const localTargetKeys = new Set<string>()
+
+  function sameQuery(left: Record<string, unknown>, right: Record<string, unknown>) {
+    return querySignature(left) === querySignature(right)
+  }
+
+  function patchQuery(patch: ObservabilityQueryPatch) {
+    const routeQuery = getRouteQuery()
+    const next = applyQueryPatch(desiredQuery || routeQuery, patch)
+    if (sameQuery(next, routeQuery))
+      return
+
+    externalQuery = null
+    desiredQuery = next
+    if (!flushing)
+      void flush()
+  }
+
+  async function flush() {
+    if (flushing)
+      return
+    flushing = true
+    try {
+      while (desiredQuery || externalQuery) {
+        if (!desiredQuery) {
+          const nextExternal = externalQuery
+          externalQuery = null
+          if (nextExternal && !sameQuery(nextExternal, getRouteQuery()))
+            desiredQuery = { ...nextExternal }
+          else
+            continue
+        }
+
+        const next = desiredQuery
+        localTargetKeys.add(querySignature(next))
+        try {
+          await router.replace({ query: next })
+        }
+        catch {
+          // A later patch or external navigation supersedes this write.
+        }
+        if (desiredQuery === next)
+          desiredQuery = null
+      }
+    }
+    finally {
+      flushing = false
+      localTargetKeys.clear()
+    }
+  }
+
+  function shouldIgnoreRoute(query: LocationQuery) {
+    if (localTargetKeys.has(querySignature(query)))
+      return true
+
+    if (flushing || desiredQuery) {
+      externalQuery = { ...query }
+      desiredQuery = null
+    }
+    return false
+  }
+
+  return { patchQuery, shouldIgnoreRoute }
 }
 
 const BYTE_FACTORS: Record<string, number> = {
@@ -324,6 +424,7 @@ export function useObservabilityResource<T>(
 export function useCloudflareObservability() {
   const route = useRoute()
   const router = useRouter()
+  const querySync = createObservabilityQuerySync(router, () => route.query)
   const range = ref<CloudflareRange>(oneOf(queryValue(route.query.range), CLOUDFLARE_RANGES, '24h'))
   const scope = ref<CloudflareScope>(oneOf(queryValue(route.query.scope), CLOUDFLARE_SCOPES, 'account'))
   const endpoint = computed(() => appendObservabilityQuery('/api/admin/observability/cloudflare', {
@@ -333,17 +434,16 @@ export function useCloudflareObservability() {
   const resource = useObservabilityResource<CloudflareReport>(endpoint, 5 * 60 * 1000)
 
   function syncQuery() {
-    void router.replace({
-      query: {
-        ...route.query,
-        range: range.value,
-        scope: scope.value,
-      },
+    querySync.patchQuery({
+      range: range.value,
+      scope: scope.value,
     })
   }
 
   watch([range, scope], syncQuery)
   watch(() => [queryValue(route.query.range), queryValue(route.query.scope)], ([nextRange, nextScope]) => {
+    if (querySync.shouldIgnoreRoute(route.query))
+      return
     const resolvedRange = oneOf(nextRange, CLOUDFLARE_RANGES, '24h')
     const resolvedScope = oneOf(nextScope, CLOUDFLARE_SCOPES, 'account')
     if (resolvedRange !== range.value)
@@ -351,12 +451,13 @@ export function useCloudflareObservability() {
     if (resolvedScope !== scope.value)
       scope.value = resolvedScope
   })
-  return { ...resource, range, scope }
+  return { ...resource, range, scope, patchQuery: querySync.patchQuery, shouldIgnoreRoute: querySync.shouldIgnoreRoute }
 }
 
 export function useGamingObservability() {
   const route = useRoute()
   const router = useRouter()
+  const querySync = createObservabilityQuerySync(router, () => route.query)
   const range = ref<GamingRange>(oneOf(queryValue(route.query.range), GAMING_RANGES, '7d'))
   const game = ref(queryValue(route.query.game) || '')
   const mode = ref(queryValue(route.query.mode) || '')
@@ -370,14 +471,11 @@ export function useGamingObservability() {
   const resource = useObservabilityResource<GamingReport>(endpoint, 30 * 1000)
 
   function syncQuery() {
-    void router.replace({
-      query: {
-        ...route.query,
-        range: range.value,
-        game: game.value || undefined,
-        mode: mode.value || undefined,
-        transport: transport.value || undefined,
-      },
+    querySync.patchQuery({
+      range: range.value,
+      game: game.value || undefined,
+      mode: mode.value || undefined,
+      transport: transport.value || undefined,
     })
   }
 
@@ -388,6 +486,8 @@ export function useGamingObservability() {
     queryValue(route.query.mode) || '',
     queryValue(route.query.transport) || '',
   ], ([nextRange, nextGame, nextMode, nextTransport]) => {
+    if (querySync.shouldIgnoreRoute(route.query))
+      return
     const resolvedRange = oneOf(nextRange, GAMING_RANGES, '7d')
     if (resolvedRange !== range.value)
       range.value = resolvedRange
@@ -398,7 +498,7 @@ export function useGamingObservability() {
     if (nextTransport !== transport.value)
       transport.value = nextTransport || ''
   })
-  return { ...resource, range, game, mode, transport }
+  return { ...resource, range, game, mode, transport, patchQuery: querySync.patchQuery, shouldIgnoreRoute: querySync.shouldIgnoreRoute }
 }
 
 export function useObservabilitySummary() {
