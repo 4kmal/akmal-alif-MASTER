@@ -10,6 +10,7 @@ const PUBLIC_ADMIN_ASSETS = new Set([
   '/admin/robots.txt',
   '/admin/sink.png',
   '/admin/surface-grain.svg',
+  '/admin/profile.webp',
   '/admin/fonts/inter-latin.woff2',
 ]);
 const keys = new Map();

@@ -89,11 +89,12 @@
     "SHORTLINK_ORIGIN": "https://go.akmalalif.com",
     "ADMIN_EMAIL": "iamaleep@gmail.com",
     "CF_ACCOUNT_ID": "73138007ecb740aea99f9c99bb2a2705",
+    "CF_BILLING_CYCLE_DAY": "8",
     "CF_WEB_ANALYTICS_SITE_TAG": "615f382c02b94e40b1e9f31bd230cfa3",
     "NUXT_CF_ACCOUNT_ID": "73138007ecb740aea99f9c99bb2a2705",
     "NUXT_DATASET": "akmalalif_shortlinks"
   },
   "triggers": {
-    "crons": ["0 0 * * *"] // Run backup task daily at 00:00 UTC
+    "crons": ["0 0 * * *", "*/15 * * * *"]
   }
 }

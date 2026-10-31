@@ -51,6 +51,7 @@ export default defineNuxtConfig({
     // same app is run through Nuxt locally.
     cfAccountId: process.env.NUXT_CF_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || '',
     cfApiToken: '',
+    cfObservabilityToken: process.env.CF_OBSERVABILITY_TOKEN || '',
     portfolioAdminOrigin: process.env.PORTFOLIO_ADMIN_ORIGIN || 'https://www.akmalalif.com',
     shortlinkOrigin: process.env.SHORTLINK_ORIGIN || 'https://go.akmalalif.com',
     portfolioGatewayToken: process.env.PORTFOLIO_GATEWAY_TOKEN || '',
