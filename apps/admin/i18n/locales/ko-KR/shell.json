@@ -37,10 +37,9 @@
     "settings": "설정",
     "import": "가져오기",
     "export": "내보내기",
-    "coffee": "커피 한 잔 사주기",
+    "open_site": "사이트 열기",
     "github": "GitHub",
     "releases": "릴리스",
-    "stars": "스타",
-    "update": "새 버전 {version}을(를) 사용할 수 있습니다 (현재: {current})"
+    "stars": "스타"
   }
 }

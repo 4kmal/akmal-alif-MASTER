@@ -26,10 +26,10 @@
   },
   "nav": {
     "links": "Links",
-    "analysis": "Analysis",
-    "realtime": "Realtime",
-    "check": "Check",
-    "migrate": "Import/Export"
+    "analysis": "Link analytics",
+    "realtime": "Link realtime",
+    "check": "Link check",
+    "migrate": "Import / export"
   },
   "sidebar": {
     "subtitle": "Link Shortener",
@@ -37,10 +37,9 @@
     "settings": "Settings",
     "import": "Import",
     "export": "Export",
-    "coffee": "Buy me a coffee",
+    "open_site": "Open site",
     "github": "GitHub",
     "releases": "Releases",
-    "stars": "Stars",
-    "update": "New version {version} available (current: {current})"
+    "stars": "Stars"
   }
 }

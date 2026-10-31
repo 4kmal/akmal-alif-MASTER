@@ -18,7 +18,6 @@ const adminRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workspace = readFileSync(resolve(adminRoot, 'app/components/judging/JudgingWorkspace.vue'), 'utf8')
 const localEntry = readFileSync(resolve(adminRoot, '../judging-local/client/main.ts'), 'utf8')
 const adminPage = readFileSync(resolve(adminRoot, 'app/pages/admin/judging/sdc-2026.vue'), 'utf8')
-const navigation = readFileSync(resolve(adminRoot, 'app/components/dashboard/sidebar/AppSidebar.vue'), 'utf8')
 const routeConfig = readFileSync(resolve(adminRoot, 'app/composables/dashboard.ts'), 'utf8')
 
 describe('sDC judging workspace UI contract', () => {
@@ -42,7 +41,7 @@ describe('sDC judging workspace UI contract', () => {
     expect(localEntry).toContain('local: true')
     expect(adminPage).toContain('import JudgingWorkspace from \'@/components/judging/JudgingWorkspace.vue\'')
     expect(adminPage).toContain('layout: \'dashboard\'')
-    expect(navigation).toContain('url: \'/admin/judging/sdc-2026\'')
+    expect(routeConfig).toContain('{ route: \'judging\', url: \'/admin/judging/sdc-2026\' }')
     expect(routeConfig).toContain('paths: [\'/admin/judging/sdc-2026\']')
   })
 

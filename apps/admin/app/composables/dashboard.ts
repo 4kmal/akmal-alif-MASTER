@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Activity, CalendarDays, ChartArea, ClipboardCheck, Cloud, FolderSync, Gamepad2, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
+import { CalendarDays, ChartArea, ChartColumn, ClipboardCheck, Cloud, FileText, FolderSync, Gamepad2, Gauge, Globe, History, Image, Images, LayoutDashboard, Link, MousePointerClick, PenLine, Radio, ScanSearch, Settings2, Target } from '@lucide/vue'
 import { computed } from 'vue'
 import { useRoute } from '#imports'
 
@@ -10,15 +10,45 @@ export interface DashboardRouteConfig {
 }
 
 export const DASHBOARD_ROUTES = {
-  links: {
-    paths: ['/admin/links'],
-    titleKey: 'nav.links',
-    icon: Link,
-  },
   briefing: {
     paths: ['/admin', '/admin/briefing'],
     titleKey: 'Briefing',
+    icon: LayoutDashboard,
+  },
+  activity: {
+    paths: ['/admin/activity'],
+    titleKey: 'Live activity',
+    icon: Radio,
+  },
+  traffic: {
+    paths: ['/admin/traffic'],
+    titleKey: 'Traffic',
     icon: ChartArea,
+  },
+  engagement: {
+    paths: ['/admin/engagement'],
+    titleKey: 'Engagement',
+    icon: MousePointerClick,
+  },
+  goals: {
+    paths: ['/admin/goals'],
+    titleKey: 'Goals',
+    icon: Target,
+  },
+  content: {
+    paths: ['/admin/content'],
+    titleKey: 'Content reach',
+    icon: FileText,
+  },
+  performance: {
+    paths: ['/admin/performance'],
+    titleKey: 'Performance',
+    icon: Gauge,
+  },
+  history: {
+    paths: ['/admin/history'],
+    titleKey: 'Event history',
+    icon: History,
   },
   cloudflare: {
     paths: ['/admin/cloudflare'],
@@ -30,25 +60,30 @@ export const DASHBOARD_ROUTES = {
     titleKey: 'Gaming',
     icon: Gamepad2,
   },
-  traffic: {
-    paths: ['/admin/traffic'],
-    titleKey: 'Traffic',
-    icon: ChartArea,
-  },
-  activity: {
-    paths: ['/admin/activity'],
-    titleKey: 'Live activity',
-    icon: Activity,
-  },
-  history: {
-    paths: ['/admin/history'],
-    titleKey: 'Event history',
-    icon: ChartArea,
-  },
-  content: {
-    paths: ['/admin/content'],
-    titleKey: 'Content',
+  links: {
+    paths: ['/admin/links'],
+    titleKey: 'Links',
     icon: Link,
+  },
+  link: {
+    paths: ['/admin/link'],
+    titleKey: 'Links',
+    icon: Link,
+  },
+  analysis: {
+    paths: ['/admin/analysis'],
+    titleKey: 'Link analytics',
+    icon: ChartColumn,
+  },
+  realtime: {
+    paths: ['/admin/realtime'],
+    titleKey: 'Link realtime',
+    icon: Globe,
+  },
+  check: {
+    paths: ['/admin/check'],
+    titleKey: 'Link check',
+    icon: ScanSearch,
   },
   blogPosts: {
     paths: ['/admin/blog', '/admin/blog/posts'],
@@ -63,66 +98,102 @@ export const DASHBOARD_ROUTES = {
   galleries: {
     paths: ['/admin/blog/galleries'],
     titleKey: 'Galleries',
-    icon: Image,
+    icon: Images,
   },
   calendar: {
     paths: ['/admin/calendar'],
     titleKey: 'Calendar',
     icon: CalendarDays,
   },
-  blogSettings: {
-    paths: ['/admin/blog/settings'],
-    titleKey: 'Site settings',
-    icon: Settings2,
-  },
-  engagement: {
-    paths: ['/admin/engagement'],
-    titleKey: 'Engagement',
-    icon: Activity,
-  },
-  goals: {
-    paths: ['/admin/goals'],
-    titleKey: 'Goals',
-    icon: ScanSearch,
-  },
-  performance: {
-    paths: ['/admin/performance'],
-    titleKey: 'Performance',
-    icon: Activity,
-  },
-  link: {
-    paths: ['/admin/link'],
-    titleKey: 'nav.links',
-    icon: Link,
-  },
-  analysis: {
-    paths: ['/admin/analysis'],
-    titleKey: 'nav.analysis',
-    icon: ChartArea,
-  },
-  realtime: {
-    paths: ['/admin/realtime'],
-    titleKey: 'Shortlink realtime',
-    icon: Activity,
-  },
   judging: {
     paths: ['/admin/judging/sdc-2026'],
     titleKey: 'SDC judging',
     icon: ClipboardCheck,
   },
-  check: {
-    paths: ['/admin/check'],
-    titleKey: 'nav.check',
-    icon: ScanSearch,
-  },
   migrate: {
     paths: ['/admin/migrate'],
-    titleKey: 'nav.migrate',
+    titleKey: 'Import / export',
     icon: FolderSync,
+  },
+  blogSettings: {
+    paths: ['/admin/blog/settings'],
+    titleKey: 'Site settings',
+    icon: Settings2,
   },
 } as const satisfies Record<string, DashboardRouteConfig>
 
 export type DashboardRouteName = keyof typeof DASHBOARD_ROUTES
+
+export interface DashboardNavItem {
+  readonly route: DashboardRouteName
+  readonly url: string
+}
+
+export interface DashboardNavGroup {
+  readonly label: string
+  readonly items: readonly DashboardNavItem[]
+}
+
+// Sidebar order. Overview, Website and Platform only observe; Shortlinks mixes
+// management with its reports; Publish edits content; Admin holds tools and settings.
+export const DASHBOARD_NAV: readonly DashboardNavGroup[] = [
+  {
+    label: 'Overview',
+    items: [
+      { route: 'briefing', url: '/admin/briefing' },
+      { route: 'activity', url: '/admin/activity' },
+    ],
+  },
+  {
+    label: 'Website',
+    items: [
+      { route: 'traffic', url: '/admin/traffic' },
+      { route: 'engagement', url: '/admin/engagement' },
+      { route: 'goals', url: '/admin/goals' },
+      { route: 'content', url: '/admin/content' },
+      { route: 'performance', url: '/admin/performance' },
+      { route: 'history', url: '/admin/history' },
+    ],
+  },
+  {
+    label: 'Platform',
+    items: [
+      { route: 'cloudflare', url: '/admin/cloudflare' },
+      { route: 'gaming', url: '/admin/gaming' },
+    ],
+  },
+  {
+    label: 'Shortlinks',
+    items: [
+      { route: 'links', url: '/admin/links' },
+      { route: 'analysis', url: '/admin/analysis' },
+      { route: 'realtime', url: '/admin/realtime' },
+      { route: 'check', url: '/admin/check' },
+    ],
+  },
+  {
+    label: 'Publish',
+    items: [
+      { route: 'blogPosts', url: '/admin/blog/posts' },
+      { route: 'blogMedia', url: '/admin/blog/media' },
+      { route: 'galleries', url: '/admin/blog/galleries' },
+      { route: 'calendar', url: '/admin/calendar' },
+    ],
+  },
+  {
+    label: 'Admin',
+    items: [
+      { route: 'judging', url: '/admin/judging/sdc-2026' },
+      { route: 'migrate', url: '/admin/migrate' },
+      { route: 'blogSettings', url: '/admin/blog/settings' },
+    ],
+  },
+]
+
+// Pages reached from another page highlight that page's sidebar entry.
+const NAV_PARENT: Partial<Record<DashboardRouteName, DashboardRouteName>> = {
+  link: 'links',
+}
 
 export function useDashboardRoute() {
   const route = useRoute()
@@ -144,7 +215,8 @@ export function useDashboardRoute() {
   })
 
   const isActive = (page: DashboardRouteName) => {
-    return currentPage.value === page
+    const current = currentPage.value
+    return current !== '' && (current === page || NAV_PARENT[current] === page)
   }
 
   return { currentPage, pageTitle, isActive }

@@ -37,10 +37,9 @@
     "settings": "Paramètres",
     "import": "Importer",
     "export": "Exporter",
-    "coffee": "Offrez-moi un café",
+    "open_site": "Ouvrir le site",
     "github": "GitHub",
     "releases": "Versions",
-    "stars": "Stars",
-    "update": "Nouvelle version {version} disponible (actuelle : {current})"
+    "stars": "Stars"
   }
 }

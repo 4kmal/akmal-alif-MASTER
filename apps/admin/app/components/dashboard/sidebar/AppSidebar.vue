@@ -8,140 +8,23 @@ interface NavItem {
   isActive: boolean
 }
 
+interface NavGroup {
+  label: string
+  items: NavItem[]
+}
+
 const { title } = useAppConfig()
 const { isActive } = useDashboardRoute()
 
-const platformItems = computed<NavItem[]>(() => [
-  {
-    title: 'Briefing',
-    url: '/admin/briefing',
-    icon: DASHBOARD_ROUTES.briefing.icon,
-    isActive: isActive('briefing'),
-  },
-  {
-    title: 'Cloudflare',
-    url: '/admin/cloudflare',
-    icon: DASHBOARD_ROUTES.cloudflare.icon,
-    isActive: isActive('cloudflare'),
-  },
-  {
-    title: 'Gaming',
-    url: '/admin/gaming',
-    icon: DASHBOARD_ROUTES.gaming.icon,
-    isActive: isActive('gaming'),
-  },
-  {
-    title: 'Traffic',
-    url: '/admin/traffic',
-    icon: DASHBOARD_ROUTES.traffic.icon,
-    isActive: isActive('traffic'),
-  },
-  {
-    title: 'Live activity',
-    url: '/admin/activity',
-    icon: DASHBOARD_ROUTES.activity.icon,
-    isActive: isActive('activity'),
-  },
-  {
-    title: 'Event history',
-    url: '/admin/history',
-    icon: DASHBOARD_ROUTES.history.icon,
-    isActive: isActive('history'),
-  },
-  {
-    title: 'Content',
-    url: '/admin/content',
-    icon: DASHBOARD_ROUTES.content.icon,
-    isActive: isActive('content'),
-  },
-  {
-    title: 'Blog posts',
-    url: '/admin/blog/posts',
-    icon: DASHBOARD_ROUTES.blogPosts.icon,
-    isActive: isActive('blogPosts'),
-  },
-  {
-    title: 'Media library',
-    url: '/admin/blog/media',
-    icon: DASHBOARD_ROUTES.blogMedia.icon,
-    isActive: isActive('blogMedia'),
-  },
-  {
-    title: 'Galleries',
-    url: '/admin/blog/galleries',
-    icon: DASHBOARD_ROUTES.galleries.icon,
-    isActive: isActive('galleries'),
-  },
-  {
-    title: 'Calendar',
-    url: '/admin/calendar',
-    icon: DASHBOARD_ROUTES.calendar.icon,
-    isActive: isActive('calendar'),
-  },
-  {
-    title: 'Engagement',
-    url: '/admin/engagement',
-    icon: DASHBOARD_ROUTES.engagement.icon,
-    isActive: isActive('engagement'),
-  },
-  {
-    title: 'Goals',
-    url: '/admin/goals',
-    icon: DASHBOARD_ROUTES.goals.icon,
-    isActive: isActive('goals'),
-  },
-  {
-    title: 'Performance',
-    url: '/admin/performance',
-    icon: DASHBOARD_ROUTES.performance.icon,
-    isActive: isActive('performance'),
-  },
-  {
-    title: 'Shortlinks',
-    url: '/admin/links',
-    icon: DASHBOARD_ROUTES.links.icon,
-    isActive: isActive('links'),
-  },
-])
-
-const settingsItems = computed<NavItem[]>(() => [
-  {
-    title: 'Health check',
-    url: '/admin/check',
-    icon: DASHBOARD_ROUTES.check.icon,
-    isActive: isActive('check'),
-  },
-  {
-    title: 'Import / export',
-    url: '/admin/migrate',
-    icon: DASHBOARD_ROUTES.migrate.icon,
-    isActive: isActive('migrate'),
-  },
-  {
-    title: 'Analysis',
-    url: '/admin/analysis',
-    icon: DASHBOARD_ROUTES.analysis.icon,
-    isActive: isActive('analysis'),
-  },
-  {
-    title: 'Shortlink realtime',
-    url: '/admin/realtime',
-    icon: DASHBOARD_ROUTES.realtime.icon,
-    isActive: isActive('realtime'),
-  },
-  {
-    title: 'SDC judging',
-    url: '/admin/judging/sdc-2026',
-    icon: DASHBOARD_ROUTES.judging.icon,
-    isActive: isActive('judging'),
-  },
-  {
-    title: 'Site settings',
-    url: '/admin/blog/settings',
-    icon: DASHBOARD_ROUTES.blogSettings.icon,
-    isActive: isActive('blogSettings'),
-  },
-])
+const navGroups = computed<NavGroup[]>(() => DASHBOARD_NAV.map(group => ({
+  label: group.label,
+  items: group.items.map(({ route, url }) => ({
+    title: DASHBOARD_ROUTES[route].titleKey,
+    url,
+    icon: DASHBOARD_ROUTES[route].icon,
+    isActive: isActive(route),
+  })),
+})))
 </script>
 
 <template>
@@ -177,7 +60,7 @@ const settingsItems = computed<NavItem[]>(() => [
       </SidebarMenu>
     </SidebarHeader>
     <SidebarContent>
-      <DashboardSidebarNavMain :platform-items="platformItems" :settings-items="settingsItems" />
+      <DashboardSidebarNavMain :groups="navGroups" />
       <DashboardSidebarNavSecondary class="mt-auto" />
     </SidebarContent>
     <SidebarFooter>

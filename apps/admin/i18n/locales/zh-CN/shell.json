@@ -37,10 +37,9 @@
     "settings": "设置",
     "import": "导入",
     "export": "导出",
-    "coffee": "请我喝杯咖啡",
+    "open_site": "打开网站",
     "github": "GitHub",
     "releases": "版本发布",
-    "stars": "Stars",
-    "update": "新版本 {version} 可用（当前: {current}）"
+    "stars": "Stars"
   }
 }

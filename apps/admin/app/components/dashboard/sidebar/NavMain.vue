@@ -2,17 +2,14 @@
 import { useSidebar } from '@/components/ui/sidebar'
 
 defineProps<{
-  platformItems: {
-    title: string
-    url: string
-    icon: Component
-    isActive?: boolean
-  }[]
-  settingsItems: {
-    title: string
-    url: string
-    icon: Component
-    isActive?: boolean
+  groups: {
+    label: string
+    items: {
+      title: string
+      url: string
+      icon: Component
+      isActive?: boolean
+    }[]
   }[]
 }>()
 
@@ -35,32 +32,10 @@ watch(() => route.path, () => {
 </script>
 
 <template>
-  <SidebarGroup>
-    <SidebarGroupLabel>{{ $t('sidebar.platform') }}</SidebarGroupLabel>
+  <SidebarGroup v-for="group in groups" :key="group.label">
+    <SidebarGroupLabel>{{ group.label }}</SidebarGroupLabel>
     <SidebarMenu>
-      <SidebarMenuItem v-for="item in platformItems" :key="item.title">
-        <SidebarMenuButton
-          as-child
-          :tooltip="label(item.title)"
-          :is-active="item.isActive"
-          class="
-            hover:rounded-4xl
-            data-active:rounded-4xl
-          "
-        >
-          <NuxtLink :to="item.url" :aria-current="item.isActive ? 'page' : undefined" @click="closeMobile">
-            <component :is="item.icon" aria-hidden="true" />
-            <span>{{ label(item.title) }}</span>
-          </NuxtLink>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  </SidebarGroup>
-
-  <SidebarGroup>
-    <SidebarGroupLabel>{{ $t('sidebar.settings') }}</SidebarGroupLabel>
-    <SidebarMenu>
-      <SidebarMenuItem v-for="item in settingsItems" :key="item.title">
+      <SidebarMenuItem v-for="item in group.items" :key="item.url">
         <SidebarMenuButton
           as-child
           :tooltip="label(item.title)"

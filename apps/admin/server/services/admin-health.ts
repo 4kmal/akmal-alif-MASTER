@@ -106,11 +106,11 @@ export async function readAdminHealth(event: H3Event, now = Date.now()): Promise
       available: true,
       reason: health.checked
         ? `${health.broken} failures across ${health.checked} destinations checked within seven days.`
-        : 'No recent destination checks. Run Health check to inspect links.',
+        : 'No recent destination checks. Run Link check to inspect links.',
       detail: health.lastCheckedAt ? `Last check: ${health.lastCheckedAt}` : undefined,
     })
     if (health.broken)
-      alerts.push(`${health.broken} recently checked shortlink destination${health.broken === 1 ? '' : 's'} failed. Review Health check.`)
+      alerts.push(`${health.broken} recently checked shortlink destination${health.broken === 1 ? '' : 's'} failed. Review Link check.`)
   }
   catch {
     source_health.push({

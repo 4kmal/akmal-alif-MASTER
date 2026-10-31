@@ -2,7 +2,7 @@ export default defineAppConfig({
   title: 'Akmal Alif / Admin',
   documentation: 'https://github.com/4kmal/akmal-alif-MASTER/tree/main/apps/admin',
   github: 'https://github.com/4kmal/akmal-alif-MASTER',
-  coffee: 'https://www.akmalalif.com/contact/',
+  siteUrl: 'https://www.akmalalif.com/',
   twitter: '',
   telegram: '',
   description: 'Private portfolio briefing, analytics, and shortlink operations.',

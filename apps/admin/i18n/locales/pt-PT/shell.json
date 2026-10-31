@@ -37,10 +37,9 @@
     "settings": "Definições",
     "import": "Importar",
     "export": "Exportar",
-    "coffee": "Paga-me um café",
+    "open_site": "Abrir site",
     "github": "GitHub",
     "releases": "Versões",
-    "stars": "Estrelas",
-    "update": "Nova versão {version} disponível (atual: {current})"
+    "stars": "Estrelas"
   }
 }

@@ -37,10 +37,9 @@
     "settings": "Pengaturan",
     "import": "Impor",
     "export": "Ekspor",
-    "coffee": "Traktir Kopi",
+    "open_site": "Buka situs",
     "github": "GitHub",
     "releases": "Rilis",
-    "stars": "Bintang",
-    "update": "Versi baru {version} tersedia (saat ini: {current})"
+    "stars": "Bintang"
   }
 }
