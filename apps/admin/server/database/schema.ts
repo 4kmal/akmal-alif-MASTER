@@ -1,6 +1,6 @@
 import type { Link } from '../../shared/schemas/link'
 import { sql } from 'drizzle-orm'
-import { index, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 export const links = sqliteTable('links', {
   slug: text().primaryKey(),
@@ -189,7 +189,7 @@ export const gamingMatches = sqliteTable('gaming_matches', {
 
 export const gamingParticipants = sqliteTable('gaming_participants', {
   id: text().primaryKey(),
-  matchId: text('match_id').notNull(),
+  matchId: text('match_id').notNull().references(() => gamingMatches.id, { onDelete: 'cascade' }),
   participantKey: text('participant_key'),
   playerKey: text('player_key'),
   linkedSessionId: text('linked_session_id'),
@@ -202,7 +202,7 @@ export const gamingParticipants = sqliteTable('gaming_participants', {
   startedAt: integer('started_at').notNull(),
   endedAt: integer('ended_at'),
 }, table => [
-  index('idx_gaming_participant_match_key').on(table.matchId, table.participantKey),
+  uniqueIndex('idx_gaming_participant_match_key').on(table.matchId, table.participantKey),
   index('idx_gaming_participant_player').on(table.playerKey, table.startedAt),
 ])
 
