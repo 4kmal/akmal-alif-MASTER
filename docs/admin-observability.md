@@ -147,7 +147,36 @@ unit suite with 251 passing tests and five existing judging failures: two
 AI-runtime concurrency cases and three workbook formula checks at I13. Release
 checks must distinguish those failures from new regressions.
 
-The integrated release passed 235 root tests, 34 admin security tests, and the
-Node 24.21.0 typecheck. The admin unit suite has 281 passes and the same five
-judging failures recorded above. Both production builds completed. The public
-asset scan checked 355 text assets without finding the observability token.
+The integrated release passed 235 root tests, 34 admin security tests, 361 admin
+Worker tests, the taxonomy suite, and the Node 24.21.0 typecheck. Lint completed
+with zero errors. The admin unit suite has 281 passes and the same five judging
+failures recorded above. Both production builds completed. The public asset
+scan checked 355 text assets without finding the observability token.
+
+On October 31, 2026, the additive admin migrations were applied before deploying
+admin version `bd43f150-5e4c-4d3c-96b5-4488e24be8e8` and portfolio version
+`57ab2834-a1f6-4ef7-a333-abfc7419a369`. The previous versions were recorded as
+`e1e66526-49a7-4aee-beb7-828d2b2c6010` and
+`b751ac00-1a4c-4ab2-bb49-74cab33377cf`, respectively.
+
+Authenticated production checks confirmed live Cloudflare sources, project
+filtering, account-wide billing coverage, anonymous identity reuse across all
+three games, session timelines, and filtered CSV export. A disposable online
+room delivered a welcome, a signed correlation token, and 248 snapshots before
+disconnecting. The room reported zero humans and an idle state after 66 seconds.
+Signed-out observability APIs and a forged direct-service request returned 401.
+Dark and light screenshots were captured at desktop, tablet, and mobile sizes
+locally, with additional production screenshots of both themes. The production
+QA gameplay is real captured activity; no synthetic database fixtures were
+inserted into production.
+
+The final UI polish also passed seven focused observability tests, typecheck,
+lint, and a fresh admin build. The blog editor and its private reader preview
+were exercised in production; editor accents inherit the admin palette while
+the preview keeps its own public styling.
+
+The first verified quarter-hour collection ran at 10:00 UTC (18:00 Malaysia time)
+on October 31. Remote D1 contained one snapshot for each of `account` and
+`akmalalif`, plus 182 and 102 daily metric rows respectively. The provider's
+schedule metadata confirmed the quarter-hour trigger was created at 09:42 UTC;
+the existing daily trigger retained its original creation timestamp.
