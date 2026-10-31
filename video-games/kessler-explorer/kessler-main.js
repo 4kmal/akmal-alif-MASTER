@@ -13,6 +13,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const fmtM = m => Math.round(m).toLocaleString('en-US') + ' M';
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const COARSE = matchMedia('(pointer: coarse)').matches;
+const gameBootStartedAt = performance.now();
 
 function fail(msg){
   $('#boot-status').textContent = msg;
@@ -24,6 +25,15 @@ const gaming = createGamingAnalytics({
   gameId: 'kessler-explorer',
   startFields: { transport: 'browser', entrypoint: 'standalone', mode: 'explore' },
 });
+const renderFailureSources = new Set();
+let initialLoadRecorded = false;
+
+function reportRenderFailure(source, error){
+  const key = String(source || 'render');
+  if (renderFailureSources.has(key)) return;
+  renderFailureSources.add(key);
+  gaming.interaction('render_failure', { details:{ source:key, error:error?.name || (error ? 'render_error' : null) } });
+}
 
 /* ======================================================================
    Renderer, camera, shared uniforms
@@ -43,8 +53,10 @@ const canvas = $('#gl');
 let renderer;
 try {
   renderer = new THREE.WebGLRenderer({canvas, antialias:true, powerPreference:'high-performance'});
-} catch (e){ fail('THIS MAP NEEDS WEBGL. TRY A RECENT DESKTOP BROWSER.'); return; }
+} catch (e){ reportRenderFailure('webgl_init', e); fail('THIS MAP NEEDS WEBGL. TRY A RECENT DESKTOP BROWSER.'); return; }
 renderer.setClearColor(C.void, 1);
+const onContextLost = event => { event.preventDefault?.(); reportRenderFailure('webgl_context_lost'); };
+canvas?.addEventListener?.('webglcontextlost', onContextLost, false);
 const scene = new THREE.Scene();
 scene.background = C.void.clone();
 const camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2000);
@@ -57,7 +69,7 @@ try {
     bloom = new THREE.UnrealBloomPass(new THREE.Vector2(256, 256), 0.66, 0.5, 0.1);
     composer.addPass(bloom);
   }
-} catch (e){ composer = null; }
+} catch (e){ reportRenderFailure('postprocess_init', e); composer = null; }
 
 const U = { uTime:{value:0}, uReveal:{value:0}, uScanR:{value:-1000} };
 
@@ -752,20 +764,28 @@ async function loadZone(zi){
   disposeWorld();
   let built;
   try { built = buildZone(zi, () => {}); }
-  catch (err){ console.error(err); fail('SURFACE DATA FAILED TO DECODE. RELOAD TO TRY AGAIN.'); state.loading = false; return; }
-  Zc = built; state.zi = zi;
-  gaming.interaction('zone', { zone:Z.id });
-  try { localStorage.setItem('kessler-zone', String(zi)); } catch (e){}
-  setBar(1); $('#boot-status').textContent = 'SURFACE GEOMETRY DECODED';
-  makeLabels(); applyLayers(); updateZoneHUD(); buildZoneCards();
-  try { history.replaceState(null, '', '#' + Z.id); } catch (e){}
-  // camera intro
-  cam.tx = 0; cam.tz = 0; cam.ty = Zc.surf(0, 0); cam.dist = 330; cam.pol = 0.78; cam.az = -0.5;
-  G.tx = 0; G.tz = 0; G.dist = 235; G.pol = PTILT; G.az = -0.12; flying = true; lastInput = performance.now();
-  await wait(300);
-  boot.classList.add('done');
-  U.uReveal.value = 0; state.revealT0 = performance.now();
-  state.loading = false;
+  catch (err){ console.error(err); reportRenderFailure('zone_init', err); fail('SURFACE DATA FAILED TO DECODE. RELOAD TO TRY AGAIN.'); state.loading = false; return; }
+  try {
+    Zc = built; state.zi = zi;
+    gaming.interaction('zone', { zone:Z.id });
+    try { localStorage.setItem('kessler-zone', String(zi)); } catch (e){}
+    setBar(1); $('#boot-status').textContent = 'SURFACE GEOMETRY DECODED';
+    makeLabels(); applyLayers(); updateZoneHUD(); buildZoneCards();
+    try { history.replaceState(null, '', '#' + Z.id); } catch (e){}
+    // camera intro
+    cam.tx = 0; cam.tz = 0; cam.ty = Zc.surf(0, 0); cam.dist = 330; cam.pol = 0.78; cam.az = -0.5;
+    G.tx = 0; G.tz = 0; G.dist = 235; G.pol = PTILT; G.az = -0.12; flying = true; lastInput = performance.now();
+    await wait(300);
+    boot.classList.add('done');
+    U.uReveal.value = 0; state.revealT0 = performance.now();
+    state.loading = false;
+  } catch (error){
+    console.error(error); reportRenderFailure('zone_render', error); fail('SURFACE DATA FAILED TO RENDER. RELOAD TO TRY AGAIN.'); state.loading = false; return;
+  }
+  if (!initialLoadRecorded){
+    initialLoadRecorded = true;
+    gaming.performance({ load_ms:Math.max(0, performance.now() - gameBootStartedAt) });
+  }
 }
 function updateZoneHUD(){
   const Z = Zc.Z;
@@ -909,13 +929,15 @@ function drawViz(){
    Resize + main loop
    ====================================================================== */
 function resize(){
-  const r = $('#app').getBoundingClientRect(); vw = r.width; vh = r.height;
-  const pr = Math.min(window.devicePixelRatio || 1, 1.75);
-  renderer.setPixelRatio(pr); renderer.setSize(vw, vh, false);
-  camera.aspect = vw / Math.max(1, vh); camera.updateProjectionMatrix();
-  if (composer){ if (composer.setPixelRatio) composer.setPixelRatio(pr); composer.setSize(vw, vh); }
-  compassW = $('#compass').clientWidth; lastHdg = -1; lastScale = -1;
-  const pr2 = Math.min(window.devicePixelRatio || 1, 2); viz.width = Math.round(viz.clientWidth * pr2) || 300; viz.height = Math.round(14 * pr2); vizIdleDrawn = false;
+  try {
+    const r = $('#app').getBoundingClientRect(); vw = r.width; vh = r.height;
+    const pr = Math.min(window.devicePixelRatio || 1, 1.75);
+    renderer.setPixelRatio(pr); renderer.setSize(vw, vh, false);
+    camera.aspect = vw / Math.max(1, vh); camera.updateProjectionMatrix();
+    if (composer){ if (composer.setPixelRatio) composer.setPixelRatio(pr); composer.setSize(vw, vh); }
+    compassW = $('#compass').clientWidth; lastHdg = -1; lastScale = -1;
+    const pr2 = Math.min(window.devicePixelRatio || 1, 2); viz.width = Math.round(viz.clientWidth * pr2) || 300; viz.height = Math.round(14 * pr2); vizIdleDrawn = false;
+  } catch (error){ reportRenderFailure('resize', error); }
 }
 addEventListener('resize', resize);
 
@@ -940,7 +962,9 @@ function tick(now){
   updateCursor();
   updateHUD();
   drawViz();
-  if (composer) composer.render(); else renderer.render(scene, camera);
+  gaming.sampleFrame(now);
+  try { if (composer) composer.render(); else renderer.render(scene, camera); }
+  catch (error){ reportRenderFailure('render', error); }
   requestAnimationFrame(tick);
 }
 

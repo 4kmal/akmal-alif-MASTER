@@ -23,19 +23,23 @@ const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
 const lerpAngle = (a, b, k) => a + wrap(b - a) * k;
 
 export class Game {
-  constructor({canvas, world, input, audio, transport, onEvent}){
+  constructor({canvas, world, input, audio, transport, onEvent, onFrame, onRenderFailure}){
     this.canvas = canvas; this.world = world; this.input = input; this.audio = audio; this.transport = transport; this.onEvent = onEvent || (() => {});
+    this.onFrame = onFrame || (() => {}); this.onRenderFailure = onRenderFailure || (() => {});
+    this.renderFailureSources = new Set();
+    this.bootStartedAt = performance.now(); this.firstFrameAt = null;
     this.players = new Map(); this.roster = new Map();
     this.myId = null; this.mode = getMode('tdm'); this.sector = null; this.phase = 'live';
     this.me = createMover(); this.meAlive = false; this.meState = null; this.spawns = -1;
     this.pending = []; this.outbox = []; this.seq = 0; this.lastSend = 0;
     this.yaw = 0; this.pitch = 0; this.recoil = 0;
-    this.offset = null; this.rtt = 0; this.lastPing = 0;
+    this.offset = null; this.rtt = null; this.lastPing = 0;
     this.nextFire = 0; this.charge = 0; this.localShots = 0; this.lastAmmoSeq = -1;
     this.camOffset = new THREE.Vector3(); this.eyeK = 1.62;
     this.third = false; this.scoreHeld = false; this.marks = []; this.time = 0;
     this.deathAt = null; this.killer = null; this.result = null;
-    this.setupRenderer();
+    try { this.setupRenderer(); }
+    catch (error){ this.reportRenderFailure('init', error); throw error; }
     this.hud = new Hud(world);
     transport.onmessage = text => this.onMessage(text);
     this.running = true;
@@ -66,7 +70,20 @@ export class Game {
     this.bloom.enabled = q !== 'low';
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
+    this.onContextLost = event => { event.preventDefault?.(); this.reportRenderFailure('webgl_context_lost'); };
+    this.canvas.addEventListener?.('webglcontextlost', this.onContextLost, false);
     this.onResize = () => this.resize(); window.addEventListener('resize', this.onResize); this.resize();
+  }
+
+  reportRenderFailure(source, error){
+    const key = String(source || 'render');
+    if (this.renderFailureSources.has(key)) return;
+    this.renderFailureSources.add(key);
+    this.onRenderFailure({source:key, error:error?.name || (error ? 'render_error' : null)});
+  }
+
+  get bootLoadMs(){
+    return this.firstFrameAt == null ? null : Math.max(0, this.firstFrameAt - this.bootStartedAt);
   }
 
   resize(){
@@ -98,7 +115,12 @@ export class Game {
       this.onEvent({type:'welcome', msg:m});
       return;
     }
-    if (m.t === 'pong'){ this.rtt = performance.now() - m.c; return; }
+    if (m.t === 'pong'){
+      const sentAt = m.c === null || m.c === undefined || m.c === '' ? null : Number(m.c);
+      const rtt = sentAt == null ? NaN : performance.now() - sentAt;
+      this.rtt = Number.isFinite(rtt) ? Math.max(0, rtt) : null;
+      return;
+    }
     if (m.t === 'error'){ this.onEvent({type:'error', msg:m}); return; }
     if (m.t !== 's') return;
     const now = performance.now() / 1000, sample = m.T - now;
@@ -259,13 +281,16 @@ export class Game {
       this.weaponFrame(inp, dt, live);
       if (inp.edges.has('ping') && live) this.ping();
       if (performance.now() - this.lastSend > 50) this.flush();
-      if (performance.now() - this.lastPing > 2000){ this.lastPing = performance.now(); this.send({t:'ping', c:performance.now(), rtt:Math.round(this.rtt)}); }
+      if (performance.now() - this.lastPing > 2000){ this.lastPing = performance.now(); this.send({t:'ping', c:performance.now(), rtt:Math.round(this.rtt || 0)}); }
     }
     MODE_UI[this.mode.id]?.input?.(this, inp);
     if (inp.edges.has('view')) this.third = !this.third;
     this.scoreHeld = (this.input.held.has('score') || this.input.padHeldScore) && this.myId != null;
     if (inp.edges.has('pause')) this.onEvent({type:'pause'});
-    this.render(dt);
+    try { this.render(dt); }
+    catch (error){ this.reportRenderFailure('render', error); }
+    this.firstFrameAt ??= t;
+    this.onFrame(t);
   }
 
   weaponFrame(inp, dt, live){
@@ -427,7 +452,8 @@ export class Game {
     MODE_UI[this.mode.id]?.update?.(this, dt);
     this.worldRender.update(this.time, this.camera);
     this.audio.listener(this.camera.position.x, this.camera.position.y, this.camera.position.z, this.yaw);
-    this.composer.render(dt);
+    try { this.composer.render(dt); }
+    catch (error){ this.reportRenderFailure('render', error); }
     this.updateHud(dt, mmPlayers);
   }
 
@@ -481,6 +507,7 @@ export class Game {
   dispose(){
     this.running = false; cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.onResize);
+    this.canvas.removeEventListener?.('webglcontextlost', this.onContextLost, false);
     this.transport.close();
     for (const p of this.players.values()) p.runner?.dispose();
     this.hud.show(false);

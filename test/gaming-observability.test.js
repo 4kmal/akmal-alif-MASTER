@@ -15,7 +15,7 @@ import {
   readGamingPlayer,
   readGamingSession,
 } from '../admin-analytics/gaming.js';
-import { createGamingAnalytics } from '../js/gaming-analytics.js';
+import { createGamingAnalytics, createGamingMatchTracker } from '../js/gaming-analytics.js';
 import { createAnalyticsClient } from '../js/analytics.js';
 import { issueCorrelationToken } from '../worker/exepert/telemetry.js';
 
@@ -393,6 +393,71 @@ test('gaming performance leaves missing measurements unavailable instead of reco
   assert.equal(normalizeGamingEvent({
     id: 'forged-status', type: 'gaming_session_end', game_id: 'exepert', run_id: 'run-performance', status: 'server_verified',
   }).status, null);
+});
+
+test('gaming FPS sampling stays local between sparse 30-second performance events', () => {
+  const events = [];
+  const facade = createGamingAnalytics({
+    analytics: { track: (type, fields) => { events.push({ type, fields }); }, flush: async () => true },
+    gameId: 'relay-run', runId: 'run-fps-sample', autoStart: false,
+    heartbeatFields: () => ({ rtt_ms: null }),
+  });
+  facade.start();
+  for (let index = 0; index < 1_000; index += 1) facade.sampleFrame(index * 10);
+  assert.equal(events.filter(event => event.type === 'gaming_performance').length, 0);
+  facade.sampleFrame(30_000);
+  facade.sampleFrame(30_000);
+  assert.equal(events.filter(event => event.type === 'gaming_performance').length, 1);
+  facade.sampleFrame(60_000);
+  const performanceEvents = events.filter(event => event.type === 'gaming_performance');
+  assert.equal(performanceEvents.length, 2);
+  assert.ok(performanceEvents[0].fields.fps > 0);
+  assert.equal(performanceEvents[0].fields.rtt_ms, null);
+  assert.equal(performanceEvents[0].fields.load_ms, null);
+  assert.equal(events.filter(event => event.type === 'gaming_session_heartbeat').length, 0);
+  facade.end();
+});
+
+test('EXEPERT match telemetry rotates on a new match while reconnects reuse the same run', () => {
+  const runs = [];
+  const tracker = createGamingMatchTracker({
+    gameId: 'exepert',
+    startFields: { transport: 'websocket' },
+    createRun: () => {
+      const events = [];
+      const run = {
+        events,
+        start(fields) { events.push({ type: 'start', fields }); },
+        correlate(token, fields) { events.push({ type: 'link', token, fields }); },
+        interaction(action, fields) { events.push({ type: 'interaction', action, fields }); },
+        performance(fields) { events.push({ type: 'performance', fields }); },
+        sampleFrame() {},
+        result(fields) { events.push({ type: 'result', fields }); },
+        end(fields) { events.push({ type: 'end', fields }); },
+        track(type, fields) { events.push({ type, fields }); },
+      };
+      runs.push(run);
+      return run;
+    },
+  });
+
+  tracker.ensure({ match_id: 'match-one', mode: 'tdm', sector: 'bastion', correlation_token: 'token-one' });
+  tracker.ensure({ match_id: 'match-one', mode: 'tdm', sector: 'bastion', correlation_token: 'token-one' });
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].events.filter(event => event.type === 'start').length, 1);
+  assert.equal(runs[0].events.filter(event => event.type === 'link').length, 1);
+
+  tracker.ensure({ match_id: 'match-two', mode: 'uplink', sector: 'full', correlation_token: 'token-two' });
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].events.find(event => event.type === 'end').fields.reason, 'match_reset');
+  assert.equal(runs[1].events.find(event => event.type === 'start').fields.match_id, 'match-two');
+  assert.equal(runs[1].events.filter(event => event.type === 'link').length, 1);
+
+  tracker.ensure({ match_id: 'match-two', mode: 'uplink', sector: 'full', correlation_token: 'token-two' });
+  tracker.end({ status: 'completed' });
+  tracker.ensure({ match_id: 'match-two', mode: 'uplink', sector: 'full', correlation_token: 'token-two' });
+  assert.equal(runs.length, 2);
+  assert.equal(runs[1].events.filter(event => event.type === 'start').length, 1);
 });
 
 test('gaming sessions count visible play time and flush when the tab hides', () => {

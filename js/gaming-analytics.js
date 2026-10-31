@@ -16,6 +16,8 @@ function visibilityActive(documentRef) {
   return !documentRef || !documentRef.visibilityState || documentRef.visibilityState === 'visible';
 }
 
+const FPS_SAMPLE_INTERVAL_MS = 30_000;
+
 /**
  * Small game-facing facade over the existing first-party analytics queue.
  * Callers report lifecycle boundaries and sparse actions; no frame, position,
@@ -36,6 +38,8 @@ export function createGamingAnalytics(options = {}) {
   let activeMs = 0;
   let activeSince = null;
   let resultStatus = null;
+  let fpsWindowStartedAt = null;
+  let fpsFrameCount = 0;
 
   function listen(target, type, listener, listenerOptions) {
     if (!target?.addEventListener) return;
@@ -75,18 +79,48 @@ export function createGamingAnalytics(options = {}) {
     void analytics?.flush?.();
   }
 
+  function frameClock() {
+    if (typeof options.frameNow === 'function') return options.frameNow();
+    if (typeof windowRef?.performance?.now === 'function') return windowRef.performance.now();
+    if (typeof globalThis.performance?.now === 'function') return globalThis.performance.now();
+    return nowRef();
+  }
+
+  function sampleFrame(timestamp) {
+    if (ended || !started || !visibilityActive(documentRef)) return null;
+    const now = finite(timestamp, null) ?? finite(frameClock(), null);
+    if (now == null) return null;
+    if (fpsWindowStartedAt == null || now < fpsWindowStartedAt) {
+      fpsWindowStartedAt = now;
+      fpsFrameCount = 0;
+    }
+    fpsFrameCount += 1;
+    const elapsed = now - fpsWindowStartedAt;
+    if (elapsed < FPS_SAMPLE_INTERVAL_MS) return null;
+    const fps = fpsFrameCount * 1000 / elapsed;
+    fpsWindowStartedAt = now;
+    fpsFrameCount = 0;
+    const extra = typeof options.heartbeatFields === 'function' ? options.heartbeatFields() : {};
+    return performance({ fps, ...extra });
+  }
+
   function start(fields = {}) {
     if (ended || started) return api;
     started = true;
     startedAt = Number(nowRef()) || Date.now();
     activeMs = 0;
     activeSince = visibilityActive(documentRef) ? startedAt : null;
+    fpsWindowStartedAt = null;
+    fpsFrameCount = 0;
     track('gaming_session_start', { transport: 'browser', ...fields });
     timer = setInterval(heartbeat, 30_000);
     listen(windowRef, 'pagehide', () => end({ status: 'abandoned', reason: 'pagehide' }));
     listen(documentRef, 'visibilitychange', () => {
-      if (visibilityActive(documentRef)) activeSince = Number(nowRef()) || Date.now();
-      else heartbeat();
+      if (visibilityActive(documentRef)) {
+        activeSince = Number(nowRef()) || Date.now();
+        fpsWindowStartedAt = null;
+        fpsFrameCount = 0;
+      } else heartbeat();
     });
     return api;
   }
@@ -130,8 +164,97 @@ export function createGamingAnalytics(options = {}) {
     return event;
   }
 
-  const api = { gameId, runId, start, track, interaction, performance, correlate, result, heartbeat, end };
+  const api = { gameId, runId, start, track, interaction, performance, sampleFrame, correlate, result, heartbeat, end };
   if (options.autoStart !== false) start(options.startFields || {});
+  return api;
+}
+
+export function createGamingMatchTracker(options = {}) {
+  const createRun = options.createRun || (runOptions => createGamingAnalytics(runOptions));
+  const baseOptions = { ...options, autoStart: false };
+  delete baseOptions.createRun;
+  delete baseOptions.startFields;
+
+  let run = null;
+  let matchId = null;
+  let linkedToken = null;
+  let ended = false;
+  let loadReported = false;
+
+  function matchValue(value) {
+    const text = String(value ?? '').trim();
+    return text ? text.slice(0, 96) : null;
+  }
+
+  function link(fields = {}) {
+    if (!run || ended) return null;
+    const token = fields.correlation_token || fields.correlationToken;
+    if (!token || token === linkedToken) return null;
+    linkedToken = token;
+    return run.correlate(token, {
+      match_id: matchId,
+      mode: fields.mode,
+      sector: fields.sector,
+    });
+  }
+
+  function ensure(fields = {}) {
+    const nextMatchId = matchValue(fields.match_id ?? fields.matchId);
+    if (!nextMatchId) return run;
+    if (run && matchId === nextMatchId) {
+      link(fields);
+      if (!loadReported && fields.load_ms != null) {
+        run.performance({ load_ms: fields.load_ms });
+        loadReported = true;
+      }
+      return run;
+    }
+    if (run && !ended) run.end({ status: 'abandoned', reason: 'match_reset', match_id: matchId });
+    run = createRun(baseOptions);
+    matchId = nextMatchId;
+    linkedToken = null;
+    ended = false;
+    loadReported = false;
+    run.start({
+      ...(options.startFields || {}),
+      match_id: matchId,
+      mode: fields.mode,
+      sector: fields.sector,
+      transport: fields.transport || options.startFields?.transport,
+    });
+    link(fields);
+    if (fields.load_ms != null) {
+      run.performance({ load_ms: fields.load_ms });
+      loadReported = true;
+    }
+    return run;
+  }
+
+  function proxy(method, fields, extra) {
+    if (!run || ended || typeof run[method] !== 'function') return null;
+    return run[method](fields, extra);
+  }
+
+  function end(fields = {}) {
+    if (!run || ended) return null;
+    ended = true;
+    return run.end({ ...fields, match_id: fields.match_id || matchId });
+  }
+
+  const api = {
+    ensure,
+    link,
+    track: (type, fields) => proxy('track', type, fields),
+    interaction: (action, fields) => proxy('interaction', action, fields),
+    performance: fields => proxy('performance', fields),
+    sampleFrame: timestamp => proxy('sampleFrame', timestamp),
+    correlate: (token, fields) => link({ ...(fields || {}), correlation_token: token }),
+    result: fields => proxy('result', fields),
+    heartbeat: () => proxy('heartbeat'),
+    end,
+    getRun: () => run,
+    getMatchId: () => matchId,
+  };
   return api;
 }
 

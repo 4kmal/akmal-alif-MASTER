@@ -10,7 +10,7 @@ import { LocalTransport } from './net/local-transport.js';
 import { settings, saveSettings } from './settings.js';
 import { esc } from './hud.js';
 import './modes-extra.js';
-import { createGamingAnalytics } from '../../../js/gaming-analytics.js';
+import { createGamingMatchTracker } from '../../../js/gaming-analytics.js';
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -34,7 +34,6 @@ const TIPS = [
 
 const audio = new Audio();
 let world = null, input = null, game = null, view = 'home', backView = 'home', online = null, gamingRun = null;
-let bootStartedAt = performance.now();
 
 function show(id, on){ $(id).hidden = !on; }
 function go(v){
@@ -50,7 +49,6 @@ function note(text){ $('menuNote').textContent = text || ''; }
 
 /* ------------------------------------------------------------ boot */
 async function boot(){
-  bootStartedAt = performance.now();
   $('loadTip').textContent = TIPS[Math.floor(Math.random() * TIPS.length)];
   await new Promise(r => setTimeout(r, 40)); // let the loading screen paint (rAF would stall in a background tab)
   const t0 = performance.now();
@@ -206,12 +204,25 @@ async function startOnline(kind, code){
 function begin(transport){
   leave(true);
   audio.unlock();
-  gamingRun = createGamingAnalytics({ gameId:'exepert', autoStart:false, heartbeatFields:() => ({ rtt_ms:game?.rtt }) });
-  gamingRun.start({
+  gamingRun = createGamingMatchTracker({
+    gameId:'exepert',
+    heartbeatFields:() => ({ rtt_ms:game?.rtt }),
+    startFields: {
     transport: transport instanceof LocalTransport ? 'solo' : 'websocket',
     entrypoint: EMBED ? 'contact-arcade' : 'standalone', mode:settings.mode, sector:settings.sector,
+    },
   });
-  game = new Game({canvas:$('gl'), world, input, audio, transport, onEvent:onGameEvent});
+  try {
+    game = new Game({
+      canvas:$('gl'), world, input, audio, transport, onEvent:onGameEvent,
+      onFrame: t => gamingRun?.sampleFrame(t),
+      onRenderFailure: failure => gamingRun?.interaction('render_failure', { details: failure }),
+    });
+  } catch (error){
+    transport.close?.(); gamingRun = null; game = null;
+    show('menu', true); go('home'); note(error?.message || 'The EXEPERT renderer could not start. Solo play still works.');
+    return;
+  }
   game.hud.show(true);
   transport.onclose = info => { if (game?.transport === transport){ leave(true); show('menu', true); go('home'); note(info?.reason || 'Disconnected from the room.'); } };
   show('menu', false); show('post', true); $('postInner').innerHTML = ''; show('post', false);
@@ -220,10 +231,12 @@ function begin(transport){
 
 function onGameEvent(e){
   if (e.type === 'welcome'){
-    if (gamingRun) {
+    if (gamingRun && e.msg.phase === 'live' && e.msg.match_id) {
+      gamingRun.ensure({
+        match_id:e.msg.match_id, mode:e.msg.mode, sector:e.msg.sector,
+        correlation_token:e.msg.correlation_token, load_ms:game?.bootLoadMs,
+      });
       gamingRun.interaction('welcome', { match_id:e.msg.match_id, mode:e.msg.mode, sector:e.msg.sector });
-      if (e.msg.correlation_token) gamingRun.correlate(e.msg.correlation_token, { match_id:e.msg.match_id, mode:e.msg.mode, sector:e.msg.sector });
-      gamingRun.performance({ load_ms:Math.max(0, performance.now() - bootStartedAt) });
     }
     $('pauseCode').textContent = game.code === 'SOLO' ? '' : game.code;
     $('lobbyBtn').hidden = !!game.solo; $('pauseInvite').hidden = !!game.solo;
@@ -238,10 +251,14 @@ function onGameEvent(e){
       reason:e.result?.reason, score:mine?.score, kills:mine?.kills, deaths:mine?.deaths,
       assists:mine?.assists, details:{ bank_total:Array.isArray(e.result?.bank) ? e.result.bank[game?.myTeam] : undefined },
     });
+    gamingRun?.end({ status:'completed', reason:e.result?.reason || 'match_complete' });
     showPost(e.result);
   }
   else if (e.type === 'match' || e.type === 'phase'){
     show('post', false);
+    if (e.type === 'match' && game?.phase === 'live' && e.matchId) {
+      gamingRun?.ensure({ match_id:e.matchId, mode:game.mode?.id, sector:game.sector?.id, load_ms:game.bootLoadMs });
+    }
     // the host started the match: leave the squad room and drop everyone into the game
     if (e.type === 'phase' && e.phase === 'live' && !$('menu').hidden && view === 'lobby'){ show('menu', false); show('clickToPlay', true); }
     else if (view === 'lobby') renderLobby();

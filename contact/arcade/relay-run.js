@@ -4,6 +4,10 @@ import { createGamingAnalytics } from '../../js/gaming-analytics.js';
 export const LCD = ['#0f380f', '#306230', '#8bac0f', '#9bbc0f']; // darkest -> lightest
 const W = 160, H = 144, GROUND = 118, HI_KEY = 'arcade-relayrun-hi';
 
+function monotonicNow(){
+  return typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
+}
+
 const RUNNER = [ // 8x10, 1 = dark, 2 = mid
   '..1111..',
   '..1221..',
@@ -53,9 +57,12 @@ function sprite(ctx, rows, x, y, s = 1){
 export class RelayRun {
   constructor(audio){
     this.audio = audio;
+    this.bootStartedAt = monotonicNow();
     this.analytics = createGamingAnalytics({ gameId:'relay-run', autoStart:false });
+    this.renderFailureSources = new Set();
     try { this.hi = Number(localStorage.getItem(HI_KEY)) || 0; } catch { this.hi = 0; }
     this.reset();
+    this.bootLoadMs = Math.max(0, monotonicNow() - this.bootStartedAt);
     this.state = 'ready';
   }
 
@@ -68,7 +75,9 @@ export class RelayRun {
   startRun(){
     this.analytics?.end({ status:'abandoned', reason:'reset' });
     this.analytics = createGamingAnalytics({ gameId:'relay-run', autoStart:false });
+    this.renderFailureSources.clear();
     this.analytics.start({ transport:'handheld', entrypoint:'contact-arcade', mode:'endless' });
+    this.analytics.performance({ load_ms:this.bootLoadMs });
     this.analytics.interaction('start');
   }
 
@@ -77,6 +86,13 @@ export class RelayRun {
       if (status === 'completed') this.analytics?.result({ status, reason, score:this.score, distance:this.dist, details:{ end_reason:reason } });
       this.analytics?.end({ status, reason, score:this.score, distance:this.dist });
     }
+  }
+
+  reportRenderFailure(source, error){
+    const key = String(source || 'render');
+    if (this.renderFailureSources.has(key)) return;
+    this.renderFailureSources.add(key);
+    this.analytics?.interaction('render_failure', { details:{ source:key, error:error?.name || (error ? 'render_error' : null) } });
   }
 
   input(btn, down = true){
@@ -97,6 +113,7 @@ export class RelayRun {
     this.t += dt;
     if (this.flash > 0) this.flash -= dt;
     if (this.state !== 'run') return;
+    this.analytics?.sampleFrame(monotonicNow());
     this.speed = Math.min(170, 70 + this.dist * 0.018);
     this.dist += this.speed * dt;
     this.parallax += this.speed * dt;
@@ -129,6 +146,11 @@ export class RelayRun {
   }
 
   draw(ctx){
+    try { this.drawFrame(ctx); }
+    catch (error){ this.reportRenderFailure('render', error); }
+  }
+
+  drawFrame(ctx){
     ctx.fillStyle = this.flash > 0 ? LCD[1] : LCD[3];
     ctx.fillRect(0, 0, W, H);
     // distant relay masts
