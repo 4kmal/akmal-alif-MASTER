@@ -112,7 +112,16 @@ const dailyPoints = computed(() => (data.value?.daily || []).map(item => ({
   label: formatDate(item.date),
   value: item.starts,
 })))
-const overviewMetrics = computed(() => data.value?.overview || [])
+const overviewMetrics = computed<ObservabilityMetric[]>(() => {
+  const report = data.value
+  if (!report)
+    return []
+  const keys = new Set(['starts', 'players', 'completions', 'abandoned', 'play_seconds', 'returning_players', 'server_verified'])
+  return [
+    { key: 'active_players', label: 'Active players now', value: report.live.players, unit: 'count', detail: report.live.status === 'live' ? 'Confirmed room heartbeats' : `Online presence ${report.live.status}` },
+    ...report.overview.filter(metric => keys.has(metric.key)),
+  ]
+})
 const onlineMetrics = computed(() => data.value?.performance || [])
 const activeHumans = computed(() => data.value?.live.players ?? null)
 const activeBots = computed(() => data.value?.live.bots ?? null)
