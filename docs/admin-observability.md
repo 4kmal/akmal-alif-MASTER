@@ -43,6 +43,12 @@ portfolio's resources, including the admin Worker and its shared site bindings.
 Account allowances and account charges remain account-wide even when a resource
 filter is active.
 
+Provider `BilledCost` covers metered usage, rather than the full invoice.
+Subscription fees stay separate. Current storage size is shown in GiB; it is
+not a measurement of GB-month consumption. Incomplete billing sources,
+unpriced operations, or missing storage-time measurements leave the aggregate
+estimate and forecast unavailable. Known operation estimates remain visible.
+
 Usage reports and bills have separate windows. `CF_BILLING_CYCLE_DAY=8` is the
 configured fallback when Cloudflare's billing-cycle metadata cannot be read.
 The UI identifies that fallback. Actual charges, estimated metered overages,
@@ -140,3 +146,8 @@ The release evidence is kept in the integration worktree's ignored
 unit suite with 251 passing tests and five existing judging failures: two
 AI-runtime concurrency cases and three workbook formula checks at I13. Release
 checks must distinguish those failures from new regressions.
+
+The integrated release passed 235 root tests, 34 admin security tests, and the
+Node 24.21.0 typecheck. The admin unit suite has 281 passes and the same five
+judging failures recorded above. Both production builds completed. The public
+asset scan checked 355 text assets without finding the observability token.
