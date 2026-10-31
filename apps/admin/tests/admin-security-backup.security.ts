@@ -4,6 +4,7 @@ const backupDeps = vi.hoisted(() => ({
   migrationMarker: vi.fn(),
   links: vi.fn(),
   backupWorker: vi.fn(),
+  collect: vi.fn(),
 }))
 
 vi.mock('../server/services/link-store/migration', () => ({
@@ -12,6 +13,13 @@ vi.mock('../server/services/link-store/migration', () => ({
 vi.mock('../server/utils/link-store', () => ({
   iterateAllAuthoritativeLinks: backupDeps.links,
 }))
+vi.mock('../server/services/cloudflare-observability', () => ({
+  collectCloudflareObservability: backupDeps.collect,
+  runCloudflareMaintenance: vi.fn(),
+}))
+vi.mock('../server/services/gaming-observability', () => ({
+  runGamingMaintenance: vi.fn(),
+}))
 
 describe('scheduled and manual R2 backups', () => {
   beforeEach(() => {
@@ -19,6 +27,7 @@ describe('scheduled and manual R2 backups', () => {
     backupDeps.migrationMarker.mockReset()
     backupDeps.links.mockReset()
     backupDeps.backupWorker.mockReset()
+    backupDeps.collect.mockReset()
   })
 
   afterEach(() => {
@@ -104,7 +113,7 @@ describe('scheduled and manual R2 backups', () => {
     if (manual.completed)
       expect(manual.filename).toMatch(/^backups\/manual-links-.*\.json$/)
 
-    let scheduled: ((event: { env: unknown }) => Promise<void>) | undefined
+    let scheduled: ((event: { env: unknown, controller: { cron: string } }) => Promise<void>) | undefined
     let disabled = false
     vi.stubGlobal('defineNitroPlugin', (plugin: unknown) => plugin)
     vi.stubGlobal('useRuntimeConfig', () => ({ disableAutoBackup: disabled }))
@@ -120,10 +129,13 @@ describe('scheduled and manual R2 backups', () => {
     expect(scheduled).toBeDefined()
 
     disabled = true
-    await scheduled?.({ env: { R2 } })
+    await scheduled?.({ env: { R2 }, controller: { cron: '0 0 * * *' } })
     expect(backupDeps.backupWorker).not.toHaveBeenCalled()
     disabled = false
-    await scheduled?.({ env: { R2 } })
+    await scheduled?.({ env: { R2 }, controller: { cron: '0 0 * * *' } })
     expect(backupDeps.backupWorker).toHaveBeenCalledWith({ R2 })
+    await scheduled?.({ env: { R2 }, controller: { cron: '*/15 * * * *' } })
+    expect(backupDeps.backupWorker).toHaveBeenCalledOnce()
+    expect(backupDeps.collect).toHaveBeenCalledWith({ R2 })
   })
 })

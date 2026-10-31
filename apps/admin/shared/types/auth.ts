@@ -1,4 +1,4 @@
-export type AuthMethod = 'site-token' | 'access-user' | 'access-service' | 'portfolio-gateway' | 'local-admin'
+export type AuthMethod = 'site-token' | 'access-user' | 'access-service' | 'portfolio-gateway' | 'gaming-service' | 'local-admin'
 
 export interface VerifyResponse {
   name: string

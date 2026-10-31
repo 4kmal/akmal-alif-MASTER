@@ -12,6 +12,8 @@ import { getRuntimeBoolean, getRuntimeString } from '../utils/runtime-config'
 
 export default eventHandler(async (event) => {
   const isAnalyticsIngest = event.path === '/internal/events'
+  const isGamingIngest = event.path === '/internal/gaming/summary'
+    || event.path.startsWith('/internal/gaming/')
   const isRuntimeRequest = event.path === '/runtime' || event.path.startsWith('/runtime/')
   const isJudgingSyncRequest = event.path === '/api/judging-sync' || event.path.startsWith('/api/judging-sync/')
   if (isJudgingSyncRequest) {
@@ -21,7 +23,7 @@ export default eventHandler(async (event) => {
       return
     throw createError({ statusCode: 401, statusText: 'A valid judging device token is required' })
   }
-  if (!event.path.startsWith('/api/') && !isAnalyticsIngest && !isRuntimeRequest)
+  if (!event.path.startsWith('/api/') && !isAnalyticsIngest && !isGamingIngest && !isRuntimeRequest)
     return
 
   const adminEmail = getRuntimeString(event, 'adminEmail', 'ADMIN_EMAIL')
@@ -44,6 +46,23 @@ export default eventHandler(async (event) => {
   const isShortlinkHost = shortlinkHost && requestHostname === shortlinkHost
   const token = getHeader(event, 'Authorization')?.replace(/^Bearer\s+/, '')
   const isLocal = isLocalHostname(requestHostname)
+
+  if (isGamingIngest) {
+    if (event.path !== '/internal/gaming/summary')
+      throw createError({ statusCode: 404, statusText: 'Not Found' })
+    if (!gatewayAuthorized)
+      throw createError({ statusCode: 401, statusText: 'Gaming service authentication failed' })
+    if (requestOrigin !== 'https://admin.internal'
+      || getHeader(event, 'x-gaming-service') !== 'exepert-room'
+      || getHeader(event, 'Origin')
+      || getHeader(event, 'Sec-Fetch-Site')) {
+      throw createError({ statusCode: 403, statusText: 'Gaming summaries require the private service binding' })
+    }
+    if (event.method !== 'POST')
+      throw createError({ statusCode: 405, statusText: 'Method Not Allowed' })
+    event.context.authMethod = 'gaming-service'
+    return
+  }
 
   if (isAnalyticsIngest) {
     if (!gatewayAuthorized) {

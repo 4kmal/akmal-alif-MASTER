@@ -49,6 +49,47 @@ test('admin gateway fails closed on missing identity, config, or preview host', 
   assert.equal(isAdminPath('/administrator'), false);
 });
 
+test('observability pages and APIs require the owner and preserve their namespace', async () => {
+  const forwarded = [];
+  const backend = { ...env, ADMIN: { fetch: async request => {
+    forwarded.push(request);
+    return Response.json({ ok: true });
+  } } };
+  const paths = [
+    '/api/admin/observability/summary',
+    '/api/admin/observability/cloudflare?scope=account&range=7d',
+    '/api/admin/observability/gaming/sessions/example',
+    '/api/admin/observability/gaming/players/example',
+  ];
+  for (const pathname of paths) {
+    const denied = await handleAdminGateway(new Request(origin + pathname, {
+      headers: { 'x-portfolio-admin-id': 'root', 'x-portfolio-admin-email': env.ADMIN_EMAIL },
+    }), backend, options);
+    assert.equal(denied.status, 401);
+  }
+  assert.equal(forwarded.length, 0);
+  const token = await jwt();
+  for (const pathname of [...paths, '/admin/cloudflare', '/admin/gaming']) {
+    const response = await handleAdminGateway(accessRequest(pathname, token), backend, options);
+    assert.equal(response.status, 200);
+    assert.equal(forwarded.at(-1).url, origin + pathname);
+    assert.equal(forwarded.at(-1).headers.get('x-portfolio-admin-id'), 'root');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  }
+});
+
+test('the bundled portrait remains an asset request without an owner principal', async () => {
+  let forwarded;
+  const backend = { ...env, ADMIN: { fetch: async request => {
+    forwarded = request;
+    return new Response('portrait', { headers: { 'Content-Type': 'image/webp' } });
+  } } };
+  const response = await handleAdminGateway(new Request(origin + '/admin/profile.webp'), backend);
+  assert.equal(response.status, 200);
+  assert.equal(forwarded.headers.get('x-portfolio-admin-id'), null);
+  assert.equal(forwarded.headers.get('x-portfolio-gateway'), env.PORTFOLIO_GATEWAY_TOKEN);
+});
+
 test('better-auth local QA opt-in is independent from the Access local bypass', async () => {
   const forwarded = [];
   const backend = {

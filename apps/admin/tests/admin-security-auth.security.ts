@@ -119,11 +119,16 @@ describe('admin authentication route boundaries', () => {
     }
   })
 
-  async function startAuthRoute() {
+  async function startAuthRoute(nativeOrigin?: string) {
     const { default: auth } = await import('../server/middleware/2.auth')
     const app = createApp()
     // Mount at root so h3 keeps the original request path visible to the
     // middleware; a prefixed layer rewrites event.path to its suffix.
+    if (nativeOrigin) {
+      app.use('/', h3EventHandler((event) => {
+        event.context.cloudflare = { request: new Request(`${nativeOrigin}${event.path}`) } as typeof event.context.cloudflare
+      }))
+    }
     app.use('/', h3EventHandler(auth))
     app.use('/', h3EventHandler(() => ({ ok: true })))
     server = createServer(toNodeListener(app))
@@ -164,6 +169,49 @@ describe('admin authentication route boundaries', () => {
     expect(response.status).toBe(401)
     expect(response.headers['www-authenticate']).toBe('Bearer')
     expect(response.body).toContain('Unauthorized')
+  })
+
+  it('keeps account billing and player journeys unavailable to shortlink site tokens', async () => {
+    await startAuthRoute()
+    for (const path of [
+      '/api/admin/observability/summary',
+      '/api/admin/observability/cloudflare',
+      '/api/admin/observability/gaming',
+      '/api/admin/observability/gaming/sessions/example',
+      '/api/admin/observability/gaming/players/example',
+    ]) {
+      const response = await requestAuth({
+        'host': 'go.akmalalif.com',
+        'authorization': 'Bearer public-site-token',
+        'x-portfolio-admin-id': 'root',
+        'x-portfolio-admin-email': 'iamaleep@gmail.com',
+      }, path)
+      expect(response.status).toBe(401)
+    }
+  })
+
+  it('rejects public-host and browser attempts to submit authoritative gaming results', async () => {
+    await startAuthRoute('https://www.akmalalif.com')
+    const serviceHeaders = {
+      'x-portfolio-gateway': 'gateway-secret',
+      'x-gaming-service': 'exepert-room',
+    }
+    expect((await requestAuth(serviceHeaders, '/internal/gaming/summary', 'POST')).status).toBe(403)
+    expect((await requestAuth({ ...serviceHeaders, 'x-portfolio-gateway': '' }, '/internal/gaming/summary', 'POST')).status).toBe(401)
+    expect((await requestAuth(serviceHeaders, '/internal/gaming/other', 'POST')).status).toBe(404)
+  })
+
+  it('accepts only private EXEPERT service POSTs without browser headers', async () => {
+    await startAuthRoute('https://admin.internal')
+    const serviceHeaders = {
+      'x-portfolio-gateway': 'gateway-secret',
+      'x-gaming-service': 'exepert-room',
+    }
+    expect((await requestAuth(serviceHeaders, '/internal/gaming/summary', 'POST')).status).toBe(200)
+    expect((await requestAuth(serviceHeaders, '/internal/gaming/summary')).status).toBe(405)
+    expect((await requestAuth({ ...serviceHeaders, 'x-gaming-service': 'browser' }, '/internal/gaming/summary', 'POST')).status).toBe(403)
+    expect((await requestAuth({ ...serviceHeaders, origin: 'https://www.akmalalif.com' }, '/internal/gaming/summary', 'POST')).status).toBe(403)
+    expect((await requestAuth({ ...serviceHeaders, 'sec-fetch-site': 'same-origin' }, '/internal/gaming/summary', 'POST')).status).toBe(403)
   })
 
   it('does not exempt BetterAuth-shaped paths on the native go host', async () => {
