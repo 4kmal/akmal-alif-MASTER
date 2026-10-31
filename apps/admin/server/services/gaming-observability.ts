@@ -25,7 +25,8 @@ interface WorkerReportData {
   to?: number
   sessions?: GamingSession[]
   players?: GamingPlayer[]
-  playersCount?: number
+  playersCount?: number | null
+  historicalAggregates?: boolean
   eventCount?: number
   daily?: Array<{ date?: string, starts?: number, players?: number | null, completions?: number, playSeconds?: number }>
   games?: WorkerBreakdown[]
@@ -42,7 +43,7 @@ interface WorkerReportData {
     active?: number
     serverVerified?: number
     playSeconds?: number
-    returningPlayers?: number
+    returningPlayers?: number | null
   }
   trackingStartedAt?: string | null
   authoritative?: {
@@ -86,7 +87,7 @@ function one(value: unknown): string {
 
 function rangeDays(value: unknown): number {
   const range = one(value)
-  return range === '7d' ? 7 : range === '90d' ? 90 : 30
+  return range === '7d' ? 7 : range === '90d' ? 90 : range === '13m' ? 396 : 30
 }
 
 function iso(value: number): string {
@@ -219,15 +220,20 @@ export async function readGamingReport(event: H3Event): Promise<GamingReport> {
   }
   const report = {
     meta,
-    coverage: [{ source: 'admin-d1:gaming', status: 'live', checkedAt: meta.checkedAt }],
+    coverage: [{
+      source: 'admin-d1:gaming',
+      status: data.historicalAggregates ? 'partial' : 'live',
+      checkedAt: meta.checkedAt,
+      ...(data.historicalAggregates ? { reason: 'Older activity uses daily summaries. Unique and returning players cannot be deduplicated after session details expire at 90 days.' } : {}),
+    }],
     overview: [
       metric('starts', 'Game starts', Number(aggregate.starts ?? sessions.length)),
-      metric('players', 'Pseudonymous players', Number(data.playersCount || 0)),
+      metric('players', 'Pseudonymous players', data.historicalAggregates ? null : Number(data.playersCount ?? 0)),
       metric('completions', 'Completed sessions', completed),
       metric('server_verified', 'Server verified sessions', verified),
       metric('abandoned', 'Abandoned sessions', Number(aggregate.abandoned ?? 0)),
       metric('active', 'Active or disconnected sessions', Number(aggregate.active ?? 0)),
-      metric('returning_players', 'Returning players', Number(aggregate.returningPlayers ?? 0)),
+      metric('returning_players', 'Returning players', data.historicalAggregates ? null : Number(aggregate.returningPlayers ?? 0)),
       metric('play_seconds', 'Play time', playSeconds, 'seconds'),
       metric('events', 'Gaming events', Number(data.eventCount || 0)),
       ...authoritativeMetrics(data.authoritative),
