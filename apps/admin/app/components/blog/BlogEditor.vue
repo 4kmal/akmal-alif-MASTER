@@ -1,6 +1,8 @@
 <!-- eslint-disable no-alert -->
 <script setup lang="ts">
 import type { Editor } from '@tiptap/vue-3'
+import type { BlogCategoryOption } from './BlogCategoryPicker.vue'
+import type { BlogTagOption } from './BlogTagPicker.vue'
 import type { BlogDocxImportReview } from '@/composables/useBlogDocuments'
 import type { BlogAsset, BlogDraft, BlogMediaAttrs, BlogPostDetail, BlogRevision, LegacyConversionResult } from '@/utils/blog-studio'
 import type { GallerySummary } from '@/utils/content-calendar'
@@ -16,7 +18,9 @@ import { preserveDraftEditsAfterServerSave, rebaseDraftOntoServer } from '@/comp
 import { cloneDraft, createEmptyDraft, formatDate, isStaleDraftError } from '@/utils/blog-studio'
 import { normalizeYouTubeVideoId } from '@/utils/content-calendar'
 import { getBlogPosterAssets } from './blog-media-library-state'
+import BlogCategoryPicker from './BlogCategoryPicker.vue'
 import BlogModal from './BlogModal.vue'
+import BlogTagPicker from './BlogTagPicker.vue'
 
 const route = useRoute()
 const api = useBlogApi()
@@ -25,7 +29,7 @@ const detail = ref<BlogPostDetail | null>(null)
 const draft = ref<BlogDraft>(createEmptyDraft())
 const loading = ref(true)
 const error = ref('')
-const taxonomy = ref<{ categories: { id: string, name: string, slug: string }[], tags: { id: string, name: string, slug: string }[] }>({ categories: [], tags: [] })
+const taxonomy = ref<{ categories: BlogCategoryOption[], tags: BlogTagOption[] }>({ categories: [], tags: [] })
 const taxonomyNames = reactive({ category: '', tag: '' })
 const taxonomySaving = ref<'category' | 'tag' | null>(null)
 const revisions = ref<BlogRevision[]>([])
@@ -148,6 +152,11 @@ async function addTaxonomy(kind: 'category' | 'tag') {
   finally {
     taxonomySaving.value = null
   }
+}
+
+function createTag(name: string) {
+  taxonomyNames.tag = name
+  return addTaxonomy('tag')
 }
 
 const posterAssets = computed(() => getBlogPosterAssets(mediaAssets.value))
@@ -825,9 +834,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             </div>
             <label class="blog-field"><span>Slug</span><input :value="draft.slug" autocomplete="off" :disabled="Boolean(detail?.post.published_version)" @input="setDraftField('slug', ($event.target as HTMLInputElement).value)"></label>
             <label class="blog-field"><span>Excerpt</span><textarea :value="draft.excerpt" rows="3" @input="setDraftField('excerpt', ($event.target as HTMLTextAreaElement).value)" /></label>
-            <label class="blog-field"><span>Category</span><select :value="draft.category_id ?? ''" @change="setDraftField('category_id', ($event.target as HTMLSelectElement).value || null)"><option value="">Uncategorised</option><option v-for="category in taxonomy.categories" :key="category.id" :value="category.id">{{ category.name }}</option></select></label>
+            <BlogCategoryPicker :categories="taxonomy.categories" :model-value="draft.category_id ?? null" @update:model-value="setDraftField('category_id', $event)" />
             <details class="blog-taxonomy-disclosure">
-              <summary>Add category</summary>
+              <summary>+ New category</summary>
               <form class="blog-taxonomy-create" @submit.prevent="addTaxonomy('category')">
                 <label class="blog-field"><span>New category</span><input v-model="taxonomyNames.category" required maxlength="160" :disabled="taxonomySaving !== null" autocomplete="off"></label>
                 <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.category.trim()">
@@ -835,21 +844,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 </button>
               </form>
             </details>
-            <fieldset class="blog-field blog-tag-options">
-              <legend>Tags</legend>
-              <p v-if="!taxonomy.tags.length" class="blog-inspector__empty">
-                Add a tag to start organizing this post.
-              </p>
-              <label
-                v-for="tag in taxonomy.tags" :key="tag.id" class="blog-toggle"
-              ><input type="checkbox" :checked="draft.tag_ids.includes(tag.id)" @change="setDraftField('tag_ids', ($event.target as HTMLInputElement).checked ? [...draft.tag_ids, tag.id] : draft.tag_ids.filter(id => id !== tag.id))"><span>{{ tag.name }}</span></label>
-            </fieldset>
-            <form class="blog-taxonomy-create" @submit.prevent="addTaxonomy('tag')">
-              <label class="blog-field"><span>New tag</span><input v-model="taxonomyNames.tag" required maxlength="160" :disabled="taxonomySaving !== null" autocomplete="off"></label>
-              <button type="submit" class="blog-button" :disabled="taxonomySaving !== null || !taxonomyNames.tag.trim()">
-                {{ taxonomySaving === 'tag' ? 'Adding…' : 'Add tag' }}
-              </button>
-            </form>
+            <BlogTagPicker :tags="taxonomy.tags" :model-value="draft.tag_ids" :creating="taxonomySaving === 'tag'" @update:model-value="setDraftField('tag_ids', $event)" @create="createTag" />
             <label class="blog-field"><span>Cover image URL</span><input :value="draft.cover_image_url" type="url" placeholder="Protected asset URL" @input="setDraftField('cover_image_url', ($event.target as HTMLInputElement).value)"></label>
             <label class="blog-field"><span>Cover alt text</span><input :value="draft.cover_image_alt" @input="setDraftField('cover_image_alt', ($event.target as HTMLInputElement).value)"></label>
             <label class="blog-field"><span>Read time (minutes)</span><input :value="draft.read_minutes" type="number" min="1" max="999" @input="setDraftField('read_minutes', Number(($event.target as HTMLInputElement).value) || 1)"></label>

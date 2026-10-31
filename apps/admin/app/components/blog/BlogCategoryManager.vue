@@ -1,29 +1,11 @@
 <script setup lang="ts">
+import type { BlogCategoryIconKey } from '#shared/utils/blog-category-icons'
 import type { BlogCategory, BlogTaxonomy } from '@/utils/blog-studio'
 import { Check, ChevronDown, ChevronUp, LoaderCircle, Plus, Save, ShieldCheck } from '@lucide/vue'
+import { BLOG_CATEGORY_ICON_KEYS as CATEGORY_ICON_KEYS, isBlogCategoryIconKey } from '#shared/utils/blog-category-icons'
 import { useBlogApi } from '@/composables/useBlogApi'
 import { isBlogCategoryActive } from '@/utils/blog-studio'
-
-const CATEGORY_ICON_KEYS = [
-  'civic-tech',
-  'cybersecurity',
-  'game-development',
-  'robotics',
-  'anthem',
-  'internet-culture',
-  'islamic-heritage',
-  'psychology',
-  'machine-learning',
-  'neuroscience',
-  'technology',
-  'design',
-  'education',
-  'music',
-  'news',
-  'personal',
-  'projects',
-  'general',
-] as const
+import BlogCategorySprite from './BlogCategorySprite.vue'
 
 type CategoryDraft = BlogCategory & { is_active: boolean, sort_order: number, version: number }
 
@@ -36,7 +18,7 @@ const error = ref('')
 const notice = ref('')
 const newName = ref('')
 const newDescription = ref('')
-const newIcon = ref<(typeof CATEGORY_ICON_KEYS)[number]>('technology')
+const newIcon = ref<BlogCategoryIconKey>('technology')
 
 function toDraft(category: BlogCategory, index: number): CategoryDraft {
   return {
@@ -44,7 +26,7 @@ function toDraft(category: BlogCategory, index: number): CategoryDraft {
     description: category.description ?? '',
     is_active: isBlogCategoryActive(category.is_active),
     sort_order: Number.isFinite(category.sort_order) ? Number(category.sort_order) : index,
-    icon_key: CATEGORY_ICON_KEYS.includes(category.icon_key as (typeof CATEGORY_ICON_KEYS)[number]) ? category.icon_key : 'technology',
+    icon_key: isBlogCategoryIconKey(category.icon_key) ? category.icon_key : 'technology',
     version: Number(category.version ?? 0),
   }
 }
@@ -125,7 +107,7 @@ async function save() {
         description: String(category.description ?? '').trim(),
         sort_order: index,
         is_active: category.is_active,
-        icon_key: CATEGORY_ICON_KEYS.includes(category.icon_key as (typeof CATEGORY_ICON_KEYS)[number]) ? String(category.icon_key) : 'technology',
+        icon_key: isBlogCategoryIconKey(category.icon_key) ? category.icon_key : 'technology',
       })
       updated = response
       const saved = response.categories.find(item => item.id === category.id)
@@ -196,7 +178,12 @@ onMounted(load)
             ><span>Description</span><textarea v-model="category.description" rows="2" maxlength="500" :aria-label="`Description for ${category.slug}`" /></label>
           </div>
           <div class="blog-category-fields">
-            <label class="blog-field"><span>Icon</span><select v-model="category.icon_key" :aria-label="`Icon for ${category.slug}`"><option v-for="icon in CATEGORY_ICON_KEYS" :key="icon" :value="icon">{{ icon }}</option></select></label><label
+            <label class="blog-field"><span>Icon</span><span
+              class="blog-icon-select"
+            >
+              <BlogCategorySprite :icon-key="category.icon_key" play="always" />
+              <select v-model="category.icon_key" :aria-label="`Icon for ${category.slug}`"><option v-for="icon in CATEGORY_ICON_KEYS" :key="icon" :value="icon">{{ icon }}</option></select>
+            </span></label><label
               class="blog-toggle"
             ><input v-model="category.is_active" type="checkbox"><span>Active</span></label><span
               class="blog-category-slug"
@@ -220,7 +207,7 @@ onMounted(load)
           class="blog-field"
         ><span>Description</span><input v-model="newDescription" maxlength="500" placeholder="Short description"></label><label
           class="blog-field"
-        ><span>Icon</span><select v-model="newIcon"><option v-for="icon in CATEGORY_ICON_KEYS" :key="icon" :value="icon">{{ icon }}</option></select></label><button
+        ><span>Icon</span><span class="blog-icon-select"><BlogCategorySprite :icon-key="newIcon" play="always" /><select v-model="newIcon"><option v-for="icon in CATEGORY_ICON_KEYS" :key="icon" :value="icon">{{ icon }}</option></select></span></label><button
           type="submit" class="blog-button"
         >
           <Plus :size="16" /> Add

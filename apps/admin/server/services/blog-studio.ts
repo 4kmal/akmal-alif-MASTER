@@ -1,5 +1,6 @@
 import type { H3Event } from 'h3'
 import { getHeader, getRequestWebStream, getRouterParam, readBody } from 'h3'
+import { isBlogCategoryIconKey } from '#shared/utils/blog-category-icons'
 import { BLOG_MAX_CANONICAL_BYTES, BLOG_SCHEMA_VERSION, blogByteLength, legacyMediaKind, legacyMediaPathsFromHtml, normalizeLegacyMediaPath, renderTiptapDocument, sanitizeLegacyBlogHtml, snapshotDraft } from '../utils/blog-content'
 import { getRuntimeString } from '../utils/runtime-config'
 
@@ -1353,30 +1354,9 @@ export async function getBlogTaxonomy(event: H3Event) {
   return { categories: rows(categories), tags: rows(tags) }
 }
 
-const BLOG_CATEGORY_ICON_KEYS = new Set([
-  'civic-tech',
-  'cybersecurity',
-  'game-development',
-  'robotics',
-  'anthem',
-  'internet-culture',
-  'islamic-heritage',
-  'psychology',
-  'machine-learning',
-  'neuroscience',
-  'technology',
-  'design',
-  'education',
-  'music',
-  'news',
-  'personal',
-  'projects',
-  'general',
-])
-
 function categoryIconKey(value: unknown, fallback = 'general'): string {
   const key = value == null || value === '' ? fallback : stringField(value, 'icon_key', 80).toLowerCase()
-  if (!BLOG_CATEGORY_ICON_KEYS.has(key))
+  if (!isBlogCategoryIconKey(key))
     throw createError({ statusCode: 400, statusMessage: 'icon_key is not allowed' })
   return key
 }
