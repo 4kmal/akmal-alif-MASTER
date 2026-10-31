@@ -242,8 +242,8 @@ export async function readGamingReport(event: H3Event): Promise<GamingReport> {
     games: (data.games || []).map(gameBreakdown),
     modes: (data.modes || []).map(gameBreakdown),
     sectors: (data.sectors || []).map(gameBreakdown),
-    interactions: data.interactions || [],
-    endReasons: data.endReasons || [],
+    interactions: (data.interactions || []).map(row => ({ gameId: String(row.gameId || ''), label: String(row.label || ''), count: Number(row.count || 0) })),
+    endReasons: (data.endReasons || []).map(row => ({ gameId: String(row.gameId || ''), reason: String(row.reason || ''), count: Number(row.count || 0) })),
     funnel: (data.funnel || []).map(row => ({
       stage: String(row.stage || ''),
       count: Number(row.count || 0),
@@ -263,7 +263,7 @@ export async function readGamingReport(event: H3Event): Promise<GamingReport> {
       metric('load_avg', 'Average game load', data.performance?.loadMs == null ? null : Number(data.performance.loadMs), 'ms'),
     ],
     nextCursor: data.nextCursor || null,
-  } as unknown as GamingReport
+  } satisfies GamingReport
   return report
 }
 

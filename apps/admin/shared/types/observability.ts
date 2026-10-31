@@ -94,7 +94,7 @@ export interface GamingSession {
   kills?: number | null
   deaths?: number | null
   assists?: number | null
-  details?: Record<string, number | string | null>
+  details?: Record<string, number | string | boolean | number[] | null>
 }
 
 export interface GamingBreakdown {
@@ -105,6 +105,11 @@ export interface GamingBreakdown {
   completions: number
   playSeconds: number
   score?: number | null
+  distance?: number
+  disconnects?: number
+  renderFailures?: number
+  endReasons?: Record<string, number>
+  interactions?: Record<string, number>
 }
 
 export interface GamingPlayer {
@@ -124,6 +129,9 @@ export interface GamingReport {
   daily: Array<{ date: string, starts: number, players: number | null, completions: number, playSeconds: number }>
   games: GamingBreakdown[]
   modes: GamingBreakdown[]
+  sectors?: GamingBreakdown[]
+  interactions?: Array<{ gameId: string, label: string, count: number }>
+  endReasons?: Array<{ gameId: string, reason: string, count: number }>
   funnel: Array<{ stage: string, count: number }>
   sessions: GamingSession[]
   players: GamingPlayer[]
@@ -136,11 +144,22 @@ export interface GamingSessionDetail {
   session: GamingSession
   timeline: Array<{ id: string, at: string, kind: string, detail?: string }>
   participants: Array<{ label: string, bot: boolean, kills?: number, deaths?: number, assists?: number, score?: number }>
+  timelineTotal?: number
+  timelineLimit?: number
+  timelineTruncated?: boolean
+  timelineNextCursor?: string | null
+  participantsTotal?: number
+  participantsLimit?: number
+  participantsTruncated?: boolean
 }
 
 export interface GamingPlayerDetail {
   player: GamingPlayer
   sessions: GamingSession[]
+  sessionsTotal?: number
+  sessionsLimit?: number
+  sessionsTruncated?: boolean
+  sessionsNextCursor?: string | null
 }
 
 export interface ObservabilitySummary {
