@@ -247,6 +247,8 @@ function billingUsageValue(value: number | null, unit: string) {
           <option value="24h">Last 24 hours</option>
           <option value="7d">Last 7 days</option>
           <option value="30d">Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+          <option value="13m">Last 13 months</option>
         </select>
       </label>
       <label>
@@ -381,7 +383,7 @@ function billingUsageValue(value: number | null, unit: string) {
             <span class="observability-status" :data-state="data.billing.status">{{ data.billing.status }}</span>
           </div>
           <div class="observability-grid">
-            <article class="observability-card observability-card--metric"><h3>Actual charges</h3><span class="observability-value" :data-unavailable="data.billing.actualCharges === null">{{ billingValue(data.billing.actualCharges, data.billing.currency) }}</span><p class="observability-card__hint">Provider posted charges</p></article>
+            <article class="observability-card observability-card--metric"><h3>Billed metered usage</h3><span class="observability-value" :data-unavailable="data.billing.actualCharges === null">{{ billingValue(data.billing.actualCharges, data.billing.currency) }}</span><p class="observability-card__hint">Provider BilledCost; subscription fees are separate</p></article>
             <article class="observability-card observability-card--metric"><h3>Estimated charges</h3><span class="observability-value" :data-unavailable="data.billing.estimatedCharges === null">{{ billingValue(data.billing.estimatedCharges, data.billing.currency) }}</span><p class="observability-card__hint">Usage estimate</p></article>
             <article class="observability-card observability-card--metric"><h3>Fixed fees</h3><span class="observability-value" :data-unavailable="data.billing.fixedFees === null">{{ billingValue(data.billing.fixedFees, data.billing.currency) }}</span><p class="observability-card__hint">Plan or fixed component</p></article>
             <article class="observability-card observability-card--metric"><h3>Forecast</h3><span class="observability-value" :data-unavailable="data.billing.forecast === null">{{ billingValue(data.billing.forecast, data.billing.currency) }}</span><p class="observability-card__hint">Projected cycle total</p></article>

@@ -10,11 +10,11 @@ import type {
 import { computed, onBeforeUnmount, onMounted, ref, toValue, watch } from 'vue'
 import { useAPI } from '@/utils/api'
 
-export type CloudflareRange = '24h' | '7d' | '30d'
+export type CloudflareRange = '24h' | '7d' | '30d' | '90d' | '13m'
 export type CloudflareScope = 'account' | 'akmalalif'
 export type GamingRange = '7d' | '30d' | '90d' | '13m'
 
-const CLOUDFLARE_RANGES: readonly CloudflareRange[] = ['24h', '7d', '30d']
+const CLOUDFLARE_RANGES: readonly CloudflareRange[] = ['24h', '7d', '30d', '90d', '13m']
 const CLOUDFLARE_SCOPES: readonly CloudflareScope[] = ['account', 'akmalalif']
 const GAMING_RANGES: readonly GamingRange[] = ['7d', '30d', '90d', '13m']
 
