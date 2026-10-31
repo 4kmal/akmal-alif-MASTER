@@ -1,7 +1,7 @@
 .blog-studio-page,
 .blog-editor-page {
-  --blog-yellow: #fbda29;
-  --blog-charcoal: #1a1a1a;
+  --blog-yellow: var(--admin-link);
+  --blog-charcoal: var(--success-foreground);
   display: grid;
   gap: 1rem;
   width: min(100%, 1600px);
@@ -2208,7 +2208,7 @@
 /* Picker lists are portalled to <body>, outside the editor page that defines the studio tokens. */
 .blog-category-picker__content,
 .blog-tag-picker__list {
-  --blog-yellow: #fbda29;
+  --blog-yellow: var(--admin-link);
 }
 
 .blog-category-picker__content.blog-category-picker__content {

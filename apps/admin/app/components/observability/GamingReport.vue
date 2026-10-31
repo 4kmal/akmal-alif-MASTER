@@ -641,7 +641,7 @@ onBeforeUnmount(() => detailController?.abort())
                 "
               >
                 <div class="observability-bar__label">
-                  <span>{{ stage.stage }}</span><strong>{{ stage.count }}</strong>
+                  <span>{{ detailLabel(stage.stage) }}</span><strong>{{ stage.count }}</strong>
                 </div>
                 <div class="observability-bar__track">
                   <div
