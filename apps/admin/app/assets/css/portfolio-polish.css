@@ -809,6 +809,12 @@
   grid-column: 1 / -1;
 }
 
+.observability-line-chart__area {
+  fill: var(--chart-1);
+  fill-opacity: 0.16;
+  stroke: none;
+}
+
 .observability-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

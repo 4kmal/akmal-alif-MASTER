@@ -32,6 +32,14 @@ const plottedPoints = computed(() => props.points.map((point, index) => ({
   y: padding.top + innerHeight - (point.value / maxValue.value) * innerHeight,
 })))
 const linePath = computed(() => plottedPoints.value.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' '))
+const areaPath = computed(() => {
+  const first = plottedPoints.value[0]
+  const last = plottedPoints.value.at(-1)
+  if (!first || !last)
+    return ''
+  const baseline = padding.top + innerHeight
+  return `${linePath.value} L ${last.x.toFixed(2)} ${baseline} L ${first.x.toFixed(2)} ${baseline} Z`
+})
 const axisLabels = computed(() => plottedPoints.value.filter((_, index) => {
   if (plottedPoints.value.length <= 5)
     return true
@@ -64,6 +72,7 @@ const gridRows = computed(() => [0, 0.5, 1].map(ratio => ({
           x="0"
           :y="row.y + 4"
         >{{ row.label }}</text>
+        <path class="observability-line-chart__area" :d="areaPath" />
         <path class="observability-line-chart__line" :d="linePath" />
         <circle
           v-for="point in plottedPoints"
