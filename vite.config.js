@@ -82,11 +82,16 @@ export default defineConfig(({ mode }) => {
   const agent = backend.startsWith('https:')
     ? new HttpsAgent({ keepAlive: true, family: 4 })
     : undefined;
-  const proxy = Object.fromEntries(backendPaths.map((prefix) => [prefix, {
-    target: backend,
-    changeOrigin: true,
-    agent,
-  }]));
+  // EXEPERT rooms (HTTP + WebSocket) go to a local `pnpm dev:worker`, which runs the Durable Objects.
+  const gameBackend = env.PORTFOLIO_GAME_BACKEND || 'http://localhost:8787';
+  const proxy = {
+    '/api/exepert': { target: gameBackend, changeOrigin: true, ws: true },
+    ...Object.fromEntries(backendPaths.map((prefix) => [prefix, {
+      target: backend,
+      changeOrigin: true,
+      agent,
+    }])),
+  };
 
   return {
   root: '.',
@@ -122,7 +127,7 @@ export default defineConfig(({ mode }) => {
       name: 'read-only-development-backend',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          if (isBackendPath(req.url) && !['GET', 'HEAD'].includes(req.method)) {
+          if (isBackendPath(req.url) && !req.url.startsWith('/api/exepert') && !['GET', 'HEAD'].includes(req.method)) {
             res.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'The frontend preview only forwards public reads.' }));
             return;

@@ -82,7 +82,7 @@ export class Room {
     this.syncBots();
     this.balanceTeams();
     for (const p of this.players.values()) this.spawn(p);
-    this.events.push({e:'match', m:this.modeId, sec:this.sector});
+    this.events.push({e:'match', m:this.modeId, sec:this.sector, bots:this.botSetting, diff:this.difficulty});
   }
 
   inPlay(x, z){ return this.world.inSector(this.sector, x, z); }

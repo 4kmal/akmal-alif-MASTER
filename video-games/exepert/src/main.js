@@ -218,7 +218,12 @@ function onGameEvent(e){
     history.replaceState(null, '', game.solo ? location.pathname + (EMBED ? '?embed=1' : '') : `${location.pathname}?room=${game.code}${EMBED ? '&embed=1' : ''}`);
   } else if (e.type === 'roster' && view === 'lobby' && !$('menu').hidden) renderLobby();
   else if (e.type === 'end') showPost(e.result);
-  else if (e.type === 'match' || e.type === 'phase'){ show('post', false); if (view === 'lobby') renderLobby(); }
+  else if (e.type === 'match' || e.type === 'phase'){
+    show('post', false);
+    // the host started the match: leave the squad room and drop everyone into the game
+    if (e.type === 'phase' && e.phase === 'live' && !$('menu').hidden && view === 'lobby'){ show('menu', false); show('clickToPlay', true); }
+    else if (view === 'lobby') renderLobby();
+  }
   else if (e.type === 'pause' && input.locked) input.unlock();
   else if (e.type === 'version'){ leave(true); show('menu', true); go('home'); note('A new version of EXEPERT is out. Reload the page to play online.'); }
   else if (e.type === 'error'){ note(e.msg?.message || 'The room refused the connection.'); }
@@ -246,6 +251,14 @@ function renderLobby(){
   $('lobbyCode').textContent = game.code;
   const isHost = game.myId === game.host;
   $('hostRow').querySelectorAll('select').forEach(s => { s.disabled = !isHost; });
+  // reflect the room's real settings (unless the host is mid-edit)
+  if (!$('hostRow').contains(document.activeElement)){
+    $('lobbyMode').value = game.mode.id;
+    const m = game.mode; $('lobbySector').innerHTML = (m.sectors || [m.sector]).map(s => `<option value="${s}">${SECTOR_INFO[s].name}</option>`).join('');
+    $('lobbySector').value = game.sector?.id || m.sector;
+    $('lobbyBots').value = String(game.config?.bots ?? 'auto');
+    $('lobbyDiff').value = game.config?.diff || 'normal';
+  }
   $('startBtn').hidden = !isHost || game.phase !== 'lobby';
   $('lobbyHint').textContent = game.phase === 'lobby' ? (isHost ? 'You are the host. Set it up and start when your squad is in.' : 'Warm up while you wait. The host starts the match.') : 'The match is live. Close this to jump back in.';
   const list = [...game.roster.values()];

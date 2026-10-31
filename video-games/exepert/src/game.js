@@ -93,6 +93,7 @@ export class Game {
       if (m.proto !== PROTOCOL){ this.onEvent({type:'version'}); return; }
       if (m.hash !== this.world.hash) console.warn('EXEPERT world hash differs from the server', m.hash, this.world.hash);
       this.myId = m.id; this.code = m.code; this.host = m.host; this.isPrivate = m.priv; this.solo = m.solo;
+      this.config = {bots:m.bots, diff:m.diff};
       this.setMode(m.mode, m.sector); this.phase = m.phase;
       this.onEvent({type:'welcome', msg:m});
       return;
@@ -209,7 +210,7 @@ export class Game {
       }
       case 'mark': if (!this.mode.teams || e.team === this.myTeam){ this.marks.push({x:e.x, y:e.y, z:e.z, t:performance.now(), who:this.name(e.p)}); this.audio.ui(); } break;
       case 'end': this.onEvent({type:'end', result:e.r}); break;
-      case 'match': this.setMode(e.m, e.sec); this.onEvent({type:'match'}); break;
+      case 'match': this.setMode(e.m, e.sec); this.config = {bots:e.bots, diff:e.diff}; this.onEvent({type:'match'}); break;
       case 'phase': this.onEvent({type:'phase', phase:e.ph}); break;
       case 'join': case 'leave': break;
       default: this.modeEvent?.(e);
