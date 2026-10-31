@@ -151,6 +151,14 @@ interface CachedInventory {
 interface CachedBillingMetrics {
   expiresAt: number
   metrics: ObservabilityMetric[]
+  complete: boolean
+  reason?: string
+}
+
+interface BillingMetricsResult {
+  metrics: ObservabilityMetric[]
+  complete: boolean
+  reason?: string
 }
 
 interface ActualBillingResult {
@@ -546,6 +554,8 @@ const rangeDurations: Record<string, number> = {
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
   '30d': 30 * 24 * 60 * 60 * 1000,
+  '90d': 90 * 24 * 60 * 60 * 1000,
+  '13m': 13 * 31 * 24 * 60 * 60 * 1000,
 }
 
 function queryString(value: QueryValue): string | undefined {
@@ -611,7 +621,7 @@ export function parseCloudflareQuery(query: Record<string, QueryValue> = {}, now
   else {
     const duration = rangeDurations[rangeValue]
     if (!duration)
-      throw createError({ statusCode: 400, statusMessage: 'range must be 15m, 1h, 24h, 7d, or 30d' })
+      throw createError({ statusCode: 400, statusMessage: 'range must be 15m, 1h, 24h, 7d, 30d, 90d, or 13m' })
     to = new Date(now)
     from = new Date(now - duration)
   }
@@ -1650,17 +1660,18 @@ async function readBuilds(env: CloudflareEnvironment, token: string, query: Clou
   return { coverage: coverage('builds', capReason ? 'partial' : 'live', checkedAt, capReason, true), metrics, series }
 }
 
-async function readBillingMetrics(env: CloudflareEnvironment, token: string, cycle: { from: string, to: string }, scope: CloudflareQuery['scope'], now: number): Promise<ObservabilityMetric[]> {
+async function readBillingMetrics(env: CloudflareEnvironment, token: string, cycle: { from: string, to: string }, scope: CloudflareQuery['scope'], now: number): Promise<BillingMetricsResult> {
   const cycleFrom = new Date(cycle.from).getTime()
   const cycleTo = Math.min(new Date(cycle.to).getTime(), now)
   const retentionFrom = now - LIVE_GRAPHQL_RETENTION_MS
   const from = Math.max(cycleFrom, retentionFrom)
+  const retentionComplete = Number.isFinite(cycleFrom) && cycleFrom >= retentionFrom
   if (!Number.isFinite(from) || !Number.isFinite(cycleTo) || from >= cycleTo)
-    return []
+    return { metrics: [], complete: false, reason: 'Current-cycle analytics were unavailable for the billing window; estimated charges and forecast are withheld.' }
   const cacheKey = `${CLOUDFLARE_ACCOUNT_ID}:${scope}:${cycle.from}:${cycle.to}`
   const cached = billingMetricCache.get(cacheKey)
   if (cached && cached.expiresAt > now)
-    return cached.metrics
+    return { metrics: cached.metrics, complete: cached.complete, reason: cached.reason }
   const query: CloudflareQuery = {
     from: new Date(from),
     to: new Date(cycleTo),
@@ -1680,13 +1691,28 @@ async function readBillingMetrics(env: CloudflareEnvironment, token: string, cyc
   ]
   const settled = await Promise.allSettled(readers)
   const metrics = settled.flatMap(result => result.status === 'fulfilled' ? result.value.metrics : [])
+  const failures = settled
+    .map((result, index) => result.status === 'rejected' ? `${['workers', 'durable_objects', 'd1', 'kv', 'r2', 'queues', 'workflows'][index]}: ${providerReason(result.reason)}` : undefined)
+    .filter((reason): reason is string => Boolean(reason))
+  const partialSources = settled.flatMap((result, index) => {
+    if (result.status !== 'fulfilled' || result.value.coverage.status === 'live')
+      return []
+    const source = ['workers', 'durable_objects', 'd1', 'kv', 'r2', 'queues', 'workflows'][index]
+    return [`${source}: ${result.value.coverage.reason ?? `coverage status ${result.value.coverage.status}`}`]
+  })
+  const reason = [
+    retentionComplete ? undefined : 'Current-cycle analytics were bounded to the provider retention window; full-cycle estimates and forecast are withheld.',
+    failures.length ? `Billing analytics sources were unavailable: ${failures.join(' ')}` : undefined,
+    partialSources.length ? `Billing analytics sources were partial: ${partialSources.join(' ')}` : undefined,
+  ].filter(Boolean).join(' ') || undefined
+  const complete = retentionComplete && failures.length === 0 && partialSources.length === 0
   if (!billingMetricCache.has(cacheKey) && billingMetricCache.size >= MAX_BILLING_METRIC_CACHE_ENTRIES) {
     const oldest = billingMetricCache.keys().next().value
     if (typeof oldest === 'string')
       billingMetricCache.delete(oldest)
   }
-  billingMetricCache.set(cacheKey, { expiresAt: now + OBSERVABILITY_CACHE_MS, metrics })
-  return metrics
+  billingMetricCache.set(cacheKey, { expiresAt: now + OBSERVABILITY_CACHE_MS, metrics, complete, reason })
+  return { metrics, complete, reason }
 }
 
 function metricValue(metrics: ObservabilityMetric[], key: string): number | null {
@@ -2069,10 +2095,13 @@ async function buildReport(env: CloudflareEnvironment, token: string, query: Clo
   const allSeries = [...sourceData.values()].flatMap(data => data.series)
   const resources = inventoryResourcesForScope(inventory, query, scopedEnv)
   const billingCycle = actualBilling?.cycle ?? getBillingCycle(now)
-  const metricsCoverage = getBillingMetricsCoverage(billingCycle, now)
-  const billingMetrics = allowBilling
+  const billingMetricsResult: BillingMetricsResult = allowBilling
     ? await readBillingMetrics(scopedEnv, token, billingCycle, query.scope, now)
-    : allMetrics
+    : { metrics: allMetrics, complete: true }
+  const metricsCoverage = allowBilling
+    ? { complete: billingMetricsResult.complete, reason: billingMetricsResult.reason }
+    : getBillingMetricsCoverage(billingCycle, now)
+  const billingMetrics = billingMetricsResult.metrics
   const billing = buildBilling(billingMetrics, now, actualBilling, metricsCoverage)
   if (actualBilling) {
     sourceCoverage.push(coverage(
@@ -2204,6 +2233,68 @@ interface DailyMetricRow {
   value?: unknown
 }
 
+const UTC_DAY_MS = 24 * 60 * 60 * 1000
+
+function utcDayStart(value: Date | number): number {
+  const date = new Date(value)
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+}
+
+function isUtcMidnight(value: Date): boolean {
+  return value.getUTCHours() === 0 && value.getUTCMinutes() === 0 && value.getUTCSeconds() === 0 && value.getUTCMilliseconds() === 0
+}
+
+function dailyQueryBounds(query: CloudflareQuery): { fromDay: string, toDay: string, partialBoundary: boolean } | null {
+  const fromStart = utcDayStart(query.from)
+  const toStart = utcDayStart(query.to)
+  const fromDay = fromStart + (isUtcMidnight(query.from) ? 0 : UTC_DAY_MS)
+  const toDay = toStart - UTC_DAY_MS
+  if (fromDay > toDay)
+    return null
+  return {
+    fromDay: new Date(fromDay).toISOString().slice(0, 10),
+    toDay: new Date(toDay).toISOString().slice(0, 10),
+    partialBoundary: !isUtcMidnight(query.from) || !isUtcMidnight(query.to),
+  }
+}
+
+interface DailyMetricAggregate {
+  item: ObservabilityMetric
+  latestDay: string
+}
+
+function aggregateDailyMetrics(rows: DailyMetricRow[]): { metrics: ObservabilityMetric[], series: CloudflareReport['series'] } {
+  const aggregate = new Map<string, DailyMetricAggregate>()
+  const series: CloudflareReport['series'] = []
+  for (const row of rows) {
+    const key = typeof row.metric_key === 'string' ? row.metric_key : ''
+    const day = typeof row.day === 'string' ? row.day : ''
+    const unit = typeof row.unit === 'string' ? row.unit : 'unknown'
+    const value = asFiniteNumber(row.value)
+    if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(day) || value === null)
+      continue
+    const resourceId = typeof row.resource_id === 'string' && row.resource_id ? row.resource_id : undefined
+    const item = metric(key, key, value, unit, resourceId ? { resourceId, resourceName: resourceId } : {})
+    const aggregateKey = `${key}\u0000${resourceId ?? ''}`
+    const previous = aggregate.get(aggregateKey)
+    if (!previous) {
+      aggregate.set(aggregateKey, { item, latestDay: day })
+    }
+    else if (dailyMetricIsGauge(item)) {
+      if (day >= previous.latestDay)
+        aggregate.set(aggregateKey, { item, latestDay: day })
+    }
+    else {
+      aggregate.set(aggregateKey, {
+        item: { ...previous.item, value: (previous.item.value ?? 0) + value },
+        latestDay: day >= previous.latestDay ? day : previous.latestDay,
+      })
+    }
+    series.push({ timestamp: `${day}T00:00:00.000Z`, metric: key, value, ...(resourceId ? { resourceId } : {}) })
+  }
+  return { metrics: [...aggregate.values()].map(entry => entry.item), series }
+}
+
 function historicalMetricBucket(key: string): 'compute' | 'durableObjects' | 'storage' | 'traffic' | 'services' {
   if (key.startsWith('workers.'))
     return 'compute'
@@ -2220,14 +2311,15 @@ async function readDailyHistoricalReport(env: CloudflareEnvironment, query: Clou
   const db = database(env)
   if (!db)
     return null
-  const fromDay = query.from.toISOString().slice(0, 10)
-  const toDay = query.to.toISOString().slice(0, 10)
+  const bounds = dailyQueryBounds(query)
+  if (!bounds)
+    return null
   const statement = db.prepare(`
     SELECT day, metric_key, resource_id, unit, value
     FROM cloudflare_observability_daily
     WHERE scope = ? AND day >= ? AND day <= ?
     ORDER BY day ASC, metric_key ASC, resource_id ASC
-  `).bind(query.scope, fromDay, toDay)
+  `).bind(query.scope, bounds.fromDay, bounds.toDay)
   if (!statement.all)
     return null
   const result = await statement.all<DailyMetricRow>()
@@ -2235,22 +2327,14 @@ async function readDailyHistoricalReport(env: CloudflareEnvironment, query: Clou
   if (!rows.length)
     return null
   const checkedAt = iso(now)
+  const aggregate = aggregateDailyMetrics(rows)
   const compute: ObservabilityMetric[] = []
   const durableObjects: ObservabilityMetric[] = []
   const storage: ObservabilityMetric[] = []
   const traffic: ObservabilityMetric[] = []
   const services: ObservabilityMetric[] = []
-  const series: CloudflareReport['series'] = []
-  for (const row of rows) {
-    const key = typeof row.metric_key === 'string' ? row.metric_key : ''
-    const day = typeof row.day === 'string' ? row.day : ''
-    const unit = typeof row.unit === 'string' ? row.unit : 'unknown'
-    const value = asFiniteNumber(row.value)
-    if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(day) || value === null)
-      continue
-    const resourceId = typeof row.resource_id === 'string' && row.resource_id ? row.resource_id : undefined
-    const item = metric(key, key, value, unit, resourceId ? { resourceId, resourceName: resourceId } : {})
-    const bucket = historicalMetricBucket(key)
+  for (const item of aggregate.metrics) {
+    const bucket = historicalMetricBucket(item.key)
     if (bucket === 'compute')
       compute.push(item)
     else if (bucket === 'durableObjects')
@@ -2261,11 +2345,12 @@ async function readDailyHistoricalReport(env: CloudflareEnvironment, query: Clou
       traffic.push(item)
     else
       services.push(item)
-    series.push({ timestamp: `${day}T00:00:00.000Z`, metric: key, value, ...(resourceId ? { resourceId } : {}) })
   }
   if (!compute.length && !durableObjects.length && !storage.length && !traffic.length && !services.length)
     return null
-  const reason = 'Historical Cloudflare daily aggregates; live retention and billing data were not re-read.'
+  const reason = bounds.partialBoundary
+    ? 'Historical Cloudflare daily aggregates cover complete UTC days only; partial boundary days were excluded.'
+    : 'Historical Cloudflare daily aggregates; live retention and billing data were not re-read.'
   return {
     meta: {
       from: query.from.toISOString(),
@@ -2283,8 +2368,108 @@ async function readDailyHistoricalReport(env: CloudflareEnvironment, query: Clou
     traffic,
     services,
     billing: unavailableBilling(reason, now),
-    series,
+    series: aggregate.series,
     deployments: [],
+  }
+}
+
+function mergeMetricLists(historical: ObservabilityMetric[], live: ObservabilityMetric[]): ObservabilityMetric[] {
+  const merged = new Map<string, ObservabilityMetric>()
+  for (const item of historical) {
+    const key = `${item.key}\u0000${item.resourceId ?? ''}`
+    merged.set(key, item)
+  }
+  for (const item of live) {
+    const key = `${item.key}\u0000${item.resourceId ?? ''}`
+    const previous = merged.get(key)
+    if (!previous) {
+      merged.set(key, item)
+      continue
+    }
+    if (dailyMetricIsGauge(item)) {
+      merged.set(key, item)
+      continue
+    }
+    merged.set(key, {
+      ...item,
+      value: previous.value === null ? item.value : item.value === null ? previous.value : previous.value + item.value,
+    })
+  }
+  return [...merged.values()]
+}
+
+function mergeSeriesLists(historical: CloudflareReport['series'], live: CloudflareReport['series']): CloudflareReport['series'] {
+  const merged = new Map<string, CloudflareReport['series'][number]>()
+  for (const item of [...historical, ...live]) {
+    const key = `${item.timestamp}\u0000${item.metric}\u0000${item.resourceId ?? ''}`
+    merged.set(key, item)
+  }
+  return [...merged.values()].sort((left, right) => left.timestamp.localeCompare(right.timestamp) || left.metric.localeCompare(right.metric))
+}
+
+const MIXED_HISTORY_REASON = 'Mixed retained and live Cloudflare data; additive metrics combine daily history with live analytics, gauges use the latest value, and percentiles are not recomputed across the full range.'
+
+function mergeMixedCoverage(
+  historical: CloudflareReport | null,
+  live: CloudflareReport | null,
+  checkedAt: string,
+  historyMissing: boolean,
+): SourceCoverage[] {
+  const historicalCoverage = new Map((historical?.coverage ?? []).map(item => [item.source, item]))
+  const liveCoverage = new Map((live?.coverage ?? []).map(item => [item.source, item]))
+  const sources = [...new Set([...emptyCoverageSources, ...historicalCoverage.keys(), ...liveCoverage.keys()])]
+  return sources.map((source) => {
+    const historicalItem = historicalCoverage.get(source)
+    const liveItem = liveCoverage.get(source)
+    if (source === 'billing' && liveItem)
+      return { ...liveItem, checkedAt }
+    if (liveItem) {
+      const shouldBePartial = historyMissing || Boolean(historicalItem)
+      return {
+        ...liveItem,
+        status: shouldBePartial && liveItem.status === 'live' ? 'partial' : liveItem.status,
+        checkedAt,
+        reason: [liveItem.reason, historicalItem?.reason, shouldBePartial ? MIXED_HISTORY_REASON : undefined, historyMissing ? 'Stored daily history for the older prefix was unavailable.' : undefined].filter(Boolean).join(' ') || undefined,
+      }
+    }
+    if (historicalItem)
+      return { ...historicalItem, checkedAt }
+    return coverage(source, historyMissing ? 'partial' : 'unavailable', checkedAt, historyMissing ? 'Stored daily history and live provider data were unavailable for this source.' : undefined)
+  })
+}
+
+function mergeMixedReports(historical: CloudflareReport | null, live: CloudflareReport | null, query: CloudflareQuery, now: number): CloudflareReport | null {
+  if (!historical && !live)
+    return null
+  if (!historical && live) {
+    const checkedAt = iso(now)
+    return {
+      ...live,
+      meta: { ...live.meta, from: query.from.toISOString(), to: query.to.toISOString(), checkedAt, scope: query.scope },
+      coverage: mergeMixedCoverage(null, live, checkedAt, true),
+    }
+  }
+  if (historical && !live) {
+    return {
+      ...historical,
+      meta: { ...historical.meta, from: query.from.toISOString(), to: query.to.toISOString(), checkedAt: iso(now), scope: query.scope },
+    }
+  }
+  const checkedAt = iso(now)
+  const historicalReport = historical!
+  const liveReport = live!
+  return {
+    meta: { ...liveReport.meta, from: query.from.toISOString(), to: query.to.toISOString(), checkedAt, scope: query.scope },
+    coverage: mergeMixedCoverage(historicalReport, liveReport, checkedAt, false),
+    resources: liveReport.resources.length ? liveReport.resources : historicalReport.resources,
+    compute: mergeMetricLists(historicalReport.compute, liveReport.compute),
+    durableObjects: mergeMetricLists(historicalReport.durableObjects, liveReport.durableObjects),
+    storage: mergeMetricLists(historicalReport.storage, liveReport.storage),
+    traffic: mergeMetricLists(historicalReport.traffic, liveReport.traffic),
+    services: mergeMetricLists(historicalReport.services, liveReport.services),
+    billing: liveReport.billing,
+    series: mergeSeriesLists(historicalReport.series, liveReport.series),
+    deployments: liveReport.deployments,
   }
 }
 
@@ -2292,8 +2477,11 @@ async function readHistoricalReport(env: CloudflareEnvironment, query: Cloudflar
   const db = database(env)
   if (!db)
     return null
+  const daily = await readDailyHistoricalReport(env, query, now)
+  if (daily)
+    return daily
   if (query.to.getTime() <= now - SNAPSHOT_RETENTION_MS)
-    return readDailyHistoricalReport(env, query, now)
+    return null
   const statement = db.prepare(`
     SELECT report_json
     FROM cloudflare_observability_snapshots
@@ -2302,10 +2490,10 @@ async function readHistoricalReport(env: CloudflareEnvironment, query: Cloudflar
     LIMIT 1
   `).bind(query.scope, query.to.getTime())
   if (!statement.first)
-    return readDailyHistoricalReport(env, query, now)
+    return null
   const row = await statement.first<{ report_json?: unknown }>()
   if (!row || typeof row.report_json !== 'string')
-    return readDailyHistoricalReport(env, query, now)
+    return null
   try {
     const report = JSON.parse(row.report_json) as CloudflareReport
     const checkedAt = iso(now)
@@ -2317,8 +2505,36 @@ async function readHistoricalReport(env: CloudflareEnvironment, query: Cloudflar
     }
   }
   catch {
-    return readDailyHistoricalReport(env, query, now)
+    return null
   }
+}
+
+function mixedLiveStart(now: number): number {
+  return utcDayStart(now - LIVE_GRAPHQL_RETENTION_MS) + UTC_DAY_MS
+}
+
+async function readMixedRangeReport(env: CloudflareEnvironment, token: string, query: CloudflareQuery, now: number): Promise<CloudflareReport | null> {
+  const liveStart = mixedLiveStart(now)
+  if (query.from.getTime() >= liveStart || query.to.getTime() <= liveStart)
+    return null
+  const historicalQuery: CloudflareQuery = {
+    ...query,
+    to: new Date(liveStart),
+    historical: true,
+    preset: false,
+  }
+  const historical = await readDailyHistoricalReport(env, historicalQuery, now)
+  const liveFrom = new Date(Math.max(query.from.getTime(), liveStart))
+  const liveQuery: CloudflareQuery = {
+    ...query,
+    from: liveFrom,
+    historical: false,
+    preset: false,
+  }
+  const live = liveFrom.getTime() < query.to.getTime()
+    ? await buildReport(env, token, liveQuery, now)
+    : null
+  return mergeMixedReports(historical, live, query, now)
 }
 
 async function pruneObservability(env: CloudflareEnvironment, now: number): Promise<void> {
@@ -2382,6 +2598,18 @@ export async function readCloudflareReport(event: H3Event): Promise<CloudflareRe
     return {
       ...cached.report,
       meta: { ...cached.report.meta, from: query.from.toISOString(), to: query.to.toISOString(), scope: query.scope },
+    }
+  }
+  if (query.from.getTime() < mixedLiveStart(now) && query.to.getTime() > mixedLiveStart(now)) {
+    const mixed = await readMixedRangeReport(env, token, query, now)
+    if (mixed) {
+      if (!reportCache.has(cacheKey) && reportCache.size >= MAX_REPORT_CACHE_ENTRIES) {
+        const oldest = reportCache.keys().next().value
+        if (typeof oldest === 'string')
+          reportCache.delete(oldest)
+      }
+      reportCache.set(cacheKey, { expiresAt: now + OBSERVABILITY_CACHE_MS, report: mixed })
+      return mixed
     }
   }
   const effectiveQuery = query.from.getTime() < now - LIVE_GRAPHQL_RETENTION_MS

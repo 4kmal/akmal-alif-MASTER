@@ -111,6 +111,8 @@ describe('cloudflare observability query and accounting helpers', () => {
     expect(shorthand.scope).toBe('akmalalif')
     expect(shorthand.from.toISOString()).toBe('2026-10-24T12:00:00.000Z')
     expect(shorthand.to.toISOString()).toBe('2026-10-31T12:00:00.000Z')
+    expect(parseCloudflareQuery({ range: '90d' }, now).to.getTime() - parseCloudflareQuery({ range: '90d' }, now).from.getTime()).toBe(90 * 24 * 60 * 60 * 1000)
+    expect(parseCloudflareQuery({ range: '13m' }, now).to.getTime() - parseCloudflareQuery({ range: '13m' }, now).from.getTime()).toBe(13 * 31 * 24 * 60 * 60 * 1000)
 
     const explicit = parseCloudflareQuery({ from: '2026-10-01T00:00:00.000Z', to: '2026-10-02T00:00:00.000Z' }, now)
     expect(explicit.range).toBe('24h')
@@ -257,6 +259,89 @@ describe('cloudflare observability provider boundaries', () => {
       }))
       expect(historical.compute.find(item => item.key === 'workers.requests')?.value).toBe(20)
       expect(historical.coverage.every(item => item.status === 'stale')).toBe(true)
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('combines retained daily counts with the live prefix without overlapping the UTC split day', async () => {
+    const memory = createMemoryDb([
+      { day: '2026-09-30', scope: 'account', metric_key: 'workers.requests', resource_id: '', unit: 'count', value: 10, updated_at: 1 },
+      { day: '2026-10-01', scope: 'account', metric_key: 'workers.requests', resource_id: '', unit: 'count', value: 100, updated_at: 1 },
+      { day: '2026-09-30', scope: 'account', metric_key: 'workers.memoryUsageBytesP99', resource_id: '', unit: 'bytes', value: 20, updated_at: 1 },
+      { day: '2026-10-01', scope: 'account', metric_key: 'workers.memoryUsageBytesP99', resource_id: '', unit: 'bytes', value: 999, updated_at: 1 },
+    ])
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/graphql')) {
+        const body = JSON.parse(String(init?.body)) as { query?: string }
+        const workerRow = {
+          sum: { requests: 5, errors: 0, subrequests: 0, cpuTimeUs: 1, duration: 1, wallTime: 1 },
+          quantiles: { cpuTimeP50: 1, cpuTimeP90: 1, cpuTimeP99: 1, cpuTimeP999: 1, memoryUsageBytesP50: 10, memoryUsageBytesP90: 20, memoryUsageBytesP99: 30, memoryUsageBytesP999: 40, wallTimeP50: 1, wallTimeP99: 1, wallTimeP999: 1, durationP50: 1, durationP99: 1 },
+          dimensions: { datetimeHour: '2026-10-01T00:00:00Z', scriptName: 'akmalalif-admin' },
+        }
+        const account: Record<string, unknown> = body.query?.includes('workersAggregate')
+          ? { workersAggregate: [workerRow], workersByScript: [workerRow], workersSeries: [workerRow] }
+          : {}
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [account] } } }), { status: 200 })
+      }
+      if (url.includes('/billing/history') || url.includes('/billing/profile'))
+        return new Response(JSON.stringify({ success: false, errors: [{ message: 'forbidden' }] }), { status: 403 })
+      return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
+    }))
+    const env = { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test', DB: memory.db }
+    const now = Date.parse('2026-10-31T12:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    try {
+      const path = '/api/admin/observability/cloudflare?from=2026-09-29T00:00:00.000Z&to=2026-10-31T12:00:00.000Z'
+      const first = await readCloudflareReport(eventWithPath(path, env))
+      expect(first.compute.find(item => item.key === 'workers.requests')?.value).toBe(15)
+      expect(first.compute.find(item => item.key === 'workers.memoryUsageBytesP99')?.value).toBe(30)
+      const requestSeries = first.series.filter(item => item.metric === 'workers.requests')
+      expect(requestSeries.map(item => item.timestamp)).toEqual(['2026-09-30T00:00:00.000Z', '2026-10-01T00:00:00Z'])
+      clearCloudflareObservabilityCache()
+      const second = await readCloudflareReport(eventWithPath(path, env))
+      expect(second.compute.find(item => item.key === 'workers.requests')?.value).toBe(15)
+      expect(second.series.filter(item => item.metric === 'workers.requests')).toHaveLength(2)
+      expect(second.coverage.some(item => item.status === 'partial')).toBe(true)
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('withholds billing totals when a cycle analytics source is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/graphql')) {
+        const body = JSON.parse(String(init?.body)) as { query?: string }
+        if (body.query?.includes('durableObjectsInvocations'))
+          return new Response(JSON.stringify({ errors: [{ message: 'durable analytics unavailable' }] }), { status: 200 })
+        const workerRow = {
+          sum: { requests: 10, errors: 0, subrequests: 0, cpuTimeUs: 1, duration: 1, wallTime: 1 },
+          quantiles: { cpuTimeP50: 1, cpuTimeP90: 1, cpuTimeP99: 1, cpuTimeP999: 1, memoryUsageBytesP50: 1, memoryUsageBytesP90: 1, memoryUsageBytesP99: 1, memoryUsageBytesP999: 1, wallTimeP50: 1, wallTimeP99: 1, wallTimeP999: 1, durationP50: 1, durationP99: 1 },
+          dimensions: { datetimeHour: '2026-10-31T12:00:00Z', scriptName: 'akmalalif-admin' },
+        }
+        const account: Record<string, unknown> = body.query?.includes('workersAggregate')
+          ? { workersAggregate: [workerRow], workersByScript: [workerRow], workersSeries: [workerRow] }
+          : {}
+        return new Response(JSON.stringify({ data: { viewer: { accounts: [account] } } }), { status: 200 })
+      }
+      if (url.includes('/billing/'))
+        return new Response(JSON.stringify({ success: false, errors: [{ message: 'forbidden' }] }), { status: 403 })
+      return new Response(JSON.stringify({ success: true, result: [], result_info: { total_pages: 1 } }), { status: 200 })
+    }))
+    const event = { context: { cloudflare: { env: { CF_OBSERVABILITY_TOKEN: 'test-token', CF_OBSERVABILITY_API_URL: 'https://api.example.test' } } } } as never
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.parse('2026-10-31T12:00:00.000Z'))
+    try {
+      const report = await readCloudflareReport(eventWithPath('/api/admin/observability/cloudflare?range=24h', event.context.cloudflare.env))
+      expect(report.billing.estimatedCharges).toBeNull()
+      expect(report.billing.forecast).toBeNull()
+      expect(report.billing.status).toBe('partial')
+      expect(report.billing.reason).toContain('durable_objects')
     }
     finally {
       vi.useRealTimers()
