@@ -125,6 +125,9 @@ export default defineNuxtConfig({
   },
   compatibilityDate: '2026-07-13',
   nitro: {
+    externals: {
+      inline: [fileURLToPath(new URL('./shared/judging/', import.meta.url))],
+    },
     alias: {
       '@portfolio-analytics': portfolioAnalyticsPath,
     },

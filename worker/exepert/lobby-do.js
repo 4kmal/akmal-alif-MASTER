@@ -7,7 +7,7 @@ import { newCode, json } from './shared.js';
 const STALE_MS = 35_000;
 
 export class ExepertLobby {
-  constructor(ctx, env){ this.ctx = ctx; this.env = env; this.rooms = new Map(); this.startedAt = Date.now(); }
+  constructor(ctx, env){ this.ctx = ctx; this.env = env; this.rooms = new Map(); this.startedAt = Date.now(); this.lastReportAt = null; }
 
   prune(){
     const now = Date.now();
@@ -27,6 +27,7 @@ export class ExepertLobby {
 
     if (url.pathname === '/report'){
       if (!body.code) return json({error:'Missing code'}, 400);
+      this.lastReportAt = now;
       if (body.closed) this.rooms.delete(body.code);
       else this.rooms.set(body.code, {
         code:body.code, mode:body.mode, priv:!!body.priv, humans:body.humans | 0,
@@ -63,17 +64,20 @@ export class ExepertLobby {
       for (const r of list) byMode[r.mode] = (byMode[r.mode] || 0) + r.humans;
       const confirmed = list.filter(r => r.confirmedAt != null && now - r.confirmedAt <= STALE_MS);
       const heartbeatTimes = confirmed.map(r => r.confirmedAt);
+      const hasEvidence = this.lastReportAt != null && now - this.lastReportAt <= STALE_MS;
+      const evidenceAt = this.lastReportAt == null ? null : new Date(this.lastReportAt).toISOString();
       return json({
         players:list.reduce((s, r) => s + r.humans, 0), rooms:list.length, open:list.filter(r => !r.priv).length, byMode,
         confirmed: {
-          players:confirmed.reduce((sum, r) => sum + r.confirmedHumans, 0),
-          bots:confirmed.reduce((sum, r) => sum + r.confirmedBots, 0),
-          rooms:confirmed.length,
-          checkedAt:new Date(now).toISOString(),
+          players:hasEvidence ? confirmed.reduce((sum, r) => sum + r.confirmedHumans, 0) : null,
+          bots:hasEvidence ? confirmed.reduce((sum, r) => sum + r.confirmedBots, 0) : null,
+          rooms:hasEvidence ? confirmed.length : null,
+          checkedAt:evidenceAt,
+          evidenceAt,
           oldestHeartbeatAt:heartbeatTimes.length ? new Date(Math.min(...heartbeatTimes)).toISOString() : null,
           newestHeartbeatAt:heartbeatTimes.length ? new Date(Math.max(...heartbeatTimes)).toISOString() : null,
           freshnessSeconds:STALE_MS / 1000,
-          status:now - this.startedAt < STALE_MS ? 'partial' : 'live',
+          status:!hasEvidence ? 'unavailable' : now - this.startedAt < STALE_MS ? 'partial' : 'live',
         },
       });
     }

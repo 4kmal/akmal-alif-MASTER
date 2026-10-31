@@ -1,5 +1,5 @@
-import type { GamingReport, SourceCoverage } from '../../shared/types/observability'
 import type { H3Event } from 'h3'
+import type { GamingReport, SourceCoverage } from '../../shared/types/observability'
 
 type Presence = GamingReport['live']
 interface PresenceEnvironment {
@@ -27,8 +27,11 @@ export async function readGamingPresence(env: PresenceEnvironment, now = Date.no
     const payload = await response.json() as { confirmed?: Record<string, unknown> }
     const presence = payload.confirmed
     const timestamp = typeof presence?.checkedAt === 'string' ? Date.parse(presence.checkedAt) : Number.NaN
+    const evidence = typeof presence?.evidenceAt === 'string' ? Date.parse(presence.evidenceAt) : Number.NaN
     if (!presence || !nonnegative(presence.players) || !nonnegative(presence.rooms) || !nonnegative(presence.bots)
-      || !Number.isFinite(timestamp) || timestamp > now + 5000 || now - timestamp > 35_000
+      || !Number.isFinite(timestamp) || !Number.isFinite(evidence)
+      || evidence > now + 5000 || now - evidence > 35_000
+      || timestamp > now + 5000 || now - timestamp > 35_000
       || !['live', 'partial'].includes(String(presence.status))) {
       throw new Error('Confirmed room heartbeats are unavailable or expired.')
     }
@@ -41,7 +44,9 @@ export async function readGamingPresence(env: PresenceEnvironment, now = Date.no
     }
     retainedPresence = live
     return { live, coverage: {
-      source, status: live.status, checkedAt: live.checkedAt,
+      source,
+      status: live.status,
+      checkedAt: live.checkedAt,
       reason: live.status === 'partial'
         ? 'Lobby is warming up; rooms report within ten seconds. Reservations are excluded.'
         : 'EXEPERT room heartbeats expire after 35 seconds. Reservations are excluded.',

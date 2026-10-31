@@ -61,8 +61,9 @@ test('confirmed presence excludes quick-play reservations and expires old room h
   const { code } = await (await post(env, '/api/exepert/quickplay', { mode:'tdm' })).json();
   let status = await (await call(env, '/api/exepert/status')).json();
   assert.equal(status.players, 1);
-  assert.equal(status.confirmed.players, 0);
-  assert.equal(status.confirmed.rooms, 0);
+  assert.equal(status.confirmed.players, null);
+  assert.equal(status.confirmed.rooms, null);
+  assert.equal(status.confirmed.status, 'unavailable');
   const actualLobby = [...env.EXEPERT_LOBBY.instances.values()][0];
   await actualLobby.fetch(new Request('https://lobby/report', {
     method:'POST', body:JSON.stringify({ code, mode:'tdm', humans:1, bots:7, max:8, phase:'live' }),
@@ -78,12 +79,19 @@ test('confirmed presence excludes quick-play reservations and expires old room h
   try {
     Date.now = () => realNow() + 36_000;
     status = await (await call(env, '/api/exepert/status')).json();
-    assert.equal(status.confirmed.players, 0);
-    assert.equal(status.confirmed.rooms, 0);
-    assert.equal(status.confirmed.status, 'live');
+    assert.equal(status.confirmed.players, null);
+    assert.equal(status.confirmed.rooms, null);
+    assert.equal(status.confirmed.status, 'unavailable');
   } finally {
     Date.now = realNow;
   }
+  await actualLobby.fetch(new Request('https://lobby/report', {
+    method:'POST', body:JSON.stringify({ code, closed:true }),
+  }));
+  status = await (await call(env, '/api/exepert/status')).json();
+  assert.equal(status.confirmed.players, 0);
+  assert.equal(status.confirmed.rooms, 0);
+  assert.ok(status.confirmed.evidenceAt);
 });
 
 test('rooms from other sites, bad codes and unknown rooms are refused', async () => {

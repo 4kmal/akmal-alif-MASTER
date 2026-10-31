@@ -7,8 +7,9 @@ beforeEach(() => vi.resetModules())
 describe('confirmed gaming presence', () => {
   it('uses only the lobby confirmed heartbeat fields and one service request', async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({
-      players: 99, rooms: 50,
-      confirmed: { players: 2, bots: 6, rooms: 1, checkedAt: new Date(now).toISOString(), status: 'live' },
+      players: 99,
+      rooms: 50,
+      confirmed: { players: 2, bots: 6, rooms: 1, checkedAt: new Date(now).toISOString(), evidenceAt: new Date(now).toISOString(), status: 'live' },
     }))
     const { readGamingPresence } = await import('../server/services/gaming-presence')
     const report = await readGamingPresence({ PORTFOLIO: { fetch } }, now)
@@ -19,7 +20,7 @@ describe('confirmed gaming presence', () => {
 
   it('retains a labeled stale result briefly after failure, then becomes unavailable', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(Response.json({
-      confirmed: { players: 1, bots: 7, rooms: 1, checkedAt: new Date(now).toISOString(), status: 'live' },
+      confirmed: { players: 1, bots: 7, rooms: 1, checkedAt: new Date(now).toISOString(), evidenceAt: new Date(now).toISOString(), status: 'live' },
     })).mockRejectedValue(new Error('Lobby unavailable'))
     const { readGamingPresence } = await import('../server/services/gaming-presence')
     await readGamingPresence({ PORTFOLIO: { fetch } }, now)
@@ -33,15 +34,31 @@ describe('confirmed gaming presence', () => {
   })
 
   it('does not infer zero players from a legacy or expired status response', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ players: 0, rooms: 0 }))
-      .mockResolvedValueOnce(Response.json({ confirmed: {
-        players: 0, bots: 0, rooms: 0, checkedAt: new Date(now - 36_000).toISOString(), status: 'live',
-      } }))
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ players: 0, rooms: 0 })).mockResolvedValueOnce(Response.json({ confirmed: {
+      players: 0,
+      bots: 0,
+      rooms: 0,
+      checkedAt: new Date(now - 36_000).toISOString(),
+      evidenceAt: new Date(now - 36_000).toISOString(),
+      status: 'live',
+    } })).mockResolvedValueOnce(Response.json({ confirmed: {
+      players: 0, bots: 0, rooms: 0, checkedAt: new Date(now).toISOString(), status: 'live',
+    } }))
     const { readGamingPresence } = await import('../server/services/gaming-presence')
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 3; i++) {
       const report = await readGamingPresence({ PORTFOLIO: { fetch } }, now)
       expect(report.live.status).toBe('unavailable')
       expect(report.live.players).toBeNull()
     }
+  })
+
+  it('accepts zero only with a fresh confirmed report', async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ confirmed: {
+      players: 0, bots: 0, rooms: 0, checkedAt: new Date(now).toISOString(), evidenceAt: new Date(now).toISOString(), status: 'live',
+    } }))
+    const { readGamingPresence } = await import('../server/services/gaming-presence')
+    const report = await readGamingPresence({ PORTFOLIO: { fetch } }, now)
+    expect(report.live.status).toBe('live')
+    expect(report.live.players).toBe(0)
   })
 })
