@@ -26,6 +26,13 @@ const EVENT_TYPES = new Set([
   'playground_open',
   'contact_open',
   'contact_interaction',
+  'gaming_session_start',
+  'gaming_session_heartbeat',
+  'gaming_session_end',
+  'gaming_interaction',
+  'gaming_performance',
+  'gaming_identity_link',
+  'gaming_client_result',
 ]);
 
 const FIELD_LIMITS = {
@@ -35,6 +42,22 @@ const FIELD_LIMITS = {
   media_kind: 64,
   referrer: 512,
   campaign: 128,
+  game_id: 48,
+  run_id: 96,
+  match_id: 96,
+  mode: 48,
+  sector: 48,
+  transport: 32,
+  entrypoint: 96,
+  status: 32,
+  outcome: 64,
+  reason: 96,
+  action: 64,
+  zone: 64,
+  poi: 96,
+  layer: 64,
+  audio_track: 96,
+  correlation_token: 512,
 };
 
 function getDefaultWindow() {
@@ -223,6 +246,12 @@ function isProductionLocation(locationRef) {
   return String(locationRef?.hostname || '').toLowerCase() === PROD_HOSTNAME;
 }
 
+function privacyOptOut(windowRef, documentRef, navigatorRef) {
+  if (navigatorRef?.globalPrivacyControl === true || windowRef?.globalPrivacyControl === true) return true;
+  if (String(navigatorRef?.doNotTrack || windowRef?.doNotTrack || documentRef?.doNotTrack || '') === '1') return true;
+  return false;
+}
+
 export function createAnalyticsClient(options = {}) {
   const windowRef = options.windowRef || getDefaultWindow();
   const documentRef = options.documentRef || getDefaultDocument();
@@ -243,7 +272,8 @@ export function createAnalyticsClient(options = {}) {
     || getDefaultTimer(windowRef, 'cancelAnimationFrame', clearTimeoutImpl);
   const uuidFactory = options.uuidFactory || (() => createUuid(windowRef));
   const logger = options.logger || { debug() {} };
-  const enabled = options.forceEnabled === true || isProductionLocation(locationRef);
+  const enabled = !privacyOptOut(windowRef, documentRef, navigatorRef)
+    && (options.forceEnabled === true || isProductionLocation(locationRef));
 
   let started = false;
   let destroyed = false;
@@ -326,6 +356,30 @@ export function createAnalyticsClient(options = {}) {
         if (value) campaign[key] = value;
       }
       if (Object.keys(campaign).length) result.campaign = campaign;
+    }
+    const textFields = [
+      'game_id', 'run_id', 'match_id', 'mode', 'sector', 'transport', 'entrypoint',
+      'status', 'outcome', 'reason', 'action', 'zone', 'poi', 'layer', 'audio_track',
+      'correlation_token',
+    ];
+    for (const key of textFields) {
+      const limit = FIELD_LIMITS[key] || 96;
+      const value = limitedString(fields[key], limit);
+      if (value) result[key] = value;
+    }
+    for (const key of ['score', 'kills', 'deaths', 'assists', 'distance', 'fps', 'rtt_ms', 'load_ms']) {
+      if (fields[key] == null) continue;
+      const value = finiteNumber(fields[key], NaN);
+      if (Number.isFinite(value)) result[key] = Math.round(value * 1000) / 1000;
+    }
+    if (fields.details && typeof fields.details === 'object' && !Array.isArray(fields.details)) {
+      const details = {};
+      for (const [key, value] of Object.entries(fields.details).slice(0, 24)) {
+        if (typeof value === 'number' && Number.isFinite(value)) details[key] = Math.round(value * 1000) / 1000;
+        else if (typeof value === 'boolean') details[key] = value;
+        else if (typeof value === 'string') details[key] = limitedString(value, 160);
+      }
+      if (Object.keys(details).length && byteLength(details) <= 2_048) result.details = details;
     }
     return result;
   }

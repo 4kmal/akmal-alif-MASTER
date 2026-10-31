@@ -173,7 +173,7 @@ export class HandheldScreen {
     if (this.state === 'boot') return;
     if (this.state === 'run'){
       if (down && (btn === 'B' || btn === 'SELECT') && this.game.state !== 'run'){ this.state = 'menu'; this.audio?.back(); return; }
-      if (down && btn === 'SELECT'){ this.state = 'menu'; this.game.state = 'ready'; this.audio?.back(); return; }
+      if (down && btn === 'SELECT'){ this.game.finish('menu'); this.state = 'menu'; this.game.state = 'ready'; this.audio?.back(); return; }
       this.game.input(btn, down);
       return;
     }

@@ -1,3 +1,15 @@
+import {
+  GAMING_EVENT_TYPES,
+  ingestGamingEvents,
+  ingestGamingSummary,
+  isGamingEventType,
+  normalizeGamingEvent,
+  readGamingData,
+  readGamingPlayer,
+  readGamingSession,
+  runGamingMaintenance,
+} from './gaming.js';
+
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 const ANALYTICS_TIMEZONE = 'Asia/Kuala_Lumpur';
 const RAW_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -801,12 +813,20 @@ export async function ingestEvents(request, env = {}, ctx = null) {
   }
 
   const normalized = [];
+  const normalizedGaming = [];
   for (let index = 0; index < body.events.length; index += 1) {
-    const event = normalizeBrowserEvent(body.events[index], index);
+    const candidate = body.events[index];
+    const candidateType = candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+      ? cleanText(candidate.type, 64)
+      : null;
+    const event = isGamingEventType(candidateType)
+      ? normalizeGamingEvent(candidate, index)
+      : normalizeBrowserEvent(candidate, index);
     if (event.error) {
       return errorResponse(400, event.error);
     }
-    normalized.push(event);
+    if (GAMING_EVENT_TYPES.has(event.eventType)) normalizedGaming.push(event);
+    else normalized.push(event);
   }
 
   const db = analyticsDb(env);
@@ -827,6 +847,13 @@ export async function ingestEvents(request, env = {}, ctx = null) {
   const now = nowMs(env);
   const identity = await resolveIdentity(request, env, now);
   const events = normalized.map((event) => canonicalEvent(event, metadata, identity, now));
+  let gamingResult = { accepted: 0, deduped: 0 };
+  if (normalizedGaming.length) {
+    gamingResult = await ingestGamingEvents(normalizedGaming, env, identity, now);
+    if (gamingResult.unavailable) {
+      return errorResponse(503, 'Gaming analytics database write failed');
+    }
+  }
   let results;
   try {
     results = await executeBatch(db, insertStatements(db, events));
@@ -841,8 +868,8 @@ export async function ingestEvents(request, env = {}, ctx = null) {
   }
 
   const response = jsonResponse({
-    accepted: acceptedEvents.length,
-    deduped: events.length - acceptedEvents.length,
+    accepted: acceptedEvents.length + gamingResult.accepted,
+    deduped: (events.length - acceptedEvents.length) + gamingResult.deduped,
     server_time: new Date(now).toISOString(),
   });
   for (const cookie of identity.cookies) {
@@ -3859,6 +3886,12 @@ export async function runAnalyticsMaintenance(env = {}, ctx = null) {
   }
 }
 
+// The admin scheduler calls this beside the portfolio rollup. Gaming has its
+// own retention boundary and tables, so it never changes website summaries.
+export async function runGamingAnalyticsMaintenance(env = {}, suppliedNow) {
+  return runGamingMaintenance(env, suppliedNow ?? nowMs(env));
+}
+
 function legacyEvent(row, now) {
   const eventId = cleanText(row.id, 128);
   if (!eventId) {
@@ -4001,6 +4034,14 @@ export {
   RAW_RETENTION_MS,
   SESSION_IDLE_MS,
   ACTIVE_WINDOW_MS,
+  GAMING_EVENT_TYPES,
+  ingestGamingEvents,
+  ingestGamingSummary,
+  normalizeGamingEvent,
+  readGamingData,
+  readGamingPlayer,
+  readGamingSession,
+  runGamingMaintenance,
   addMonths,
   dayKey,
   normalizePath,

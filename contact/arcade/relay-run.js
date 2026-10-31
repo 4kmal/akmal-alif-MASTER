@@ -1,5 +1,6 @@
 /* RELAY RUN: the 4K-BOY's built-in cartridge. An endless runner across the Kessler relay line.
    A / UP jumps (press twice in the air for the jump kit), DOWN ducks under drones, START restarts. */
+import { createGamingAnalytics } from '../../js/gaming-analytics.js';
 export const LCD = ['#0f380f', '#306230', '#8bac0f', '#9bbc0f']; // darkest -> lightest
 const W = 160, H = 144, GROUND = 118, HI_KEY = 'arcade-relayrun-hi';
 
@@ -52,6 +53,7 @@ function sprite(ctx, rows, x, y, s = 1){
 export class RelayRun {
   constructor(audio){
     this.audio = audio;
+    this.analytics = createGamingAnalytics({ gameId:'relay-run', autoStart:false });
     try { this.hi = Number(localStorage.getItem(HI_KEY)) || 0; } catch { this.hi = 0; }
     this.reset();
     this.state = 'ready';
@@ -63,10 +65,24 @@ export class RelayRun {
     this.obs = []; this.next = 1.2; this.parallax = 0; this.flash = 0;
   }
 
+  startRun(){
+    this.analytics?.end({ status:'abandoned', reason:'reset' });
+    this.analytics = createGamingAnalytics({ gameId:'relay-run', autoStart:false });
+    this.analytics.start({ transport:'handheld', entrypoint:'contact-arcade', mode:'endless' });
+    this.analytics.interaction('start');
+  }
+
+  finish(reason, status = reason === 'collision' ? 'completed' : 'abandoned'){
+    if (this.state === 'run' || reason === 'collision') {
+      if (status === 'completed') this.analytics?.result({ status, reason, score:this.score, distance:this.dist, details:{ end_reason:reason } });
+      this.analytics?.end({ status, reason, score:this.score, distance:this.dist });
+    }
+  }
+
   input(btn, down = true){
     if (!down){ if (btn === 'down') this.duck = Math.min(this.duck, 0.08); return; }
     if (this.state !== 'run'){
-      if (btn === 'A' || btn === 'START' || btn === 'up'){ this.reset(); this.state = 'run'; this.audio?.select(); }
+      if (btn === 'A' || btn === 'START' || btn === 'up'){ this.reset(); this.startRun(); this.state = 'run'; this.audio?.select(); }
       return;
     }
     if (btn === 'A' || btn === 'up'){
@@ -106,7 +122,7 @@ export class RelayRun {
     for (const o of this.obs){
       const ox = o.x, oy = o.y, ow = o.w, oh = o.h;
       if (rx + rw - 1 > ox && rx + 1 < ox + ow && ry < oy + oh && ry + rh > oy + 1){
-        this.state = 'over'; this.flash = 0.25; this.audio?.hit();
+        this.state = 'over'; this.flash = 0.25; this.audio?.hit(); this.finish('collision');
         if (this.score > this.hi){ this.hi = this.score; try { localStorage.setItem(HI_KEY, String(this.hi)); } catch {} }
       }
     }

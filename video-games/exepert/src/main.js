@@ -10,6 +10,7 @@ import { LocalTransport } from './net/local-transport.js';
 import { settings, saveSettings } from './settings.js';
 import { esc } from './hud.js';
 import './modes-extra.js';
+import { createGamingAnalytics } from '../../../js/gaming-analytics.js';
 
 const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -32,7 +33,8 @@ const TIPS = [
 ];
 
 const audio = new Audio();
-let world = null, input = null, game = null, view = 'home', backView = 'home', online = null;
+let world = null, input = null, game = null, view = 'home', backView = 'home', online = null, gamingRun = null;
+let bootStartedAt = performance.now();
 
 function show(id, on){ $(id).hidden = !on; }
 function go(v){
@@ -48,6 +50,7 @@ function note(text){ $('menuNote').textContent = text || ''; }
 
 /* ------------------------------------------------------------ boot */
 async function boot(){
+  bootStartedAt = performance.now();
   $('loadTip').textContent = TIPS[Math.floor(Math.random() * TIPS.length)];
   await new Promise(r => setTimeout(r, 40)); // let the loading screen paint (rAF would stall in a background tab)
   const t0 = performance.now();
@@ -203,6 +206,11 @@ async function startOnline(kind, code){
 function begin(transport){
   leave(true);
   audio.unlock();
+  gamingRun = createGamingAnalytics({ gameId:'exepert', autoStart:false, heartbeatFields:() => ({ rtt_ms:game?.rtt }) });
+  gamingRun.start({
+    transport: transport instanceof LocalTransport ? 'solo' : 'websocket',
+    entrypoint: EMBED ? 'contact-arcade' : 'standalone', mode:settings.mode, sector:settings.sector,
+  });
   game = new Game({canvas:$('gl'), world, input, audio, transport, onEvent:onGameEvent});
   game.hud.show(true);
   transport.onclose = info => { if (game?.transport === transport){ leave(true); show('menu', true); go('home'); note(info?.reason || 'Disconnected from the room.'); } };
@@ -212,12 +220,26 @@ function begin(transport){
 
 function onGameEvent(e){
   if (e.type === 'welcome'){
+    if (gamingRun) {
+      gamingRun.interaction('welcome', { match_id:e.msg.match_id, mode:e.msg.mode, sector:e.msg.sector });
+      if (e.msg.correlation_token) gamingRun.correlate(e.msg.correlation_token, { match_id:e.msg.match_id, mode:e.msg.mode, sector:e.msg.sector });
+      gamingRun.performance({ load_ms:Math.max(0, performance.now() - bootStartedAt) });
+    }
     $('pauseCode').textContent = game.code === 'SOLO' ? '' : game.code;
     $('lobbyBtn').hidden = !!game.solo; $('pauseInvite').hidden = !!game.solo;
     if (game.phase === 'lobby'){ show('clickToPlay', false); show('menu', true); go('lobby'); }
     history.replaceState(null, '', game.solo ? location.pathname + (EMBED ? '?embed=1' : '') : `${location.pathname}?room=${game.code}${EMBED ? '&embed=1' : ''}`);
   } else if (e.type === 'roster' && view === 'lobby' && !$('menu').hidden) renderLobby();
-  else if (e.type === 'end') showPost(e.result);
+  else if (e.type === 'end') {
+    const mine = game?.roster?.get(game?.myId);
+    gamingRun?.result({
+      match_id:game?.matchId, mode:game?.mode?.id, sector:game?.sector?.id,
+      outcome:game?.mode?.teams ? (e.result?.winner === game?.myTeam ? 'win' : e.result?.winner === -1 ? 'draw' : 'loss') : e.result?.winner === game?.myId ? 'win' : 'loss',
+      reason:e.result?.reason, score:mine?.score, kills:mine?.kills, deaths:mine?.deaths,
+      assists:mine?.assists, details:{ bank_total:Array.isArray(e.result?.bank) ? e.result.bank[game?.myTeam] : undefined },
+    });
+    showPost(e.result);
+  }
   else if (e.type === 'match' || e.type === 'phase'){
     show('post', false);
     // the host started the match: leave the squad room and drop everyone into the game
@@ -279,6 +301,8 @@ function onLock(locked){
 function resume(){ show('menu', false); show('clickToPlay', true); input.lock(); }
 
 function leave(silent){
+  gamingRun?.end({ status:'abandoned', reason:silent ? 'disconnect' : 'leave' });
+  gamingRun = null;
   if (game){ game.dispose(); game = null; }
   input?.unlock();
   show('clickToPlay', false); show('post', false);

@@ -117,12 +117,14 @@ export const extraction = {
   complete(room, p, t){
     if (t.kind === 'lift'){
       const ex = t.ref; ex.state = 'called'; ex.t = LIFT_CALL; ex.by = p.team;
+      room.telemetryCounters.lifts = (room.telemetryCounters.lifts || 0) + 1;
       room.events.push({e:'lift', i:ex.i, s:'called', t:LIFT_CALL, by:p.id});
       return;
     }
     const l = t.ref;
     if (p.pack.items + l.items > SLOTS && l.kind !== 'crate'){ p.pe.push({e:'full'}); return; }
     l.taken = true;
+    room.telemetryCounters.loots = (room.telemetryCounters.loots || 0) + 1;
     p.pack.items = Math.min(SLOTS, p.pack.items + l.items); p.pack.value += l.value;
     if (l.shield) p.shield = Math.min(100, p.shield + l.shield);
     if (l.heal) p.hp = Math.min(PLAYER.hp, p.hp + l.heal);
@@ -149,6 +151,8 @@ export const extraction = {
           if (Math.hypot(p.m.x - ex.x, p.m.z - ex.z) <= LIFT_RADIUS && Math.abs(p.m.y - ex.y) < 6){
             const v = p.pack.value;
             ms.bank[p.team] += v; p.score += v; p.banked = (p.banked || 0) + v;
+            room.telemetryCounters.extracted = (room.telemetryCounters.extracted || 0) + 1;
+            room.telemetryCounters.extractedValue = (room.telemetryCounters.extractedValue || 0) + v;
             room.events.push({e:'extract', p:p.id, v, i:ex.i});
             p.pack = {items:0, value:0};
             p.alive = false; p.respawnAt = room.time + 8; p.extracted = true;

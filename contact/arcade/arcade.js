@@ -1,6 +1,7 @@
 /* Contact page arcade: loads the 3D cabinet + handheld beside the chat and launches EXEPERT
    in a full-window overlay. three.js is only fetched when the arcade is on screen (or the browser is idle on wide screens). */
 import { ArcadeAudio } from './arcade-audio.js';
+import { createGamingAnalytics } from '../../js/gaming-analytics.js';
 
 const GAME_URL = '/video-games/exepert/';
 const WIDE = window.matchMedia('(min-width: 1280px)');
@@ -21,7 +22,7 @@ function init(panel){
   const toggle = document.querySelector('[data-arcade-toggle]');
   const mute = panel.querySelector('[data-arcade-mute]');
   const audio = new ArcadeAudio();
-  let scene = null, loadingScene = null, overlay = null, shown = WIDE.matches, closeTimer = null;
+  let scene = null, loadingScene = null, overlay = null, shown = WIDE.matches, closeTimer = null, arcadeRun = null;
 
   const accent = () => getComputedStyle(document.body).getPropertyValue('--contact-retro-accent').trim() || '#00ff41';
 
@@ -58,6 +59,9 @@ function init(panel){
   /* ---------- launching EXEPERT ---------- */
   async function launch(opts = {}){
     if (overlay) return;
+    arcadeRun = createGamingAnalytics({ gameId:'arcade', autoStart:false });
+    arcadeRun.start({ transport:'iframe', entrypoint:'contact-arcade', mode:opts.squad ? 'squad' : 'solo' });
+    arcadeRun.interaction('launch', { entrypoint:'contact-arcade' });
     audio.unlock();
     window.vortexPause?.();
     if (scene) await scene.zoomIntoScreen();
@@ -73,7 +77,7 @@ function init(panel){
     frame.allow = 'fullscreen; gamepad; autoplay; clipboard-write';
     const close = document.createElement('button');
     close.type = 'button'; close.className = 'arcade-overlay__close'; close.textContent = '✕ ARCADE';
-    close.addEventListener('click', closeOverlay);
+    close.addEventListener('click', () => closeOverlay('button'));
     overlay.append(frame, close);
     document.body.append(overlay);
     document.documentElement.classList.add('arcade-playing');
@@ -82,9 +86,11 @@ function init(panel){
     frame.addEventListener('load', () => frame.focus(), { once:true });
   }
 
-  function closeOverlay(){
+  function closeOverlay(reason = 'close'){
     if (!overlay) return;
     const el = overlay; overlay = null;
+    arcadeRun?.end({ status:'ended', reason });
+    arcadeRun = null;
     el.classList.remove('is-open');
     clearTimeout(closeTimer);
     closeTimer = setTimeout(() => el.remove(), 320);
@@ -96,11 +102,11 @@ function init(panel){
 
   window.addEventListener('message', e => {
     if (e.origin !== location.origin) return;
-    if (e.data?.type === 'exepert:exit') closeOverlay();
-    if (e.data?.type === 'exepert:ready') overlay?.classList.add('is-game-ready');
+    if (e.data?.type === 'exepert:exit') closeOverlay('game_exit');
+    if (e.data?.type === 'exepert:ready') { arcadeRun?.interaction('ready'); overlay?.classList.add('is-game-ready'); }
   });
   document.addEventListener('keydown', e => {
-    if (overlay && e.key === 'Escape' && document.activeElement?.tagName !== 'IFRAME') closeOverlay();
+    if (overlay && e.key === 'Escape' && document.activeElement?.tagName !== 'IFRAME') closeOverlay('escape');
   });
 
   /* ---------- wiring ---------- */
@@ -122,7 +128,7 @@ function init(panel){
   io.observe(panel);
   if (WIDE.matches) (window.requestIdleCallback || (fn => setTimeout(fn, 1200)))(() => ensureScene());
 
-  window.addEventListener('pagehide', e => { if (!e.persisted){ scene?.dispose(); scene = null; } else scene?.pause(); });
+  window.addEventListener('pagehide', e => { arcadeRun?.end({ status:'abandoned', reason:'pagehide' }); arcadeRun = null; if (!e.persisted){ scene?.dispose(); scene = null; } else scene?.pause(); });
   window.addEventListener('pageshow', e => { if (e.persisted) scene?.resume(); });
 }
 

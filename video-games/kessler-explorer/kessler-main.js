@@ -4,6 +4,7 @@ import { clamp, ss, lerp, pad, wrapA, mulberry32 } from '../kessler-world/kessle
 import { TYPES, ICON, ZONES, makeField } from '../kessler-world/kessler-zones.js';
 import { curvePts } from '../kessler-world/structures.js';
 import { layoutZone } from '../kessler-world/layout.js';
+import { createGamingAnalytics } from '../../js/gaming-analytics.js';
 
 (function(){
 'use strict';
@@ -18,6 +19,11 @@ function fail(msg){
   $('#boot-status').style.color = 'var(--alert)';
 }
 if (!window.THREE){ fail('THE 3D LIBRARY DID NOT LOAD. CHECK YOUR CONNECTION AND RELOAD.'); return; }
+
+const gaming = createGamingAnalytics({
+  gameId: 'kessler-explorer',
+  startFields: { transport: 'browser', entrypoint: 'standalone', mode: 'explore' },
+});
 
 /* ======================================================================
    Renderer, camera, shared uniforms
@@ -562,6 +568,7 @@ function nearestRegion(x, z){ let best = null, bd = 1e9; for (const r of Zc.regi
 function select(sel){
   if (!Zc) return;
   const list = listFor(sel.kind), item = list[sel.i]; if (!item) return;
+  gaming.interaction('select', { zone:Zc.Z.id, poi:item.code || item.name, details:{ zone:Zc.Z.id } });
   if (state.sel && state.sel.item && state.sel.item.label) state.sel.item.label.el.classList.remove('is-active');
   state.sel = {...sel, item};
   if (item.label) item.label.el.classList.add('is-active');
@@ -631,7 +638,7 @@ function applyLayers(){
 }
 [['poi', '#ly-poi'], ['regions', '#ly-regions'], ['hot', '#ly-hot'], ['contacts', '#ly-contacts']].forEach(([k, sel]) => {
   const el = $(sel); el.checked = state.layers[k];
-  el.addEventListener('change', () => { state.layers[k] = el.checked; applyLayers(); });
+  el.addEventListener('change', () => { state.layers[k] = el.checked; applyLayers(); gaming.interaction('layer', { layer:k, status:el.checked ? 'on' : 'off' }); });
 });
 $('#layers-toggle').addEventListener('click', () => {
   const open = $('#left').classList.toggle('open'); $('#layers-toggle').setAttribute('aria-expanded', String(open));
@@ -747,6 +754,7 @@ async function loadZone(zi){
   try { built = buildZone(zi, () => {}); }
   catch (err){ console.error(err); fail('SURFACE DATA FAILED TO DECODE. RELOAD TO TRY AGAIN.'); state.loading = false; return; }
   Zc = built; state.zi = zi;
+  gaming.interaction('zone', { zone:Z.id });
   try { localStorage.setItem('kessler-zone', String(zi)); } catch (e){}
   setBar(1); $('#boot-status').textContent = 'SURFACE GEOMETRY DECODED';
   makeLabels(); applyLayers(); updateZoneHUD(); buildZoneCards();
@@ -858,11 +866,11 @@ function playerUI(){
 }
 $('#p-play').addEventListener('click', async () => {
   if (!ensureCtx()){ $('#p-title').textContent = 'AUDIO NOT SUPPORTED HERE'; return; }
-  if (audio.playing){ audio.acc += audio.ctx.currentTime - audio.t0; audio.playing = false; await audio.ctx.suspend(); }
+  if (audio.playing){ audio.acc += audio.ctx.currentTime - audio.t0; audio.playing = false; await audio.ctx.suspend(); gaming.interaction('audio_pause', { audio_track:TRACKS[audio.i].name }); }
   else {
     await audio.ctx.resume();
     if (!audio.voice){ audio.voice = startVoice(audio.i); audio.acc = 0; }
-    audio.t0 = audio.ctx.currentTime; audio.playing = true; ping();
+    audio.t0 = audio.ctx.currentTime; audio.playing = true; ping(); gaming.interaction('audio_play', { audio_track:TRACKS[audio.i].name });
   }
   playerUI();
 });
@@ -870,6 +878,7 @@ function skip(d){
   audio.i = (audio.i + d + TRACKS.length) % TRACKS.length; audio.acc = 0;
   if (audio.voice){ stopVoice(audio.voice); audio.voice = null; }
   if (audio.playing){ audio.voice = startVoice(audio.i); audio.t0 = audio.ctx.currentTime; }
+  gaming.interaction('audio_skip', { audio_track:TRACKS[audio.i].name });
   playerUI();
 }
 $('#p-prev').addEventListener('click', () => skip(-1));

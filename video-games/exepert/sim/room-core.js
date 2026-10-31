@@ -14,6 +14,10 @@ const r3 = v => Math.round(v * 1000) / 1000;
 const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
 const fin = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const randomId = prefix => {
+  if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`;
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+};
 
 export const FLAG = { ALIVE:1, CROUCH:2, SLIDE:4, WALL:8, SPRINT:16, ADS:32, DASH:64, RELOAD:128, AIR:256, PROTECT:512, FIRING:1024, MANTLE:2048, WALL_L:4096, SWIM:8192 };
 
@@ -46,6 +50,14 @@ export class Room {
     this.isPrivate = !!opts.isPrivate;
     this.solo = !!opts.solo;
     this.send = opts.send || (() => {});
+    this.transport = opts.transport || (this.solo ? 'solo' : 'websocket');
+    this.onTelemetry = opts.onTelemetry || null;
+    this.onMatchStart = opts.onMatchStart || null;
+    this.matchId = opts.matchId || null;
+    this.matchStarted = false;
+    this.matchStartedAt = 0;
+    this.lastSeenAt = this.matchStartedAt;
+    this.telemetryCounters = {};
     this.rng = mulberry32((opts.seed ?? Date.now()) >>> 0);
     this.players = new Map();
     this.nextId = 1;
@@ -76,13 +88,18 @@ export class Room {
   }
 
   resetMatch(){
+    this.matchId = randomId('match');
+    this.matchStarted = this.phase !== 'lobby';
     this.matchTime = 0; this.result = null; this.projectiles = [];
+    this.matchStartedAt = Date.now(); this.telemetryCounters = {};
+    for (const p of this.players.values()) p.correlationToken = null;
     this.mode.init(this);
     for (const p of this.players.values()){ p.kills = p.deaths = p.assists = p.score = 0; p.streak = 0; }
     this.syncBots();
     this.balanceTeams();
     for (const p of this.players.values()) this.spawn(p);
-    this.events.push({e:'match', m:this.modeId, sec:this.sector, bots:this.botSetting, diff:this.difficulty});
+    this.events.push({e:'match', id:this.matchId, m:this.modeId, sec:this.sector, bots:this.botSetting, diff:this.difficulty});
+    this.onMatchStart?.(this);
   }
 
   inPlay(x, z){ return this.world.inSector(this.sector, x, z); }
@@ -95,7 +112,7 @@ export class Room {
       id, name, bot, team:-1, m:createMover(), alive:false, hp:PLAYER.hp, shield:0, respawnAt:0, protect:0,
       loadout:['breach', 'scatter'], weapon:'breach', ammo:{}, reloadT:0, swapT:0, heat:0, overheat:0, nextFire:0, firingT:0,
       nades:GRENADE.charges, nadeT:0, kills:0, deaths:0, assists:0, score:0, streak:0, damagers:new Map(), lastHurt:-99,
-      seq:0, budget:0.2, hist:[], stormT:0, spawns:0, ping:0, pe:[], token:null, cloak:0
+      seq:0, budget:0.2, hist:[], stormT:0, spawns:0, ping:0, pe:[], token:null, correlationToken:null, cloak:0
     };
     for (const w of WEAPON_IDS) p.ammo[w] = WEAPONS[w].mag || 0;
     if (bot) p.loadout = botLoadout(this.rng);
@@ -104,6 +121,7 @@ export class Room {
   }
 
   join({name, loadout, token} = {}){
+    this.lastSeenAt = Date.now();
     // resume a slot held by a recent disconnect
     if (token){
       for (const p of this.players.values()) if (p.token === token && p.away){ p.away = false; this.welcome(p); return p; }
@@ -123,13 +141,14 @@ export class Room {
   }
 
   welcome(p){
-    this.direct(p, {t:'welcome', id:p.id, proto:PROTOCOL, code:this.code, hash:this.world.hash, mode:this.modeId, sector:this.sector,
-      phase:this.phase, host:this.hostId, priv:this.isPrivate, solo:this.solo, bots:this.botSetting, diff:this.difficulty, T:r3(this.time), tick:TICK_HZ});
+     this.direct(p, {t:'welcome', id:p.id, proto:PROTOCOL, code:this.code, hash:this.world.hash, mode:this.modeId, sector:this.sector,
+       match_id:this.matchId, correlation_token:p.correlationToken || null, phase:this.phase, host:this.hostId, priv:this.isPrivate, solo:this.solo, bots:this.botSetting, diff:this.difficulty, T:r3(this.time), tick:TICK_HZ});
   }
 
   /* Mark a player as disconnected; their slot is kept for 30 s so they can resume. */
   drop(pid){
     const p = this.players.get(pid); if (!p) return;
+    this.lastSeenAt = Date.now();
     p.away = true; p.awayAt = this.time;
   }
 
@@ -233,6 +252,7 @@ export class Room {
   handle(pid, msg){
     const p = this.players.get(pid);
     if (!p || !msg || typeof msg !== 'object') return;
+    this.lastSeenAt = Date.now();
     switch (msg.t){
       case 'in': this.applyInput(p, msg.f); break;
       case 'fire': this.fire(p, msg); break;
@@ -404,6 +424,7 @@ export class Room {
     const assists = [];
     if (k){
       k.kills++; k.streak++; k.score += 100 + (head ? 25 : 0);
+      this.telemetryCounters.kills = (this.telemetryCounters.kills || 0) + 1;
       for (const [id, t] of v.damagers){
         if (id === k.id || this.time - t > 8) continue;
         const a = this.players.get(id); if (a){ a.assists++; a.score += 40; assists.push(id); }
@@ -528,7 +549,7 @@ export class Room {
     if (this.phase === 'live'){
       this.mode.tick(this, dt);
       const r = this.mode.result(this);
-      if (r){ this.result = r; this.phase = 'post'; this.phaseEnd = this.time + 12; this.events.push({e:'end', r}); }
+      if (r){ this.result = r; this.phase = 'post'; this.phaseEnd = this.time + 12; this.events.push({e:'end', r}); this.onTelemetry?.(this.telemetrySummary('completed')); }
     } else if (this.phase === 'post' && this.time >= this.phaseEnd){
       this.phase = this.isPrivate ? 'lobby' : 'live';
       this.resetMatch();
@@ -591,5 +612,26 @@ export class Room {
 
   direct(p, obj){ if (!p.bot) this.send(p.id, JSON.stringify(obj)); }
 
-  stats(){ return {code:this.code, mode:this.modeId, sector:this.sector, humans:this.humans().filter(p => !p.away).length, bots:[...this.players.values()].filter(p => p.bot).length, phase:this.phase, priv:this.isPrivate, max:this.mode.maxPlayers}; }
+  stats(){ return {code:this.code, mode:this.modeId, sector:this.sector, humans:this.humans().filter(p => !p.away).length, bots:[...this.players.values()].filter(p => p.bot).length, phase:this.phase, priv:this.isPrivate, max:this.mode.maxPlayers, lastSeenAt:this.lastSeenAt}; }
+
+  telemetrySummary(status = this.phase === 'post' ? 'completed' : 'active', endedAt = Date.now()){
+    if (!this.matchStarted) return null;
+    return {
+      matchId: this.matchId,
+      gameId: 'exepert',
+      mode: this.modeId,
+      sector: this.sector,
+      transport: this.transport,
+      startedAt: this.matchStartedAt,
+      endedAt,
+      status,
+      result: this.result,
+      telemetryCounters: {...this.telemetryCounters},
+      participants: [...this.players.values()].map(p => ({
+        participantId: String(p.id), correlationToken: p.correlationToken || null, bot: !!p.bot,
+        kills: p.kills, deaths: p.deaths, assists: p.assists, score: p.score,
+        details: {team:p.team, spawns:p.spawns, bank:p.banked || 0},
+      })),
+    };
+  }
 }

@@ -53,7 +53,9 @@ export const uplink = {
         if (Math.hypot(p.m.x - pt.x, p.m.z - pt.z) <= pt.r && Math.abs(p.m.y - pt.y) < 16) pt.n[p.team]++;
       }
       const diff = pt.n[1] - pt.n[0];
+      const wasContest = pt.contest;
       pt.contest = pt.n[0] > 0 && pt.n[1] > 0 && diff === 0;
+      if (pt.contest && !wasContest) room.telemetryCounters.contests = (room.telemetryCounters.contests || 0) + 1;
       const before = pt.owner;
       if (diff !== 0){
         pt.cap = Math.max(-1, Math.min(1, pt.cap + Math.sign(diff) * Math.min(Math.abs(diff), 3) * CAP_RATE * dt));
@@ -66,6 +68,7 @@ export const uplink = {
       else if (pt.cap >= 1) pt.owner = 1;
       else if ((pt.owner === 0 && pt.cap >= 0) || (pt.owner === 1 && pt.cap <= 0)) pt.owner = -1;
       if (pt.owner !== before){
+        room.telemetryCounters.captures = (room.telemetryCounters.captures || 0) + 1;
         room.events.push({e:'cap', i:pt.i, o:pt.owner, was:before});
         // runners standing on a relay when it flips get the credit
         if (pt.owner >= 0) for (const p of room.players.values()) if (p.alive && p.team === pt.owner && Math.hypot(p.m.x - pt.x, p.m.z - pt.z) <= pt.r) p.score += 150;
@@ -102,6 +105,7 @@ export const uplink = {
   },
 
   onDeploy(room, p, at){
+    if (!p.bot) room.telemetryCounters.deploys = (room.telemetryCounters.deploys || 0) + 1;
     p.deploy = at === 'base' || at === 'auto' ? at : Number.isInteger(at) && at >= 0 && at < room.ms.points.length ? at : 'auto';
   },
 

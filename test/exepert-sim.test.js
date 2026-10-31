@@ -93,6 +93,36 @@ test('a room fills itself with bots and keeps teams even', () => {
   assert.equal(snap.me.al, 1);
 });
 
+test('telemetry has one callback per match boundary and rotates match ids after reset', () => {
+  const summaries = [];
+  const { room } = makeRoom({ bots:0, onTelemetry:summary => summaries.push(summary) });
+  room.join({ name:'boundary-runner' });
+  const firstMatch = room.matchId;
+  for (let i = 0; i < 30; i++) room.tick();
+  assert.equal(summaries.length, 0, 'ticks do not emit telemetry rows');
+  room.scoreLimit = 1;
+  room.ms.score = [1, 0];
+  room.tick();
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].matchId, firstMatch);
+  assert.equal(summaries[0].status, 'completed');
+  for (let i = 0; i < 20 * 13; i++) room.tick();
+  assert.notEqual(room.matchId, firstMatch, 'the next match gets a new id');
+  assert.equal(summaries.length, 1, 'reset does not duplicate the completed summary');
+});
+
+test('private lobby configuration does not create a started match telemetry row', () => {
+  const { room } = makeRoom({ bots:0, lobby:true });
+  const lobbyMatch = room.matchId;
+  const player = room.join({ name:'lobby-runner' });
+  assert.equal(room.matchStarted, false);
+  assert.equal(room.telemetrySummary('idle'), null);
+  room.handle(player.id, { t:'start' });
+  assert.equal(room.phase, 'live');
+  assert.equal(room.matchStarted, true);
+  assert.notEqual(room.matchId, lobbyMatch);
+});
+
 test('kills credit the shooter, count for the team and respawn the victim', () => {
   const { room } = makeRoom({ bots:1 });
   const me = room.join({ name:'tester' });

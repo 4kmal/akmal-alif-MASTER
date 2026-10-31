@@ -4,6 +4,7 @@
 import { buildWorld } from '../../video-games/kessler-world/world.js';
 import { Room, DT } from '../../video-games/exepert/sim/room-core.js';
 import { reportToLobby, json } from './shared.js';
+import { issueCorrelationToken, sendGamingSummary } from './telemetry.js';
 
 let WORLD = null;
 const world = () => (WORLD ||= buildWorld());
@@ -18,6 +19,7 @@ export class ExepertRoom {
     this.meta = null; this.room = null;
     this.sockets = new Map(); this.rate = new Map();
     this.timer = null; this.acc = 0; this.last = 0; this.emptyAt = null; this.reportAt = 0;
+    this.summaryStatus = new Map();
   }
 
   async loadMeta(){
@@ -30,7 +32,9 @@ export class ExepertRoom {
     const m = this.meta;
     this.room = new Room({
       world:world(), code:m.code, mode:m.mode, sector:m.sector, isPrivate:!!m.priv, lobby:!!m.priv,
-      bots:'auto', difficulty:'normal', seed:(Math.random() * 4294967296) >>> 0,
+      bots:'auto', difficulty:'normal', seed:(Math.random() * 4294967296) >>> 0, transport:'websocket',
+      onTelemetry:(summary) => this.queueSummary(summary),
+      onMatchStart:(room) => this.refreshMatchTokens(room),
       send:(pid, text) => this.deliver(pid, text)
     });
     return this.room;
@@ -78,6 +82,7 @@ export class ExepertRoom {
     if (old && old !== server){ try { old.close(4000, 'Replaced by a new connection'); } catch {} }
     server.serializeAttachment({pid:p.id});
     this.sockets.set(p.id, server);
+    if (!p.correlationToken) p.correlationToken = await issueCorrelationToken(this.env, room.matchId, p.id);
     room.welcome(p); // join() welcomed before the socket was mapped
     this.startLoop();
     return new Response(null, {status:101, webSocket:client});
@@ -103,7 +108,11 @@ export class ExepertRoom {
     const pid = ws.deserializeAttachment()?.pid;
     if (pid == null || this.sockets.get(pid) !== ws) return;
     this.sockets.delete(pid); this.rate.delete(pid);
-    this.room?.drop(pid);
+    if (this.room) {
+      const summary = this.room.telemetrySummary('disconnected');
+      this.room.drop(pid);
+      this.queueSummary(summary);
+    }
   }
 
   startLoop(){
@@ -127,6 +136,7 @@ export class ExepertRoom {
 
   stopLoop(){
     clearInterval(this.timer); this.timer = null;
+    if (this.room) this.queueSummary(this.room.telemetrySummary('idle'));
     this.report(true);
     this.room = null;
   }
@@ -136,6 +146,42 @@ export class ExepertRoom {
     if (!this.meta) return;
     const s = this.room ? this.room.stats() : {code:this.meta.code, mode:this.meta.mode, humans:0, phase:'idle', priv:this.meta.priv, max:12};
     reportToLobby(this.env, {...s, closed});
+  }
+
+  queueSummary(summary){
+    if (!summary || !summary.matchId) return;
+    const previous = this.summaryStatus.get(summary.matchId);
+    if (previous === summary.status || (previous === 'completed' && summary.status !== 'completed')) return;
+    this.summaryStatus.set(summary.matchId, summary.status);
+    const counters = summary.telemetryCounters || {};
+    const result = {...(summary.result || {})};
+    for (const [source, target] of [
+      ['captures', 'captures'], ['contests', 'contests'], ['deploys', 'deploys'],
+      ['loots', 'loots'], ['lifts', 'lifts'], ['extracted', 'extracted'], ['extractedValue', 'extracted_value'],
+    ]) {
+      if (counters[source] != null) result[target] = Number(counters[source]) || 0;
+    }
+    const payload = {
+      source:'exepert-room', match_id:summary.matchId, game_id:'exepert', mode:summary.mode,
+      sector:summary.sector, started_at:summary.startedAt, ended_at:summary.endedAt,
+      status:summary.status, result,
+      participants:(summary.participants || []).map(p => ({
+        participant_id:p.participantId, correlation_token:p.correlationToken || null,
+        bot:!!p.bot, kills:p.kills, deaths:p.deaths, assists:p.assists, score:p.score, details:p.details,
+      })),
+    };
+    void sendGamingSummary(this.env, this.ctx, payload);
+  }
+
+  async refreshMatchTokens(room){
+    const matchId = room.matchId;
+    for (const player of room.players.values()) {
+      if (player.bot) continue;
+      const token = await issueCorrelationToken(this.env, matchId, player.id);
+      if (!token || this.room !== room || room.matchId !== matchId) continue;
+      player.correlationToken = token;
+      if (this.sockets.has(player.id)) room.welcome(player);
+    }
   }
 
   async alarm(){

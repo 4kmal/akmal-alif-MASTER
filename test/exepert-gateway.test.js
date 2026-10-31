@@ -81,3 +81,33 @@ test('the Worker exports both Durable Object classes', async () => {
   assert.equal(typeof mod.ExepertRoom, 'function');
   assert.equal(typeof mod.ExepertLobby, 'function');
 });
+
+test('room summaries carry mode counters through the server-only admin binding', async () => {
+  const calls = [];
+  const waits = [];
+  const env = {
+    PORTFOLIO_GATEWAY_TOKEN: 'room-secret',
+    ADMIN: { fetch: async request => { calls.push(request); return new Response('ok'); } },
+  };
+  const ctx = { storage:storage(), acceptWebSocket(){}, waitUntil(promise){ waits.push(promise); } };
+  const room = new ExepertRoom(ctx, env);
+  room.queueSummary({
+    matchId:'match-counters', mode:'uplink', sector:'full', startedAt:1, endedAt:2, status:'completed',
+    result:{ winner:0 },
+    telemetryCounters:{ captures:4, contests:2, deploys:3, loots:0, extractedValue:0 },
+    participants:[{ participantId:'1', correlationToken:null, bot:false, kills:2, deaths:1, assists:1, score:90, details:{ team:0 } }],
+  });
+  await Promise.all(waits);
+  assert.equal(calls.length, 1);
+  const request = calls[0];
+  assert.equal(request.url, 'https://admin.internal/internal/gaming/summary');
+  assert.equal(request.headers.get('X-Gaming-Service'), 'exepert-room');
+  assert.equal(request.headers.get('X-Portfolio-Gateway'), 'room-secret');
+  const body = await request.json();
+  assert.equal(body.result.captures, 4);
+  assert.equal(body.result.contests, 2);
+  assert.equal(body.result.deploys, 3);
+  assert.equal(body.code, undefined);
+  assert.equal(body.participants[0].details.team, 0);
+  assert.equal(body.participants[0].details.x, undefined);
+});
