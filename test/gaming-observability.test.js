@@ -86,6 +86,13 @@ function responseCookies(response) {
     .join('; ');
 }
 
+test('empty gaming reports keep tracking start unavailable', async () => {
+  const { env } = environment();
+  const report = await readGamingData(env, { rangeDays: 90, now });
+  assert.equal(report.trackingStartedAt, null);
+  assert.equal(report.historicalAggregates, false);
+});
+
 test('gaming lifecycle events are segregated, deduplicated, and keep website counts unchanged', async () => {
   const { database, env } = environment();
   const response = await ingestEvents(eventRequest([
@@ -108,6 +115,32 @@ test('gaming lifecycle events are segregated, deduplicated, and keep website cou
   const duplicate = await ingestEvents(eventRequest([{ id: 'game-1', type: 'gaming_session_start', path: '/contact/', game_id: 'relay-run', run_id: 'run-1' }], stableCookies), env);
   assert.deepEqual(await duplicate.json(), { accepted: 0, deduped: 1, server_time: new Date(now).toISOString() });
   assert.equal(database.prepare('SELECT count(*) AS count FROM portfolio_analytics_events').get().count, 1);
+});
+
+test('arcade shell launches stay in the funnel while linked child games own aggregates', async () => {
+  const { env } = environment();
+  const linkedIdentity = { visitorKey: 'arcade-visitor', sessionKey: 'arcade-session' };
+  const unlinkedIdentity = { visitorKey: 'other-visitor', sessionKey: 'other-session' };
+  const send = async (event, identity, at) => ingestGamingEvents([normalizeGamingEvent(event)], env, identity, at);
+
+  await send({ id: 'arcade-launch-old', type: 'gaming_session_start', path: '/contact/', game_id: 'arcade', run_id: 'arcade-old', entrypoint: 'contact-arcade', transport: 'iframe', mode: 'solo' }, linkedIdentity, now - 120_000);
+  await send({ id: 'arcade-end-old', type: 'gaming_session_end', path: '/contact/', game_id: 'arcade', run_id: 'arcade-old', entrypoint: 'contact-arcade', transport: 'iframe', mode: 'solo', status: 'ended', duration_ms: 999_000 }, linkedIdentity, now - 100_000);
+  await send({ id: 'arcade-launch-current', type: 'gaming_session_start', path: '/contact/', game_id: 'arcade', run_id: 'arcade-current', entrypoint: 'contact-arcade', transport: 'iframe', mode: 'solo' }, linkedIdentity, now - 60_000);
+  await send({ id: 'child-linked-start', type: 'gaming_session_start', path: '/video-games/exepert/', game_id: 'exepert', run_id: 'child-linked', entrypoint: 'contact-arcade', transport: 'websocket', mode: 'tdm' }, linkedIdentity, now - 30_000);
+  await send({ id: 'child-linked-end', type: 'gaming_session_end', path: '/video-games/exepert/', game_id: 'exepert', run_id: 'child-linked', entrypoint: 'contact-arcade', transport: 'websocket', mode: 'tdm', status: 'completed', duration_ms: 12_000 }, linkedIdentity, now - 10_000);
+  await send({ id: 'child-unlinked-start', type: 'gaming_session_start', path: '/video-games/relay-run/', game_id: 'relay-run', run_id: 'child-unlinked', entrypoint: 'contact-arcade', transport: 'handheld', mode: 'endless' }, unlinkedIdentity, now - 20_000);
+  await send({ id: 'child-unlinked-end', type: 'gaming_session_end', path: '/video-games/relay-run/', game_id: 'relay-run', run_id: 'child-unlinked', entrypoint: 'contact-arcade', transport: 'handheld', mode: 'endless', status: 'completed', duration_ms: 7_000 }, unlinkedIdentity, now - 5_000);
+
+  const report = await readGamingData(env, { rangeDays: 90, now });
+  assert.equal(report.aggregate.starts, 2);
+  assert.equal(report.aggregate.playSeconds, 19);
+  assert.equal(report.playersCount, 2);
+  assert.equal(report.games.some(game => game.id === 'arcade'), false);
+  assert.deepEqual(report.games.map(game => game.id).sort(), ['exepert', 'relay-run']);
+  assert.equal(report.funnel.find(row => row.stage === 'launches').count, 2);
+  assert.equal(report.funnel.find(row => row.stage === 'arcade_launches').count, 2);
+  assert.equal(report.funnel.find(row => row.stage === 'arcade_linked_child_starts').count, 1);
+  assert.equal(report.funnel.find(row => row.stage === 'arcade_unlinked_child_starts').count, 1);
 });
 
 test('concurrent duplicate retries claim one timeline row and mutate one session once', async () => {
@@ -204,7 +237,7 @@ test('authoritative summaries count one match and separate participants across a
 test('gaming maintenance prunes raw timeline while retaining bounded daily summaries', async () => {
   const { database, env } = environment();
   const old = now - 91 * 24 * 3600_000;
-  const event = normalizeGamingEvent({ id: 'old-game', type: 'gaming_session_start', path: '/video-games/relay/', game_id: 'relay-run', run_id: 'old-run' });
+  const event = normalizeGamingEvent({ id: 'old-game', type: 'gaming_session_start', path: '/video-games/relay/', game_id: 'relay-run', run_id: 'old-run', mode: 'endless', sector: 'bastion', transport: 'handheld' });
   await (await import('../admin-analytics/gaming.js')).ingestGamingEvents([event], { ...env, GAMING_NOW: old }, { visitorKey: 'old-v', sessionKey: 'old-s' }, old);
   const current = normalizeGamingEvent({ id: 'new-game', type: 'gaming_session_start', path: '/video-games/relay/', game_id: 'relay-run', run_id: 'new-run' });
   await (await import('../admin-analytics/gaming.js')).ingestGamingEvents([current], env, { visitorKey: 'new-v', sessionKey: 'new-s' }, now);
@@ -219,6 +252,26 @@ test('gaming maintenance prunes raw timeline while retaining bounded daily summa
   assert.equal(historical.aggregate.starts, 2);
   assert.ok(historical.daily.some(row => row.starts === 1));
   assert.equal(historical.trackingStartedAt, new Date(old).toISOString());
+  assert.equal(historical.historicalAggregates, true);
+  assert.equal(historical.playersCount, null);
+  assert.equal(historical.aggregate.returningPlayers, null);
+  assert.ok(historical.games.length > 0);
+  assert.equal(historical.games[0].players, null);
+  assert.equal(historical.modes[0].players, null);
+  assert.equal(historical.sectors[0].players, null);
+});
+
+test('gaming maintenance uses a calendar thirteen-month daily cutoff', async () => {
+  const { database, env } = environment();
+  const insert = database.prepare(`INSERT INTO gaming_daily
+    (day, game_id, mode, sector, transport, starts, players, completions, play_seconds, summary_json, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  insert.run('2025-09-29', 'relay-run', '', '', 'handheld', 1, 1, 0, 0, '{}', now);
+  insert.run('2025-09-30', 'relay-run', '', '', 'handheld', 1, 1, 0, 0, '{}', now);
+  const result = await runGamingMaintenance(env, now);
+  assert.equal(result.summary_cutoff, '2025-09-30');
+  assert.equal(database.prepare(`SELECT count(*) AS count FROM gaming_daily WHERE day = '2025-09-29'`).get().count, 0);
+  assert.equal(database.prepare(`SELECT count(*) AS count FROM gaming_daily WHERE day = '2025-09-30'`).get().count, 1);
 });
 
 test('authoritative room summaries backfill early links and protect verified results from later browser retries', async () => {
@@ -458,6 +511,44 @@ test('EXEPERT match telemetry rotates on a new match while reconnects reuse the 
   tracker.ensure({ match_id: 'match-two', mode: 'uplink', sector: 'full', correlation_token: 'token-two' });
   assert.equal(runs.length, 2);
   assert.equal(runs[1].events.filter(event => event.type === 'start').length, 1);
+});
+
+test('EXEPERT renderer init failure records one ended client attempt without a match', () => {
+  const runs = [];
+  const tracker = createGamingMatchTracker({
+    gameId: 'exepert',
+    startFields: { transport: 'websocket', entrypoint: 'contact-arcade', mode: 'tdm', sector: 'bastion' },
+    createRun: () => {
+      const events = [];
+      const run = {
+        events,
+        start(fields) { events.push({ type: 'start', fields }); },
+        correlate(token, fields) { events.push({ type: 'link', token, fields }); },
+        interaction(action, fields) { events.push({ type: 'interaction', action, fields }); },
+        performance(fields) { events.push({ type: 'performance', fields }); },
+        sampleFrame() {},
+        result(fields) { events.push({ type: 'result', fields }); },
+        end(fields) { events.push({ type: 'end', fields }); },
+        track(type, fields) { events.push({ type, fields }); },
+      };
+      runs.push(run);
+      return run;
+    },
+  });
+
+  tracker.fail({ reason: 'renderer_init_failed', details: { source: 'init', error: 'TypeError' } });
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].events.filter(event => event.type === 'start').length, 1);
+  const start = runs[0].events.find(event => event.type === 'start');
+  assert.equal(start.fields.match_id, undefined);
+  assert.equal(start.fields.status, 'abandoned');
+  const failure = runs[0].events.find(event => event.type === 'interaction');
+  assert.equal(failure.action, 'render_failure');
+  assert.equal(failure.fields.details.error, 'TypeError');
+  const end = runs[0].events.find(event => event.type === 'end');
+  assert.deepEqual(end.fields, { status: 'abandoned', reason: 'renderer_init_failed' });
+  assert.equal(tracker.getMatchId(), null);
+  assert.equal(tracker.fail({ reason: 'duplicate' }), null);
 });
 
 test('gaming sessions count visible play time and flush when the tab hides', () => {

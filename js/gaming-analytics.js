@@ -241,6 +241,32 @@ export function createGamingMatchTracker(options = {}) {
     return run.end({ ...fields, match_id: fields.match_id || matchId });
   }
 
+  // Renderer/bootstrap failures happen before the server sends a match id, so
+  // keep them as a bounded client-reported attempt without inventing a match
+  // or correlation token. This lets the report distinguish failed launches
+  // from server-authoritative match results.
+  function fail(fields = {}) {
+    if (ended) return null;
+    const reason = matchValue(fields.reason) || 'client_init_failed';
+    if (!run) {
+      run = createRun(baseOptions);
+      matchId = null;
+      linkedToken = null;
+      ended = false;
+      loadReported = false;
+      run.start({
+        ...(options.startFields || {}),
+        status: 'abandoned',
+        reason,
+      });
+    }
+    run.interaction('render_failure', {
+      details: fields.details,
+    });
+    ended = true;
+    return run.end({ status: 'abandoned', reason });
+  }
+
   const api = {
     ensure,
     link,
@@ -251,6 +277,7 @@ export function createGamingMatchTracker(options = {}) {
     correlate: (token, fields) => link({ ...(fields || {}), correlation_token: token }),
     result: fields => proxy('result', fields),
     heartbeat: () => proxy('heartbeat'),
+    fail,
     end,
     getRun: () => run,
     getMatchId: () => matchId,

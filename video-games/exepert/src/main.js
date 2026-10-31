@@ -219,8 +219,12 @@ function begin(transport){
       onRenderFailure: failure => gamingRun?.interaction('render_failure', { details: failure }),
     });
   } catch (error){
+    gamingRun?.fail({
+      reason: 'renderer_init_failed',
+      details: { source: 'init', error: error?.name || 'renderer_error' },
+    });
     transport.close?.(); gamingRun = null; game = null;
-    show('menu', true); go('home'); note(error?.message || 'The EXEPERT renderer could not start. Solo play still works.');
+    show('menu', true); go('home'); note(error?.message || 'The EXEPERT renderer could not start.');
     return;
   }
   game.hud.show(true);

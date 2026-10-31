@@ -13,12 +13,18 @@ export const GAMING_EVENT_TYPES = new Set([
 ]);
 
 export const GAMING_RAW_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+// Kept as a public duration for callers that use the legacy constant. The
+// maintenance cutoff below is calendar based so month length does not move
+// the retention boundary.
 export const GAMING_SUMMARY_RETENTION_MS = 13 * 31 * 24 * 60 * 60 * 1000;
 const MAX_DETAILS_BYTES = 2_048;
 const MAX_TIMELINE_ROWS = 500;
 const MAX_SESSION_ROWS = 1_000;
 const MAX_PLAYER_ROWS = 500;
 const MAX_PARTICIPANTS = 32;
+const ARCADE_GAME_ID = 'arcade';
+const ARCADE_ENTRYPOINT = 'contact-arcade';
+const ARCADE_LINK_MAX_AGE_MS = 30 * 60 * 1000;
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 const LIFECYCLE_STATUSES = new Set(['active', 'ended', 'completed', 'abandoned', 'idle', 'reset', 'disconnected']);
 
@@ -589,6 +595,9 @@ function emptyDailySummary() {
     rttCount: 0,
     loadSum: 0,
     loadCount: 0,
+    arcadeLaunches: 0,
+    arcadeLinkedChildStarts: 0,
+    arcadeUnlinkedChildStarts: 0,
     endReasons: {},
     interactions: {},
     authoritative: {
@@ -623,7 +632,7 @@ function parseDailySummary(value) {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return summary;
-    for (const key of ['abandoned', 'active', 'serverVerified', 'eventCount', 'scoreTotal', 'distance', 'disconnects', 'renderFailures', 'fpsSum', 'fpsCount', 'rttSum', 'rttCount', 'loadSum', 'loadCount']) {
+    for (const key of ['abandoned', 'active', 'serverVerified', 'eventCount', 'scoreTotal', 'distance', 'disconnects', 'renderFailures', 'fpsSum', 'fpsCount', 'rttSum', 'rttCount', 'loadSum', 'loadCount', 'arcadeLaunches', 'arcadeLinkedChildStarts', 'arcadeUnlinkedChildStarts']) {
       summary[key] = numeric(parsed[key]);
     }
     for (const key of ['endReasons', 'interactions']) {
@@ -645,7 +654,7 @@ function parseDailySummary(value) {
 }
 
 function mergeDailySummary(target, source) {
-  for (const key of ['abandoned', 'active', 'serverVerified', 'eventCount', 'scoreTotal', 'distance', 'disconnects', 'renderFailures', 'fpsSum', 'fpsCount', 'rttSum', 'rttCount', 'loadSum', 'loadCount']) {
+  for (const key of ['abandoned', 'active', 'serverVerified', 'eventCount', 'scoreTotal', 'distance', 'disconnects', 'renderFailures', 'fpsSum', 'fpsCount', 'rttSum', 'rttCount', 'loadSum', 'loadCount', 'arcadeLaunches', 'arcadeLinkedChildStarts', 'arcadeUnlinkedChildStarts']) {
     target[key] = numeric(target[key]) + numeric(source[key]);
   }
   for (const key of ['endReasons', 'interactions']) {
@@ -670,6 +679,16 @@ function summaryDateFromDay(day) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+function calendarMonthsAgo(timestamp, months) {
+  const date = new Date(timestamp);
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() - months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+  return date.getTime();
+}
+
 async function noteTrackingStarted(db, timestamp, updatedAt = timestamp) {
   if (!db || !Number.isFinite(Number(timestamp))) return;
   try {
@@ -687,6 +706,7 @@ async function noteTrackingStarted(db, timestamp, updatedAt = timestamp) {
 async function trackingStarted(db) {
   try {
     const row = await db.prepare('SELECT value FROM gaming_state WHERE key = ? LIMIT 1').bind(GAMING_TRACKING_STATE_KEY).first();
+    if (row?.value == null || row.value === '') return null;
     const timestamp = Number(row?.value);
     return Number.isFinite(timestamp) ? timestamp : null;
   } catch {
@@ -723,6 +743,76 @@ function mergeBreakdownExtra(target, source) {
   }
 }
 
+function arcadeParentPredicate(alias) {
+  return `${alias}.game_id = '${ARCADE_GAME_ID}' AND ${alias}.entrypoint = '${ARCADE_ENTRYPOINT}'`;
+}
+
+function arcadeChildPredicate(alias) {
+  return `${alias}.game_id <> '${ARCADE_GAME_ID}' AND ${alias}.entrypoint = '${ARCADE_ENTRYPOINT}'`;
+}
+
+function arcadeLinkedChildPredicate(childAlias = 'c') {
+  return `${childAlias}.player_key IS NOT NULL AND ${childAlias}.session_key IS NOT NULL AND EXISTS (
+    SELECT 1 FROM gaming_sessions a
+    WHERE ${arcadeParentPredicate('a')}
+      AND a.player_key = ${childAlias}.player_key
+      AND a.session_key = ${childAlias}.session_key
+      AND ${childAlias}.started_at >= a.started_at
+      AND ${childAlias}.started_at - a.started_at <= ${ARCADE_LINK_MAX_AGE_MS}
+      AND NOT EXISTS (
+        SELECT 1 FROM gaming_sessions newer
+        WHERE ${arcadeParentPredicate('newer')}
+          AND newer.player_key = a.player_key
+          AND newer.session_key = a.session_key
+          AND newer.started_at > a.started_at
+          AND newer.started_at <= ${childAlias}.started_at
+      )
+  )`;
+}
+
+function addArcadeDimensionFilters(clauses, binds, alias, options = {}) {
+  if (options.mode) {
+    clauses.push(`${alias}.mode = ?`);
+    binds.push(options.mode);
+  }
+  if (options.transport) {
+    clauses.push(`${alias}.transport = ?`);
+    binds.push(options.transport);
+  }
+}
+
+async function readArcadeFunnel(db, from, now, options, dailyAggregate) {
+  const result = {
+    launches: numeric(dailyAggregate.arcadeLaunches),
+    linkedChildStarts: numeric(dailyAggregate.arcadeLinkedChildStarts),
+    unlinkedChildStarts: numeric(dailyAggregate.arcadeUnlinkedChildStarts),
+  };
+  if (!options.game || options.game === ARCADE_GAME_ID) {
+    const launchClauses = [`a.started_at >= ? AND a.started_at <= ?`, arcadeParentPredicate('a')];
+    const launchBinds = [from, now];
+    addArcadeDimensionFilters(launchClauses, launchBinds, 'a', options);
+    const launchRow = await db.prepare(`SELECT COUNT(*) AS count
+      FROM gaming_sessions a WHERE ${launchClauses.join(' AND ')}`).bind(...launchBinds).first();
+    result.launches += numeric(launchRow?.count);
+  }
+  if (!options.game || options.game !== ARCADE_GAME_ID) {
+    const childClauses = [`c.started_at >= ? AND c.started_at <= ?`, arcadeChildPredicate('c')];
+    const childBinds = [from, now];
+    if (options.game) {
+      childClauses.push('c.game_id = ?');
+      childBinds.push(options.game);
+    }
+    addArcadeDimensionFilters(childClauses, childBinds, 'c', options);
+    const childRow = await db.prepare(`SELECT COUNT(*) AS total,
+      SUM(CASE WHEN ${arcadeLinkedChildPredicate('c')} THEN 1 ELSE 0 END) AS linked
+      FROM gaming_sessions c WHERE ${childClauses.join(' AND ')}`).bind(...childBinds).first();
+    const total = numeric(childRow?.total);
+    result.linkedChildStarts += numeric(childRow?.linked);
+    result.unlinkedChildStarts += Math.max(0, total - numeric(childRow?.linked));
+  }
+  return result;
+}
+
 export async function readGamingData(env = {}, options = {}) {
   const db = dbFor(env);
   if (!db) return { unavailable: true, reason: 'Gaming database is unavailable' };
@@ -744,6 +834,9 @@ export async function readGamingData(env = {}, options = {}) {
     if (mode) { baseClauses.push('mode = ?'); baseBinds.push(mode); }
     if (transport) { baseClauses.push('transport = ?'); baseBinds.push(transport); }
     const baseWhere = baseClauses.join(' AND ');
+    const realBaseClauses = [...baseClauses, 'game_id <> ?'];
+    const realBaseBinds = [...baseBinds, ARCADE_GAME_ID];
+    const realBaseWhere = realBaseClauses.join(' AND ');
     const dailyClauses = ['day >= ? AND day <= ?'];
     const dailyBinds = [dayKey(from), dayKey(now)];
     if (game) { dailyClauses.push('game_id = ?'); dailyBinds.push(game); }
@@ -752,7 +845,11 @@ export async function readGamingData(env = {}, options = {}) {
     const dailyRows = from < rawCutoff
       ? rowsFromResult(await db.prepare(`SELECT * FROM gaming_daily WHERE ${dailyClauses.join(' AND ')} ORDER BY day ASC`).bind(...dailyBinds).all())
       : [];
-    const dailyAggregate = { starts: 0, players: 0, completions: 0, playSeconds: 0, abandoned: 0, active: 0, serverVerified: 0, eventCount: 0, scoreTotal: 0, distance: 0, disconnects: 0, renderFailures: 0, fpsSum: 0, fpsCount: 0, rttSum: 0, rttCount: 0, loadSum: 0, loadCount: 0, endReasons: {}, interactions: {}, authoritative: emptyDailySummary().authoritative };
+    // Expired daily rows preserve aggregate history after raw detail retention.
+    // Their per-day player counts cannot be deduplicated across days, so any
+    // report that uses them must mark unique-player totals as unavailable.
+    const historicalAggregates = dailyRows.some(row => row.day && row.day < detailBoundaryDay);
+    const dailyAggregate = { starts: 0, players: 0, completions: 0, playSeconds: 0, abandoned: 0, active: 0, serverVerified: 0, eventCount: 0, scoreTotal: 0, distance: 0, disconnects: 0, renderFailures: 0, fpsSum: 0, fpsCount: 0, rttSum: 0, rttCount: 0, loadSum: 0, loadCount: 0, arcadeLaunches: 0, arcadeLinkedChildStarts: 0, arcadeUnlinkedChildStarts: 0, endReasons: {}, interactions: {}, authoritative: emptyDailySummary().authoritative };
     const dailyBreakdowns = new Map();
     const dailySectors = new Map();
     const dailyByDate = new Map();
@@ -761,11 +858,15 @@ export async function readGamingData(env = {}, options = {}) {
       // the live tables; the daily table is only the expired-history source.
       if (!row.day || row.day >= detailBoundaryDay) continue;
       const summary = parseDailySummary(row.summary_json);
-      dailyAggregate.starts += numeric(row.starts);
-      dailyAggregate.players += numeric(row.players);
-      dailyAggregate.completions += numeric(row.completions);
-      dailyAggregate.playSeconds += numeric(row.play_seconds);
+      const arcadeLaunchRow = row.game_id === ARCADE_GAME_ID;
+      if (!arcadeLaunchRow) {
+        dailyAggregate.starts += numeric(row.starts);
+        dailyAggregate.players += numeric(row.players);
+        dailyAggregate.completions += numeric(row.completions);
+        dailyAggregate.playSeconds += numeric(row.play_seconds);
+      }
       mergeDailySummary(dailyAggregate, summary);
+      if (arcadeLaunchRow) continue;
       const breakdownKey = `${row.game_id}\u001f${row.mode || ''}`;
       const breakdown = dailyBreakdowns.get(breakdownKey) || { gameId: row.game_id, modeId: row.mode || null, sector: row.sector || null, id: row.mode || row.game_id, label: row.mode || row.game_id, starts: 0, players: 0, completions: 0, playSeconds: 0, score: 0, distance: 0, disconnects: 0, renderFailures: 0, endReasons: {}, interactions: {}, authoritative: emptyDailySummary().authoritative };
       breakdown.starts += numeric(row.starts); breakdown.players += numeric(row.players); breakdown.completions += numeric(row.completions); breakdown.playSeconds += numeric(row.play_seconds);
@@ -798,7 +899,7 @@ export async function readGamingData(env = {}, options = {}) {
     const sessions = pageRows.map(sessionResponse);
     const nextCursor = hasMore ? nextSessionCursor(pageRows.at(-1)) : null;
     if (options.sessionsOnly) {
-      return { from, to: now, sessions, nextCursor, players: [], games: [], modes: [], daily: [], funnel: [], eventCount: 0, performance: { fps: null, rttMs: null, loadMs: null }, aggregate: {}, authoritative: {}, trackingStartedAt: null };
+      return { from, to: now, sessions, nextCursor, players: [], games: [], modes: [], daily: [], funnel: [], eventCount: 0, performance: { fps: null, rttMs: null, loadMs: null }, aggregate: {}, authoritative: {}, historicalAggregates: false, trackingStartedAt: null };
     }
 
     const aggregate = await db.prepare(`SELECT COUNT(*) AS starts,
@@ -808,7 +909,7 @@ export async function readGamingData(env = {}, options = {}) {
       SUM(CASE WHEN status IN ('active', 'disconnected', 'idle') THEN 1 ELSE 0 END) AS active,
       SUM(CASE WHEN verification='server_verified' THEN 1 ELSE 0 END) AS server_verified,
       COALESCE(SUM(duration_seconds), 0) AS play_seconds
-      FROM gaming_sessions WHERE ${baseWhere}`).bind(...baseBinds).first() || {};
+      FROM gaming_sessions WHERE ${realBaseWhere}`).bind(...realBaseBinds).first() || {};
     aggregate.starts = numeric(aggregate.starts) + dailyAggregate.starts;
     aggregate.players = numeric(aggregate.players) + dailyAggregate.players;
     aggregate.completions = numeric(aggregate.completions) + dailyAggregate.completions;
@@ -817,27 +918,27 @@ export async function readGamingData(env = {}, options = {}) {
     aggregate.server_verified = numeric(aggregate.server_verified) + dailyAggregate.serverVerified;
     aggregate.play_seconds = numeric(aggregate.play_seconds) + dailyAggregate.playSeconds;
     const returning = await db.prepare(`SELECT COUNT(*) AS count FROM (
-      SELECT player_key FROM gaming_sessions WHERE ${baseWhere} AND player_key IS NOT NULL
+      SELECT player_key FROM gaming_sessions WHERE ${realBaseWhere} AND player_key IS NOT NULL
       GROUP BY player_key HAVING COUNT(*) > 1
-    )`).bind(...baseBinds).first() || {};
+    )`).bind(...realBaseBinds).first() || {};
     const firstSession = await db.prepare('SELECT MIN(started_at) AS started_at FROM gaming_sessions').first() || {};
     const games = rowsFromResult(await db.prepare(`SELECT game_id AS id, game_id AS label,
       COUNT(*) AS starts, COUNT(DISTINCT player_key) AS players,
       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completions,
       COALESCE(SUM(duration_seconds), 0) AS play_seconds, SUM(score) AS score,
       SUM(CASE WHEN status='disconnected' THEN 1 ELSE 0 END) AS disconnects
-      FROM gaming_sessions WHERE ${baseWhere} GROUP BY game_id ORDER BY starts DESC`).bind(...baseBinds).all());
+      FROM gaming_sessions WHERE ${realBaseWhere} GROUP BY game_id ORDER BY starts DESC`).bind(...realBaseBinds).all());
     const modes = rowsFromResult(await db.prepare(`SELECT mode AS id, mode AS label,
       COUNT(*) AS starts, COUNT(DISTINCT player_key) AS players,
       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completions,
       COALESCE(SUM(duration_seconds), 0) AS play_seconds, SUM(score) AS score,
       SUM(CASE WHEN status='disconnected' THEN 1 ELSE 0 END) AS disconnects
-      FROM gaming_sessions WHERE ${baseWhere} AND mode IS NOT NULL GROUP BY mode ORDER BY starts DESC`).bind(...baseBinds).all());
+      FROM gaming_sessions WHERE ${realBaseWhere} AND mode IS NOT NULL GROUP BY mode ORDER BY starts DESC`).bind(...realBaseBinds).all());
     const daily = rowsFromResult(await db.prepare(`SELECT substr(datetime(started_at / 1000, 'unixepoch', '+8 hours'), 1, 10) AS date,
       COUNT(*) AS starts, COUNT(DISTINCT player_key) AS players,
       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completions,
       COALESCE(SUM(duration_seconds), 0) AS play_seconds
-      FROM gaming_sessions WHERE ${baseWhere} GROUP BY date ORDER BY date ASC`).bind(...baseBinds).all());
+      FROM gaming_sessions WHERE ${realBaseWhere} GROUP BY date ORDER BY date ASC`).bind(...realBaseBinds).all());
     for (const row of dailyBreakdowns.values()) {
       const existing = games.find(item => item.id === row.gameId);
       if (existing) {
@@ -865,6 +966,7 @@ export async function readGamingData(env = {}, options = {}) {
     }
     for (const row of dailyRows) {
       if (!row.day || row.day >= detailBoundaryDay) continue;
+      if (row.game_id === ARCADE_GAME_ID) continue;
       // A daily row can be emitted for a sector/mode dimension even when a
       // session detail row has expired; merge it into the date series once.
       if (!dailyByDate.has(row.day)) dailyByDate.set(row.day, { date: row.day, starts: 0, players: 0, completions: 0, playSeconds: 0 });
@@ -878,8 +980,8 @@ export async function readGamingData(env = {}, options = {}) {
     const players = rowsFromResult(await db.prepare(`SELECT player_key, COUNT(*) AS sessions,
       COALESCE(SUM(duration_seconds), 0) AS play_seconds, MIN(started_at) AS first_seen_at,
       MAX(last_seen_at) AS last_seen_at
-      FROM gaming_sessions WHERE ${baseWhere} AND player_key IS NOT NULL
-      GROUP BY player_key ORDER BY last_seen_at DESC LIMIT ${MAX_PLAYER_ROWS}`).bind(...baseBinds).all());
+      FROM gaming_sessions WHERE ${realBaseWhere} AND player_key IS NOT NULL
+      GROUP BY player_key ORDER BY last_seen_at DESC LIMIT ${MAX_PLAYER_ROWS}`).bind(...realBaseBinds).all());
     const eventClauses = ['e.event_at >= ? AND e.event_at <= ?'];
     const eventBinds = [from, now];
     if (game) { eventClauses.push('e.game_id = ?'); eventBinds.push(game); }
@@ -931,7 +1033,7 @@ export async function readGamingData(env = {}, options = {}) {
       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completions,
       COALESCE(SUM(duration_seconds), 0) AS play_seconds, SUM(score) AS score,
       SUM(CASE WHEN status='disconnected' THEN 1 ELSE 0 END) AS disconnects
-      FROM gaming_sessions WHERE ${baseWhere} AND sector IS NOT NULL GROUP BY sector ORDER BY starts DESC`).bind(...baseBinds).all());
+      FROM gaming_sessions WHERE ${realBaseWhere} AND sector IS NOT NULL GROUP BY sector ORDER BY starts DESC`).bind(...realBaseBinds).all());
     const sectors = sectorRows.map(row => ({ ...emptyBreakdownExtra(), ...row, starts: numeric(row.starts), players: numeric(row.players), completions: numeric(row.completions), play_seconds: numeric(row.play_seconds), score: row.score == null ? null : numeric(row.score), disconnects: numeric(row.disconnects) }));
     for (const row of sectors) mergeBreakdownExtra(row, sectorExtras.get(row.id) || emptyBreakdownExtra());
     for (const row of dailySectors.values()) {
@@ -1032,9 +1134,14 @@ export async function readGamingData(env = {}, options = {}) {
       humans: authoritativeHumans, bots: authoritativeBots, ...authoritativeCounters,
       modes: [...modeAuthority.values()],
     };
+    const arcadeFunnel = await readArcadeFunnel(db, detailFrom, now, { game, mode, transport }, dailyAggregate);
     const persistedTracking = await trackingStarted(db);
     const dailyTracking = dailyRows.map(row => summaryDateFromDay(row.day)).filter(Number.isFinite).sort((left, right) => left - right)[0];
-    const firstTracking = persistedTracking ?? Math.min(...[Number(firstSession.started_at), dailyTracking].filter(Number.isFinite));
+    const firstSessionStartedAt = firstSession.started_at == null || firstSession.started_at === '' ? null : Number(firstSession.started_at);
+    const firstTrackingCandidates = [persistedTracking, firstSessionStartedAt, dailyTracking].filter(Number.isFinite);
+    const firstTracking = persistedTracking != null
+      ? persistedTracking
+      : (firstTrackingCandidates.length ? Math.min(...firstTrackingCandidates) : null);
     const interactions = [];
     const endReasons = [];
     for (const [gameId, extra] of gameExtras.entries()) {
@@ -1048,24 +1155,28 @@ export async function readGamingData(env = {}, options = {}) {
         playSeconds: numeric(row.play_seconds), firstSeenAt: iso(row.first_seen_at), lastSeenAt: iso(row.last_seen_at),
         returning: numeric(row.sessions) > 1,
       })),
-      games: games.map(row => ({ id: row.id, label: row.label, starts: numeric(row.starts), players: numeric(row.players), completions: numeric(row.completions), playSeconds: numeric(row.play_seconds), score: row.score == null ? null : numeric(row.score), distance: numeric(row.distance), disconnects: numeric(row.disconnects), renderFailures: numeric(row.renderFailures), endReasons: row.endReasons || {}, interactions: row.interactions || {} })),
-      modes: modes.map(row => ({ id: row.id, label: row.label, starts: numeric(row.starts), players: numeric(row.players), completions: numeric(row.completions), playSeconds: numeric(row.play_seconds), score: row.score == null ? null : numeric(row.score), distance: numeric(row.distance), disconnects: numeric(row.disconnects), renderFailures: numeric(row.renderFailures), endReasons: row.endReasons || {}, interactions: row.interactions || {} })),
-      sectors: sectors.map(row => ({ id: row.id, label: row.label, starts: numeric(row.starts), players: numeric(row.players), completions: numeric(row.completions), playSeconds: numeric(row.play_seconds), score: row.score == null ? null : numeric(row.score), distance: numeric(row.distance), disconnects: numeric(row.disconnects), renderFailures: numeric(row.renderFailures), endReasons: row.endReasons || {}, interactions: row.interactions || {} })),
+      games: games.map(row => ({ id: row.id, label: row.label, starts: numeric(row.starts), players: historicalAggregates ? null : numeric(row.players), completions: numeric(row.completions), playSeconds: numeric(row.play_seconds), score: row.score == null ? null : numeric(row.score), distance: numeric(row.distance), disconnects: numeric(row.disconnects), renderFailures: numeric(row.renderFailures), endReasons: row.endReasons || {}, interactions: row.interactions || {} })),
+      modes: modes.map(row => ({ id: row.id, label: row.label, starts: numeric(row.starts), players: historicalAggregates ? null : numeric(row.players), completions: numeric(row.completions), playSeconds: numeric(row.play_seconds), score: row.score == null ? null : numeric(row.score), distance: numeric(row.distance), disconnects: numeric(row.disconnects), renderFailures: numeric(row.renderFailures), endReasons: row.endReasons || {}, interactions: row.interactions || {} })),
+      sectors: sectors.map(row => ({ id: row.id, label: row.label, starts: numeric(row.starts), players: historicalAggregates ? null : numeric(row.players), completions: numeric(row.completions), playSeconds: numeric(row.play_seconds), score: row.score == null ? null : numeric(row.score), distance: numeric(row.distance), disconnects: numeric(row.disconnects), renderFailures: numeric(row.renderFailures), endReasons: row.endReasons || {}, interactions: row.interactions || {} })),
       interactions,
       endReasons,
       daily: dailySeries.map(row => ({ date: row.date, starts: numeric(row.starts), players: numeric(row.players), completions: numeric(row.completions), playSeconds: numeric(row.playSeconds ?? row.play_seconds) })),
-      playersCount: numeric(aggregate.players),
+      historicalAggregates,
+      playersCount: historicalAggregates ? null : numeric(aggregate.players),
       eventCount,
       performance: { fps: performance.fps == null ? null : Number(performance.fps), rttMs: performance.rtt_ms == null ? null : Number(performance.rtt_ms), loadMs: performance.load_ms == null ? null : Number(performance.load_ms) },
       aggregate: {
         starts: numeric(aggregate.starts), completions: numeric(aggregate.completions), abandoned: numeric(aggregate.abandoned),
         active: numeric(aggregate.active), serverVerified: numeric(aggregate.server_verified), playSeconds: numeric(aggregate.play_seconds),
-        returningPlayers: numeric(returning.count),
+        returningPlayers: historicalAggregates ? null : numeric(returning.count),
       },
       trackingStartedAt: Number.isFinite(firstTracking) ? iso(firstTracking) : null,
       authoritative,
       funnel: [
         { stage: 'launches', count: numeric(aggregate.starts) },
+        { stage: 'arcade_launches', count: arcadeFunnel.launches },
+        { stage: 'arcade_linked_child_starts', count: arcadeFunnel.linkedChildStarts },
+        { stage: 'arcade_unlinked_child_starts', count: arcadeFunnel.unlinkedChildStarts },
         { stage: 'completed', count: numeric(aggregate.completions) },
         { stage: 'server_verified', count: numeric(aggregate.server_verified) },
         { stage: 'authoritative_matches', count: authoritativeMatches },
@@ -1182,6 +1293,7 @@ async function buildGamingDailyRollups(db, summaryStart, now) {
       SUM(CASE WHEN verification='server_verified' THEN 1 ELSE 0 END) AS server_verified,
       COALESCE(SUM(score), 0) AS score_total
       FROM gaming_sessions WHERE started_at >= ? AND started_at <= ?
+        AND NOT (${arcadeParentPredicate('gaming_sessions')})
       GROUP BY day, game_id, mode, sector, transport`).bind(summaryStart, now).all());
   for (const row of sessions) {
     const value = dailyRollup(rollups, row);
@@ -1194,6 +1306,31 @@ async function buildGamingDailyRollups(db, summaryStart, now) {
     value.summary.disconnects = numeric(row.disconnects);
     value.summary.serverVerified = numeric(row.server_verified);
     value.summary.scoreTotal = numeric(row.score_total);
+  }
+
+  const arcadeLaunches = rowsFromResult(await db.prepare(`SELECT substr(datetime(started_at / 1000, 'unixepoch', '+8 hours'), 1, 10) AS day,
+      game_id, COALESCE(mode, '') AS mode, COALESCE(sector, '') AS sector, COALESCE(transport, '') AS transport,
+      COUNT(*) AS launches
+      FROM gaming_sessions
+      WHERE started_at >= ? AND started_at <= ? AND ${arcadeParentPredicate('gaming_sessions')}
+      GROUP BY day, game_id, mode, sector, transport`).bind(summaryStart, now).all());
+  for (const row of arcadeLaunches) {
+    dailyRollup(rollups, row).summary.arcadeLaunches += numeric(row.launches);
+  }
+
+  const arcadeChildren = rowsFromResult(await db.prepare(`SELECT substr(datetime(c.started_at / 1000, 'unixepoch', '+8 hours'), 1, 10) AS day,
+      c.game_id, COALESCE(c.mode, '') AS mode, COALESCE(c.sector, '') AS sector, COALESCE(c.transport, '') AS transport,
+      COUNT(*) AS child_starts,
+      SUM(CASE WHEN ${arcadeLinkedChildPredicate('c')} THEN 1 ELSE 0 END) AS linked_child_starts
+      FROM gaming_sessions c
+      WHERE c.started_at >= ? AND c.started_at <= ? AND ${arcadeChildPredicate('c')}
+      GROUP BY day, c.game_id, mode, sector, transport`).bind(summaryStart, now).all());
+  for (const row of arcadeChildren) {
+    const summary = dailyRollup(rollups, row).summary;
+    const total = numeric(row.child_starts);
+    const linked = numeric(row.linked_child_starts);
+    summary.arcadeLinkedChildStarts += linked;
+    summary.arcadeUnlinkedChildStarts += Math.max(0, total - linked);
   }
 
   // Sparse client events carry the Relay distance/end reason and Kessler
@@ -1274,7 +1411,7 @@ export async function runGamingMaintenance(env = {}, suppliedNow) {
   if (!db) return { unavailable: true, reason: 'Gaming database is unavailable' };
   const now = nowMs(env, suppliedNow);
   const rawCutoff = now - GAMING_RAW_RETENTION_MS;
-  const summaryStart = now - GAMING_SUMMARY_RETENTION_MS;
+  const summaryStart = calendarMonthsAgo(now, 13);
   const dailyCutoff = dayKey(summaryStart);
   try {
     const firstRaw = await db.prepare('SELECT MIN(started_at) AS started_at FROM gaming_sessions').first();
