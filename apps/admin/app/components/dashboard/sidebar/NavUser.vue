@@ -1,14 +1,33 @@
 <script setup lang="ts">
 import { ChevronsUpDown, LogOut } from '@lucide/vue'
+import { computed, ref } from 'vue'
 import { useSidebar } from '@/components/ui/sidebar'
-
-interface User {
-  name: string
-  email: string
-}
+import { adminAssetURL } from '@/utils/admin-asset'
 
 const { isMobile } = useSidebar()
-const { userEmail } = useAuthSession()
+const { name, email, avatar, initials } = useAdminProfile()
+const localAvatar = adminAssetURL('profile.webp')
+const fallbackToLocal = ref(false)
+const fallbackFailed = ref(false)
+const avatarSource = computed(() => {
+  if (fallbackFailed.value)
+    return ''
+  if (fallbackToLocal.value)
+    return localAvatar
+  return avatar.value
+})
+
+function handleAvatarError() {
+  if (avatarSource.value === localAvatar)
+    fallbackFailed.value = true
+  else
+    fallbackToLocal.value = true
+}
+
+function handleAvatarStatus(status: unknown) {
+  if (status === 'error')
+    handleAvatarError()
+}
 const menuButton = useTemplateRef<{ $el: HTMLElement }>('menuButton')
 const menuOpen = shallowRef(false)
 const logoutOpen = shallowRef(false)
@@ -23,12 +42,6 @@ function restoreMenuFocus(event: Event) {
   event.preventDefault()
   menuButton.value?.$el.focus()
 }
-
-const user = computed<User>(() => ({
-  name: userEmail.value?.split('@')[0] || '',
-  email: userEmail.value || '',
-}))
-const avatarFallback = computed(() => user.value.name.charAt(0).toUpperCase() || 'R')
 </script>
 
 <template>
@@ -39,20 +52,21 @@ const avatarFallback = computed(() => user.value.name.charAt(0).toUpperCase() ||
           <SidebarMenuButton
             ref="menuButton"
             size="lg"
-            :aria-label="user.name"
+            :aria-label="name"
             class="
               data-[state=open]:bg-sidebar-accent
               data-[state=open]:text-sidebar-accent-foreground
             "
           >
             <Avatar class="size-8 rounded-full">
+              <AvatarImage v-if="avatarSource" :src="avatarSource" :alt="name" @error="handleAvatarError" @loading-status-change="handleAvatarStatus" />
               <AvatarFallback class="rounded-full">
-                {{ avatarFallback }}
+                {{ initials }}
               </AvatarFallback>
             </Avatar>
             <div class="grid min-w-0 flex-1 text-left text-sm/tight">
-              <span class="truncate font-medium capitalize">{{ user.name }}</span>
-              <span class="truncate text-xs">{{ user.email }}</span>
+              <span class="truncate font-medium capitalize">{{ name }}</span>
+              <span class="truncate text-xs">{{ email }}</span>
             </div>
             <ChevronsUpDown aria-hidden="true" class="ml-auto size-4" />
           </SidebarMenuButton>
@@ -66,13 +80,14 @@ const avatarFallback = computed(() => user.value.name.charAt(0).toUpperCase() ||
           <DropdownMenuLabel class="p-0">
             <div class="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
               <Avatar class="size-8 rounded-full">
+                <AvatarImage v-if="avatarSource" :src="avatarSource" :alt="name" @error="handleAvatarError" @loading-status-change="handleAvatarStatus" />
                 <AvatarFallback class="rounded-full">
-                  {{ avatarFallback }}
+                  {{ initials }}
                 </AvatarFallback>
               </Avatar>
               <div class="grid min-w-0 flex-1 text-left text-sm/tight">
-                <span class="truncate font-semibold capitalize">{{ user.name }}</span>
-                <span class="truncate text-xs">{{ user.email }}</span>
+                <span class="truncate font-semibold capitalize">{{ name }}</span>
+                <span class="truncate text-xs">{{ email }}</span>
               </div>
             </div>
           </DropdownMenuLabel>

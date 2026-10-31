@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { Activity, CalendarDays, ChartArea, ClipboardCheck, FolderSync, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
+import { Activity, CalendarDays, ChartArea, ClipboardCheck, Cloud, FolderSync, Gamepad2, Image, Link, PenLine, ScanSearch, Settings2 } from '@lucide/vue'
 import { computed } from 'vue'
 import { useRoute } from '#imports'
 
@@ -19,6 +19,16 @@ export const DASHBOARD_ROUTES = {
     paths: ['/admin', '/admin/briefing'],
     titleKey: 'Briefing',
     icon: ChartArea,
+  },
+  cloudflare: {
+    paths: ['/admin/cloudflare'],
+    titleKey: 'Cloudflare',
+    icon: Cloud,
+  },
+  gaming: {
+    paths: ['/admin/gaming'],
+    titleKey: 'Gaming',
+    icon: Gamepad2,
   },
   traffic: {
     paths: ['/admin/traffic'],

@@ -19,6 +19,18 @@ const platformItems = computed<NavItem[]>(() => [
     isActive: isActive('briefing'),
   },
   {
+    title: 'Cloudflare',
+    url: '/admin/cloudflare',
+    icon: DASHBOARD_ROUTES.cloudflare.icon,
+    isActive: isActive('cloudflare'),
+  },
+  {
+    title: 'Gaming',
+    url: '/admin/gaming',
+    icon: DASHBOARD_ROUTES.gaming.icon,
+    isActive: isActive('gaming'),
+  },
+  {
     title: 'Traffic',
     url: '/admin/traffic',
     icon: DASHBOARD_ROUTES.traffic.icon,

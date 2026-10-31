@@ -1,0 +1,396 @@
+<script setup lang="ts">
+import type { ObservabilityMetric } from '../../../shared/types/observability'
+import { Download, ExternalLink, RefreshCw } from '@lucide/vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { formatObservabilityMetric, formatObservabilityNumber, observabilityCoverageStatus, observabilityMetricTitle, useCloudflareObservability } from '@/composables/useObservability'
+
+const tabs = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'compute', label: 'Compute' },
+  { id: 'storage', label: 'Storage' },
+  { id: 'traffic', label: 'Traffic' },
+  { id: 'services', label: 'Services' },
+  { id: 'billing', label: 'Billing' },
+] as const
+type CloudflareTab = typeof tabs[number]['id']
+
+const route = useRoute()
+const router = useRouter()
+const { data, loading, error, stale, lastUpdated, refresh, range, scope } = useCloudflareObservability()
+const activeTab = ref<CloudflareTab>(isTab(route.query.tab) ? route.query.tab as CloudflareTab : 'overview')
+const teleportReady = ref(false)
+
+onMounted(() => {
+  teleportReady.value = true
+})
+
+function isTab(value: unknown): value is CloudflareTab {
+  return typeof value === 'string' && tabs.some(tab => tab.id === value)
+}
+
+function handleTabKeydown(event: KeyboardEvent, index: number) {
+  const key = event.key
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key))
+    return
+  event.preventDefault()
+  const nextIndex = key === 'Home'
+    ? 0
+    : key === 'End'
+      ? tabs.length - 1
+      : (index + (key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+  const nextTab = tabs[nextIndex]
+  if (!nextTab)
+    return
+  activeTab.value = nextTab.id
+  void nextTick(() => document.getElementById(`cloudflare-tab-${nextTab.id}`)?.focus())
+}
+
+watch(activeTab, (value) => {
+  void router.replace({ query: { ...route.query, tab: value === 'overview' ? undefined : value } })
+})
+
+watch(() => route.query.tab, (value) => {
+  const nextTab: CloudflareTab = isTab(value) ? value : 'overview'
+  if (nextTab !== activeTab.value)
+    activeTab.value = nextTab
+})
+
+const selectedMetrics = computed(() => {
+  const report = data.value
+  if (!report)
+    return []
+  if (activeTab.value === 'compute')
+    return reportMetrics(report.compute)
+  if (activeTab.value === 'storage')
+    return reportMetrics([...report.storage, ...report.durableObjects])
+  if (activeTab.value === 'traffic')
+    return reportMetrics(report.traffic)
+  if (activeTab.value === 'services')
+    return reportMetrics(report.services)
+  if (activeTab.value === 'overview')
+    return reportMetrics([...report.compute, ...report.traffic, ...report.services], 8)
+  return []
+})
+
+function reportMetrics(metrics: ObservabilityMetric[], limit = 12) {
+  const accountMetrics = metrics.filter(metric => !metric.resourceId)
+  return (accountMetrics.length ? accountMetrics : metrics).slice(0, limit)
+}
+
+const metricGroups = computed(() => {
+  const report = data.value
+  if (!report)
+    return []
+  return [
+    { label: 'Compute', metrics: reportMetrics(report.compute, 5) },
+    { label: 'Storage', metrics: reportMetrics([...report.storage, ...report.durableObjects], 5) },
+    { label: 'Traffic', metrics: reportMetrics(report.traffic, 5) },
+    { label: 'Services', metrics: reportMetrics(report.services, 5) },
+  ].filter(group => group.metrics.length > 0)
+})
+
+const chartPoints = computed(() => {
+  const report = data.value
+  if (!report)
+    return []
+  const selectedKeys = new Set(selectedMetrics.value.map(metric => metric.key))
+  const candidates = report.series.filter(point => selectedKeys.size === 0 || selectedKeys.has(point.metric))
+  const accountSeries = candidates.filter(point => !point.resourceId)
+  const firstScopedPoint = candidates.find(point => point.resourceId)
+  const source = accountSeries.length
+    ? accountSeries
+    : firstScopedPoint
+      ? candidates.filter(point => point.resourceId === firstScopedPoint.resourceId)
+      : candidates
+  if (source.length === 0)
+    return []
+
+  const sourceMetric = source[0]?.metric
+  const metricSeries = source.filter(point => point.metric === sourceMetric)
+  const bucketMs = range.value === '24h' ? 60 * 60 * 1000 : range.value === '7d' ? 12 * 60 * 60 * 1000 : 2 * 24 * 60 * 60 * 1000
+  const buckets = new Map<number, { total: number, count: number }>()
+  for (const point of metricSeries) {
+    const time = Date.parse(point.timestamp)
+    if (!Number.isFinite(time))
+      continue
+    const bucket = Math.floor(time / bucketMs) * bucketMs
+    const current = buckets.get(bucket) || { total: 0, count: 0 }
+    current.total += point.value
+    current.count += 1
+    buckets.set(bucket, current)
+  }
+  return [...buckets.entries()].sort(([left], [right]) => left - right).map(([time, bucket]) => ({
+    label: formatDate(new Date(time).toISOString()),
+    value: bucket.total / bucket.count,
+  }))
+})
+
+const scopeLabel = computed(() => scope.value === 'account' ? 'Whole account' : 'Akmal Alif resources')
+const reportStatus = computed(() => observabilityCoverageStatus(data.value?.coverage || [], stale.value))
+const reportStatusLabel = computed(() => ({
+  live: 'Live response',
+  partial: 'Partial response',
+  stale: 'Stale response',
+  unavailable: 'Unavailable',
+}[reportStatus.value]))
+const memoryMetrics = computed(() => data.value?.compute.filter(metric => /memory|headroom/i.test(`${metric.key} ${metric.label}`)) || [])
+
+function metricReason(metric: ObservabilityMetric) {
+  return metric.value === null ? (metric.detail || 'Provider did not return this metric.') : metric.detail
+}
+
+function formatDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date)
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value)
+    return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function downloadCsv(filename: string, rows: string[][]) {
+  if (!import.meta.client || rows.length === 0)
+    return
+  const csv = rows.map(row => row.map(cell => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportReport() {
+  const report = data.value
+  if (!report)
+    return
+  downloadCsv(`cloudflare-${range.value}.csv`, [
+    ['section', 'key', 'label', 'value', 'unit', 'resource'],
+    ...selectedMetrics.value.map(metric => ['metric', metric.key, metric.label, String(metric.value ?? ''), metric.unit, metric.resourceName || '']),
+    ...report.resources.map(resource => ['resource', resource.id, resource.name, '', resource.kind, resource.project]),
+  ])
+}
+
+function billingValue(value: number | null, currency: string) {
+  return value === null ? '—' : new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(value)
+}
+
+function metricCardLabel(metric: ObservabilityMetric) {
+  return metric.label || metric.key
+}
+
+function resourceMetricSummary(resourceId: string) {
+  const report = data.value
+  if (!report)
+    return '—'
+  const metrics = [...report.compute, ...report.durableObjects, ...report.storage, ...report.traffic, ...report.services]
+    .filter(metric => metric.resourceId === resourceId)
+  return metrics.length ? `${metrics.length} metric${metrics.length === 1 ? '' : 's'}` : 'No scoped metrics'
+}
+
+function billingUsageValue(value: number | null, unit: string) {
+  return formatObservabilityNumber(value, unit)
+}
+</script>
+
+<template>
+  <section class="observability-page" aria-labelledby="cloudflare-report-title">
+    <header class="observability-heading">
+      <div>
+        <p class="portfolio-eyebrow">Cloudflare observability</p>
+        <h1 id="cloudflare-report-title">Cloudflare</h1>
+        <p>Account usage, resource attribution, traffic, and billing coverage in one report.</p>
+      </div>
+    </header>
+
+    <Teleport v-if="teleportReady" to="#dashboard-header-actions">
+      <div class="observability-controls">
+        <button class="observability-button" type="button" :disabled="loading" @click="refresh">
+          <RefreshCw :size="15" :class="{ 'motion-safe:animate-spin': loading }" aria-hidden="true" />
+          Refresh
+        </button>
+        <button class="observability-button" type="button" :disabled="!data" @click="exportReport">
+          <Download :size="15" aria-hidden="true" />
+          Export CSV
+        </button>
+      </div>
+    </Teleport>
+
+    <div class="observability-filter-line" aria-label="Cloudflare report filters">
+      <label>
+        Range
+        <select v-model="range" class="observability-filter">
+          <option value="24h">Last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+        </select>
+      </label>
+      <label>
+        Scope
+        <select v-model="scope" class="observability-filter">
+          <option value="account">Whole account</option>
+          <option value="akmalalif">Akmal Alif resources</option>
+        </select>
+      </label>
+      <div class="observability-filter-line__grow observability-meta">
+        {{ scopeLabel }} · {{ data?.meta?.timezone || 'Timezone unavailable' }}
+        <span v-if="lastUpdated"> · refreshed {{ formatDateTime(lastUpdated) }}</span>
+      </div>
+    </div>
+
+    <div class="observability-tabs" role="tablist" aria-label="Cloudflare report sections">
+      <button
+        v-for="(tab, index) in tabs"
+        :key="tab.id"
+        class="observability-tab"
+        :id="`cloudflare-tab-${tab.id}`"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === tab.id"
+        aria-controls="cloudflare-panel"
+        :tabindex="activeTab === tab.id ? 0 : -1"
+        :data-active="activeTab === tab.id"
+        @keydown="handleTabKeydown($event, index)"
+        @click="activeTab = tab.id"
+      >{{ tab.label }}</button>
+    </div>
+
+    <p v-if="stale" class="observability-stale" role="status">The selected filters are still pending or failed. Showing the last successful {{ data?.meta?.scope === 'akmalalif' ? 'Akmal Alif resources' : 'whole account' }} response from {{ formatDateTime(data?.meta?.from) }} to {{ formatDateTime(data?.meta?.to) }}.</p>
+    <p v-if="error" class="observability-error" role="alert">{{ error }}</p>
+    <p v-else-if="loading && !data" class="observability-empty" aria-live="polite">Loading Cloudflare report…</p>
+    <p v-else-if="!data" class="observability-empty">No Cloudflare report returned for this range.</p>
+
+    <template v-if="data">
+      <div id="cloudflare-panel" role="tabpanel" :aria-labelledby="`cloudflare-tab-${activeTab}`" tabindex="0">
+        <div class="observability-card observability-card--full">
+          <div class="observability-card__header">
+            <div>
+              <h2>Source coverage</h2>
+              <p>Every badge reflects the provider response for this report window.</p>
+            </div>
+            <ObservabilityCoverage :coverage="data.coverage" />
+          </div>
+          <p class="observability-meta">
+            {{ formatDateTime(data.meta.from) }} → {{ formatDateTime(data.meta.to) }} · checked {{ formatDateTime(data.meta.checkedAt) }}
+            <span v-if="data.meta.trackingStartedAt"> · tracking since {{ formatDate(data.meta.trackingStartedAt) }}</span>
+          </p>
+        </div>
+
+        <div v-if="activeTab !== 'billing'" class="observability-grid">
+          <article v-for="metric in selectedMetrics" :key="`${metric.key}-${metric.resourceId || ''}`" class="observability-card observability-card--metric">
+            <div class="observability-card__header">
+              <h2>{{ metricCardLabel(metric) }}</h2>
+              <span v-if="metric.resourceName" class="observability-status">{{ metric.resourceName }}</span>
+            </div>
+            <span class="observability-value" :title="observabilityMetricTitle(metric)" :data-unavailable="metric.value === null">{{ formatObservabilityMetric(metric) }}</span>
+            <p v-if="metricReason(metric)" class="observability-card__hint">{{ metricReason(metric) }}</p>
+          </article>
+          <article v-if="selectedMetrics.length === 0" class="observability-card observability-card--full">
+            <p class="observability-empty">This section has no metrics in the provider response.</p>
+          </article>
+        </div>
+
+        <div v-if="activeTab !== 'billing'" class="observability-card observability-card--wide">
+          <div class="observability-card__header">
+            <div>
+              <h2>{{ activeTab === 'overview' ? 'Usage trend' : `${tabs.find(tab => tab.id === activeTab)?.label} trend` }}</h2>
+              <p>Values are plotted from the returned series; missing provider data stays unavailable.</p>
+            </div>
+            <span class="observability-status" :data-state="reportStatus">{{ reportStatusLabel }}</span>
+          </div>
+          <ObservabilityLineChart :points="chartPoints" />
+        </div>
+
+        <div v-if="activeTab === 'overview'" class="observability-grid">
+          <article v-for="group in metricGroups" :key="group.label" class="observability-card">
+            <div class="observability-card__header"><h2>{{ group.label }}</h2></div>
+            <ul class="observability-inline-list">
+              <li v-for="metric in group.metrics.slice(0, 5)" :key="`${group.label}-${metric.key}-${metric.resourceId || ''}`">
+                <span>{{ metric.label }}</span>
+                <strong :title="observabilityMetricTitle(metric)">{{ formatObservabilityMetric(metric) }}</strong>
+              </li>
+            </ul>
+          </article>
+        </div>
+
+        <article v-if="activeTab !== 'billing'" class="observability-card observability-card--full">
+          <div class="observability-card__header">
+            <div>
+              <h2>Resources</h2>
+              <p>Resource attribution is explicit; unassigned and shared resources remain visible.</p>
+            </div>
+          </div>
+          <div class="observability-table-wrap">
+            <table class="observability-table">
+              <thead><tr><th>Name</th><th>Kind</th><th>Project</th><th>Metrics</th><th>Resource</th></tr></thead>
+              <tbody>
+                <tr v-for="resource in data.resources" :key="resource.id">
+                  <th scope="row">{{ resource.name }}</th>
+                  <td>{{ resource.kind }}</td>
+                  <td>{{ resource.project }}</td>
+                  <td class="observability-table__muted">{{ resourceMetricSummary(resource.id) }}</td>
+                  <td><a v-if="resource.url" class="observability-table__action" :href="resource.url" target="_blank" rel="noopener noreferrer"><ExternalLink :size="13" aria-hidden="true" /> Open</a><span v-else class="observability-table__muted">—</span></td>
+                </tr>
+                <tr v-if="data.resources.length === 0"><td colspan="5" class="observability-table__muted">No resources returned.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article v-if="activeTab === 'compute'" class="observability-card observability-card--full">
+          <div class="observability-card__header"><div><h2>Deployments</h2><p>Deployment records are shown only when returned by the provider.</p></div></div>
+          <div class="observability-table-wrap">
+            <table class="observability-table">
+              <thead><tr><th>Resource</th><th>Created</th><th>Source</th><th>ID</th></tr></thead>
+              <tbody>
+                <tr v-for="deployment in data.deployments" :key="deployment.id"><th scope="row">{{ deployment.resourceName }}</th><td>{{ formatDateTime(deployment.createdAt) }}</td><td>{{ deployment.source || '—' }}</td><td class="observability-table__muted">{{ deployment.id }}</td></tr>
+                <tr v-if="data.deployments.length === 0"><td colspan="4" class="observability-table__muted">No deployments returned.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article v-if="activeTab === 'compute' && memoryMetrics.length" class="observability-card observability-card--full">
+          <div class="observability-card__header"><div><h2>Isolate memory headroom</h2><p>Sampled memory and the provider limit stay visible with their source units.</p></div></div>
+          <div class="observability-table-wrap">
+            <table class="observability-table">
+              <thead><tr><th>Metric</th><th>Value</th><th>Resource</th><th>Coverage</th></tr></thead>
+              <tbody>
+                <tr v-for="metric in memoryMetrics" :key="`${metric.key}-${metric.resourceId || ''}`"><th scope="row">{{ metric.label }}</th><td :title="observabilityMetricTitle(metric)">{{ formatObservabilityMetric(metric) }}</td><td>{{ metric.resourceName || 'Account' }}</td><td class="observability-table__muted">{{ metric.detail || '—' }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article v-if="activeTab === 'billing'" class="observability-card observability-card--full">
+          <div class="observability-card__header">
+            <div><h2>Billing cycle</h2><p>Billing dates stay separate from the report range.</p></div>
+            <span class="observability-status" :data-state="data.billing.status">{{ data.billing.status }}</span>
+          </div>
+          <div class="observability-grid">
+            <article class="observability-card observability-card--metric"><h3>Actual charges</h3><span class="observability-value" :data-unavailable="data.billing.actualCharges === null">{{ billingValue(data.billing.actualCharges, data.billing.currency) }}</span><p class="observability-card__hint">Provider posted charges</p></article>
+            <article class="observability-card observability-card--metric"><h3>Estimated charges</h3><span class="observability-value" :data-unavailable="data.billing.estimatedCharges === null">{{ billingValue(data.billing.estimatedCharges, data.billing.currency) }}</span><p class="observability-card__hint">Usage estimate</p></article>
+            <article class="observability-card observability-card--metric"><h3>Fixed fees</h3><span class="observability-value" :data-unavailable="data.billing.fixedFees === null">{{ billingValue(data.billing.fixedFees, data.billing.currency) }}</span><p class="observability-card__hint">Plan or fixed component</p></article>
+            <article class="observability-card observability-card--metric"><h3>Forecast</h3><span class="observability-value" :data-unavailable="data.billing.forecast === null">{{ billingValue(data.billing.forecast, data.billing.currency) }}</span><p class="observability-card__hint">Projected cycle total</p></article>
+          </div>
+          <p class="observability-meta">{{ formatDate(data.billing.cycle.from) }} → {{ formatDate(data.billing.cycle.to) }} · source {{ data.billing.cycle.source }}<span v-if="data.billing.pricingAsOf"> · pricing as of {{ formatDate(data.billing.pricingAsOf) }}</span></p>
+          <p v-if="data.billing.reason" class="observability-card__hint">{{ data.billing.reason }}</p>
+          <div class="observability-table-wrap">
+            <table class="observability-table">
+              <thead><tr><th>Usage</th><th>Consumed</th><th>Included</th><th>Billable</th><th>Estimate</th><th>Attribution</th></tr></thead>
+              <tbody>
+                <tr v-for="usage in data.billing.usage" :key="usage.key"><th scope="row">{{ usage.label }}</th><td>{{ billingUsageValue(usage.consumed, usage.unit) }}</td><td>{{ billingUsageValue(usage.included, usage.unit) }}</td><td>{{ billingUsageValue(usage.billable, usage.unit) }}</td><td>{{ billingValue(usage.actualCost ?? usage.estimatedCost, data.billing.currency) }}</td><td>{{ usage.attribution }}</td></tr>
+                <tr v-if="data.billing.usage.length === 0"><td colspan="6" class="observability-table__muted">No billing usage rows returned.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <a class="observability-table__action" :href="data.billing.url" target="_blank" rel="noopener noreferrer"><ExternalLink :size="14" aria-hidden="true" /> View billing source</a>
+        </article>
+      </div>
+    </template>
+  </section>
+</template>

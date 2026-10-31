@@ -24,10 +24,13 @@ function label(value: string) {
   return value.includes('.') ? t(value) : value
 }
 
-watch(() => route.path, () => {
-  if (isMobile.value) {
+function closeMobile() {
+  if (isMobile.value)
     setOpenMobile(false)
-  }
+}
+
+watch(() => route.path, () => {
+  closeMobile()
 })
 </script>
 
@@ -45,7 +48,7 @@ watch(() => route.path, () => {
             data-active:rounded-4xl
           "
         >
-          <NuxtLink :to="item.url">
+          <NuxtLink :to="item.url" :aria-current="item.isActive ? 'page' : undefined" @click="closeMobile">
             <component :is="item.icon" aria-hidden="true" />
             <span>{{ label(item.title) }}</span>
           </NuxtLink>
@@ -67,7 +70,7 @@ watch(() => route.path, () => {
             data-active:rounded-4xl
           "
         >
-          <NuxtLink :to="item.url">
+          <NuxtLink :to="item.url" :aria-current="item.isActive ? 'page' : undefined" @click="closeMobile">
             <component :is="item.icon" aria-hidden="true" />
             <span>{{ label(item.title) }}</span>
           </NuxtLink>
