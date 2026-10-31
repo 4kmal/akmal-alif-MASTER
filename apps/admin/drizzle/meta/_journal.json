@@ -54,6 +54,20 @@
     {
       "idx": 7,
       "version": "7",
+      "when": 1793400000000,
+      "tag": "0007_judging",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793440000000,
+      "tag": "0008_observability",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
       "when": 1793450000000,
       "tag": "0009_gaming",
       "breakpoints": true

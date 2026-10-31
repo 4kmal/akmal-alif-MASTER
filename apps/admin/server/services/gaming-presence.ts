@@ -3,7 +3,7 @@ import type { GamingReport, SourceCoverage } from '../../shared/types/observabil
 
 type Presence = GamingReport['live']
 interface PresenceEnvironment {
-  PORTFOLIO?: { fetch: (request: Request) => Promise<Response> }
+  PORTFOLIO?: { fetch: (url: string, init?: RequestInit) => Promise<Response> }
 }
 
 let retainedPresence: Presence | null = null
@@ -18,10 +18,10 @@ export async function readGamingPresence(env: PresenceEnvironment, now = Date.no
   try {
     if (!env.PORTFOLIO)
       throw new Error('The portfolio service binding is unavailable.')
-    const response = await env.PORTFOLIO.fetch(new Request('https://www.akmalalif.com/api/exepert/status', {
+    const response = await env.PORTFOLIO.fetch('https://www.akmalalif.com/api/exepert/status', {
       signal: AbortSignal.timeout(5000),
       headers: { Accept: 'application/json' },
-    }))
+    })
     if (!response.ok)
       throw new Error(`The lobby returned HTTP ${response.status}.`)
     const payload = await response.json() as { confirmed?: Record<string, unknown> }

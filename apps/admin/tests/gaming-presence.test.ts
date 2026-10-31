@@ -15,7 +15,7 @@ describe('confirmed gaming presence', () => {
     const report = await readGamingPresence({ PORTFOLIO: { fetch } }, now)
     expect(report.live).toEqual({ players: 2, bots: 6, rooms: 1, checkedAt: new Date(now).toISOString(), status: 'live' })
     expect(fetch).toHaveBeenCalledOnce()
-    expect(fetch.mock.calls[0]?.[0].url).toBe('https://www.akmalalif.com/api/exepert/status')
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://www.akmalalif.com/api/exepert/status')
   })
 
   it('retains a labeled stale result briefly after failure, then becomes unavailable', async () => {
@@ -42,7 +42,11 @@ describe('confirmed gaming presence', () => {
       evidenceAt: new Date(now - 36_000).toISOString(),
       status: 'live',
     } })).mockResolvedValueOnce(Response.json({ confirmed: {
-      players: 0, bots: 0, rooms: 0, checkedAt: new Date(now).toISOString(), status: 'live',
+      players: 0,
+      bots: 0,
+      rooms: 0,
+      checkedAt: new Date(now).toISOString(),
+      status: 'live',
     } }))
     const { readGamingPresence } = await import('../server/services/gaming-presence')
     for (let i = 0; i < 3; i++) {
@@ -54,7 +58,12 @@ describe('confirmed gaming presence', () => {
 
   it('accepts zero only with a fresh confirmed report', async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ confirmed: {
-      players: 0, bots: 0, rooms: 0, checkedAt: new Date(now).toISOString(), evidenceAt: new Date(now).toISOString(), status: 'live',
+      players: 0,
+      bots: 0,
+      rooms: 0,
+      checkedAt: new Date(now).toISOString(),
+      evidenceAt: new Date(now).toISOString(),
+      status: 'live',
     } }))
     const { readGamingPresence } = await import('../server/services/gaming-presence')
     const report = await readGamingPresence({ PORTFOLIO: { fetch } }, now)

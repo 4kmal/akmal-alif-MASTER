@@ -259,3 +259,30 @@ export const gamingState = sqliteTable('gaming_state', {
   value: text().notNull(),
   updatedAt: integer('updated_at').notNull(),
 })
+
+export const cloudflareObservabilitySnapshots = sqliteTable('cloudflare_observability_snapshots', {
+  snapshotId: text('snapshot_id').primaryKey(),
+  scope: text().notNull(),
+  capturedAt: integer('captured_at').notNull(),
+  fromAt: text('from_at').notNull(),
+  toAt: text('to_at').notNull(),
+  status: text().notNull(),
+  reportJson: text('report_json').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  index('idx_cloudflare_observability_snapshots_scope_time').on(table.scope, table.capturedAt),
+])
+
+export const cloudflareObservabilityDaily = sqliteTable('cloudflare_observability_daily', {
+  day: text().notNull(),
+  scope: text().notNull(),
+  metricKey: text('metric_key').notNull(),
+  resourceId: text('resource_id').notNull().default(''),
+  unit: text().notNull(),
+  value: real(),
+  updatedAt: integer('updated_at').notNull(),
+}, table => [
+  primaryKey({ columns: [table.day, table.scope, table.metricKey, table.resourceId] }),
+  index('idx_cloudflare_observability_daily_scope_day').on(table.scope, table.day),
+  index('idx_cloudflare_observability_daily_metric').on(table.metricKey, table.day),
+])
