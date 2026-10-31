@@ -143,6 +143,26 @@ test('arcade shell launches stay in the funnel while linked child games own aggr
   assert.equal(report.funnel.find(row => row.stage === 'arcade_unlinked_child_starts').count, 1);
 });
 
+test('aggregate active players counts only fresh browser heartbeats once per player', async () => {
+  const { database, env } = environment();
+  const insert = database.prepare(`INSERT INTO gaming_sessions
+    (id, player_key, session_key, game_id, mode, sector, transport, entrypoint, started_at, last_seen_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  insert.run('fresh-exepert', 'player-fresh', 'session-one', 'exepert', 'tdm', 'bastion', 'websocket', 'standalone', now - 60_000, now - 30_000, 'active');
+  insert.run('fresh-relay', 'player-fresh', 'session-two', 'relay-run', 'endless', null, 'handheld', 'standalone', now - 45_000, now - 10_000, 'active');
+  insert.run('stale-kessler', 'player-stale', 'session-stale', 'kessler-explorer', 'exploration', 'aurora', 'handheld', 'standalone', now - 120_000, now - 90_001, 'active');
+  insert.run('disconnected-exepert', 'player-disconnected', 'session-disconnected', 'exepert', 'tdm', 'bastion', 'websocket', 'standalone', now - 30_000, now - 5_000, 'disconnected');
+  insert.run('fresh-arcade-parent', 'player-parent', 'session-parent', 'arcade', 'solo', null, 'iframe', 'contact-arcade', now - 30_000, now - 5_000, 'active');
+  insert.run('fresh-optout', null, null, 'kessler-explorer', 'exploration', 'aurora', 'handheld', 'standalone', now - 30_000, now - 5_000, 'active');
+
+  const report = await readGamingData(env, { rangeDays: 90, now });
+  assert.equal(report.aggregate.activePlayers, 1);
+  const relay = await readGamingData(env, { rangeDays: 90, game: 'relay-run', now });
+  assert.equal(relay.aggregate.activePlayers, 1);
+  const kessler = await readGamingData(env, { rangeDays: 90, game: 'kessler-explorer', now });
+  assert.equal(kessler.aggregate.activePlayers, 0);
+});
+
 test('concurrent duplicate retries claim one timeline row and mutate one session once', async () => {
   const { database, env } = environment();
   env.DB = new YieldingD1(database);

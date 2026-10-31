@@ -910,6 +910,13 @@ export async function readGamingData(env = {}, options = {}) {
       SUM(CASE WHEN verification='server_verified' THEN 1 ELSE 0 END) AS server_verified,
       COALESCE(SUM(duration_seconds), 0) AS play_seconds
       FROM gaming_sessions WHERE ${realBaseWhere}`).bind(...realBaseBinds).first() || {};
+    const activePlayers = await db.prepare(`SELECT COUNT(DISTINCT player_key) AS count
+      FROM gaming_sessions
+      WHERE ${realBaseWhere}
+        AND player_key IS NOT NULL
+        AND status = 'active'
+        AND last_seen_at >= ?
+        AND last_seen_at <= ?`).bind(...realBaseBinds, now - 90_000, now).first() || {};
     aggregate.starts = numeric(aggregate.starts) + dailyAggregate.starts;
     aggregate.players = numeric(aggregate.players) + dailyAggregate.players;
     aggregate.completions = numeric(aggregate.completions) + dailyAggregate.completions;
@@ -1167,7 +1174,7 @@ export async function readGamingData(env = {}, options = {}) {
       performance: { fps: performance.fps == null ? null : Number(performance.fps), rttMs: performance.rtt_ms == null ? null : Number(performance.rtt_ms), loadMs: performance.load_ms == null ? null : Number(performance.load_ms) },
       aggregate: {
         starts: numeric(aggregate.starts), completions: numeric(aggregate.completions), abandoned: numeric(aggregate.abandoned),
-        active: numeric(aggregate.active), serverVerified: numeric(aggregate.server_verified), playSeconds: numeric(aggregate.play_seconds),
+        active: numeric(aggregate.active), activePlayers: numeric(activePlayers.count), serverVerified: numeric(aggregate.server_verified), playSeconds: numeric(aggregate.play_seconds),
         returningPlayers: historicalAggregates ? null : numeric(returning.count),
       },
       trackingStartedAt: Number.isFinite(firstTracking) ? iso(firstTracking) : null,
