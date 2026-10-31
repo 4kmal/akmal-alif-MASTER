@@ -251,7 +251,7 @@ function billingUsageValue(value: number | null, unit: string) {
       <div class="observability-filter-line observability-filter-line--header" aria-label="Cloudflare report filters">
         <label>
           Range
-          <select v-model="range" class="observability-filter">
+          <select v-model="range" class="observability-filter" aria-label="Range">
             <option value="24h">Last 24 hours</option>
             <option value="7d">Last 7 days</option>
             <option value="30d">Last 30 days</option>
@@ -261,7 +261,7 @@ function billingUsageValue(value: number | null, unit: string) {
         </label>
         <label>
           Scope
-          <select v-model="scope" class="observability-filter">
+          <select v-model="scope" class="observability-filter" aria-label="Scope">
             <option value="account">Whole account</option>
             <option value="akmalalif">Akmal Alif resources</option>
           </select>

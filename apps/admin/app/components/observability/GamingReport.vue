@@ -492,7 +492,7 @@ onBeforeUnmount(() => detailController?.abort())
       <div class="observability-filter-line observability-filter-line--header" aria-label="Gaming report filters">
         <label>
           Range
-          <select v-model="range" class="observability-filter">
+          <select v-model="range" class="observability-filter" aria-label="Range">
             <option value="7d">Last 7 days</option>
             <option value="30d">Last 30 days</option>
             <option value="90d">Last 90 days</option>
@@ -501,21 +501,21 @@ onBeforeUnmount(() => detailController?.abort())
         </label>
         <label>
           Game
-          <select v-model="game" class="observability-filter">
+          <select v-model="game" class="observability-filter" aria-label="Game">
             <option value="">All games</option>
             <option v-for="item in data?.games || []" :key="item.id" :value="item.id">{{ item.label }}</option>
           </select>
         </label>
         <label>
           Mode
-          <select v-model="mode" class="observability-filter">
+          <select v-model="mode" class="observability-filter" aria-label="Mode">
             <option value="">All modes</option>
             <option v-for="item in data?.modes || []" :key="item.id" :value="item.id">{{ item.label }}</option>
           </select>
         </label>
         <label>
           Transport
-          <input v-model="transport" class="observability-filter" type="search" placeholder="All transports">
+          <input v-model="transport" class="observability-filter" type="search" aria-label="Transport" placeholder="All transports">
         </label>
       </div>
     </Teleport>
