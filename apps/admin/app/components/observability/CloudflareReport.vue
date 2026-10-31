@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { CloudflareReport, ObservabilityMetric } from '../../../shared/types/observability'
 import { Download, ExternalLink, RefreshCw } from '@lucide/vue'
+import { useMediaQuery } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { aggregateCloudflareSeries, formatObservabilityMetric, formatObservabilityNumber, observabilityCoverageStatus, observabilityMetricTitle, useCloudflareObservability } from '@/composables/useObservability'
 
@@ -19,6 +20,8 @@ const router = useRouter()
 const { data, loading, error, stale, lastUpdated, refresh, range, scope } = useCloudflareObservability()
 const activeTab = ref<CloudflareTab>(isTab(route.query.tab) ? route.query.tab as CloudflareTab : 'overview')
 const teleportReady = ref(false)
+const showHeaderFilters = useMediaQuery('(min-width: 1280px)')
+const filtersInHeader = computed(() => teleportReady.value && showHeaderFilters.value)
 
 onMounted(() => {
   teleportReady.value = true
@@ -244,29 +247,32 @@ function billingUsageValue(value: number | null, unit: string) {
       </div>
     </Teleport>
 
-    <div class="observability-filter-line" aria-label="Cloudflare report filters">
-      <label>
-        Range
-        <select v-model="range" class="observability-filter">
-          <option value="24h">Last 24 hours</option>
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="90d">Last 90 days</option>
-          <option value="13m">Last 13 months</option>
-        </select>
-      </label>
-      <label>
-        Scope
-        <select v-model="scope" class="observability-filter">
-          <option value="account">Whole account</option>
-          <option value="akmalalif">Akmal Alif resources</option>
-        </select>
-      </label>
-      <div class="observability-filter-line__grow observability-meta">
-        {{ scopeLabel }} · {{ data?.meta?.timezone || 'Timezone unavailable' }}
-        <span v-if="lastUpdated"> · refreshed {{ formatDateTime(lastUpdated) }}</span>
+    <Teleport v-if="teleportReady" to="#dashboard-header-actions" defer :disabled="!filtersInHeader">
+      <div class="observability-filter-line observability-filter-line--header" aria-label="Cloudflare report filters">
+        <label>
+          Range
+          <select v-model="range" class="observability-filter">
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+            <option value="13m">Last 13 months</option>
+          </select>
+        </label>
+        <label>
+          Scope
+          <select v-model="scope" class="observability-filter">
+            <option value="account">Whole account</option>
+            <option value="akmalalif">Akmal Alif resources</option>
+          </select>
+        </label>
       </div>
-    </div>
+    </Teleport>
+
+    <p class="observability-meta">
+      {{ scopeLabel }} · {{ data?.meta?.timezone || 'Timezone unavailable' }}
+      <span v-if="lastUpdated"> · refreshed {{ formatDateTime(lastUpdated) }}</span>
+    </p>
 
     <div class="observability-tabs" role="tablist" aria-label="Cloudflare report sections">
       <button

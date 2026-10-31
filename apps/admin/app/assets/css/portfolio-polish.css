@@ -760,6 +760,47 @@
   flex: 1 1 11rem;
 }
 
+#dashboard-header-actions .observability-filter-line--header {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#dashboard-header-actions .observability-filter-line--header label {
+  display: flex;
+  width: auto;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+#dashboard-header-actions .observability-filter-line--header .observability-filter {
+  width: auto;
+  min-width: 6.25rem;
+  max-width: 10rem;
+  padding-inline: 0.55rem;
+  font-size: 0.7rem;
+}
+
+#dashboard-header-actions .observability-filter-line--header label:last-child .observability-filter {
+  min-width: 7.5rem;
+}
+
+#dashboard-header-actions .observability-filter-line--header label:last-child input {
+  min-width: 8rem;
+}
+
 .observability-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

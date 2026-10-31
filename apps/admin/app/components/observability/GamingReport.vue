@@ -9,6 +9,7 @@ import type {
   ObservabilityMetric,
 } from '../../../shared/types/observability'
 import { Download, RefreshCw, X } from '@lucide/vue'
+import { useMediaQuery } from '@vueuse/core'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { appendObservabilityQuery, formatObservabilityMetric, formatObservabilityNumber, observabilityMetricTitle, observabilityNumberTitle, useGamingObservability } from '@/composables/useObservability'
 import { useAPI } from '@/utils/api'
@@ -59,6 +60,8 @@ const router = useRouter()
 const { data, loading, error, stale, lastUpdated, refresh, range, game, mode, transport } = useGamingObservability()
 const activeTab = ref<GamingTab>(isTab(route.query.tab) ? route.query.tab as GamingTab : 'overview')
 const teleportReady = ref(false)
+const showHeaderFilters = useMediaQuery('(min-width: 1536px)')
+const filtersInHeader = computed(() => teleportReady.value && showHeaderFilters.value)
 const detailKind = ref<'session' | 'player' | null>(null)
 const sessionDetail = ref<GamingSessionDetail | null>(null)
 const playerDetail = ref<GamingPlayerDetail | null>(null)
@@ -464,39 +467,42 @@ onBeforeUnmount(() => detailController?.abort())
       </div>
     </Teleport>
 
-    <div class="observability-filter-line" aria-label="Gaming report filters">
-      <label>
-        Range
-        <select v-model="range" class="observability-filter">
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="90d">Last 90 days</option>
-          <option value="13m">Last 13 months</option>
-        </select>
-      </label>
-      <label>
-        Game
-        <select v-model="game" class="observability-filter">
-          <option value="">All games</option>
-          <option v-for="item in data?.games || []" :key="item.id" :value="item.id">{{ item.label }}</option>
-        </select>
-      </label>
-      <label>
-        Mode
-        <select v-model="mode" class="observability-filter">
-          <option value="">All modes</option>
-          <option v-for="item in data?.modes || []" :key="item.id" :value="item.id">{{ item.label }}</option>
-        </select>
-      </label>
-      <label>
-        Transport
-        <input v-model="transport" class="observability-filter" type="search" placeholder="All transports">
-      </label>
-      <div class="observability-filter-line__grow observability-meta">
-        {{ selectedGameLabel }} · refreshes while this tab is visible
-        <span v-if="lastUpdated"> · refreshed {{ formatDateTime(lastUpdated) }}</span>
+    <Teleport v-if="teleportReady" to="#dashboard-header-actions" defer :disabled="!filtersInHeader">
+      <div class="observability-filter-line observability-filter-line--header" aria-label="Gaming report filters">
+        <label>
+          Range
+          <select v-model="range" class="observability-filter">
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+            <option value="13m">Last 13 months</option>
+          </select>
+        </label>
+        <label>
+          Game
+          <select v-model="game" class="observability-filter">
+            <option value="">All games</option>
+            <option v-for="item in data?.games || []" :key="item.id" :value="item.id">{{ item.label }}</option>
+          </select>
+        </label>
+        <label>
+          Mode
+          <select v-model="mode" class="observability-filter">
+            <option value="">All modes</option>
+            <option v-for="item in data?.modes || []" :key="item.id" :value="item.id">{{ item.label }}</option>
+          </select>
+        </label>
+        <label>
+          Transport
+          <input v-model="transport" class="observability-filter" type="search" placeholder="All transports">
+        </label>
       </div>
-    </div>
+    </Teleport>
+
+    <p class="observability-meta">
+      {{ selectedGameLabel }} · refreshes while this tab is visible
+      <span v-if="lastUpdated"> · refreshed {{ formatDateTime(lastUpdated) }}</span>
+    </p>
 
     <div class="observability-tabs" role="tablist" aria-label="Gaming report sections">
       <button
